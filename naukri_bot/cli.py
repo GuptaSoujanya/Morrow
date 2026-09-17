@@ -244,39 +244,84 @@ def derive_keywords(profile: Profile, settings: Settings) -> List[str]:
 
 
 def _write_external_jobs(jobs: List[ScoredJob]) -> None:
+    """Merge this run's company-site roles into the standing to-do list.
+
+    The file is a worklist the user works through by hand over several days,
+    not a per-run log, so the same role surfacing in three runs must appear
+    once. Existing rows are read back and keyed on URL, which is stable across
+    runs in a way the title is not.
+    """
     if not jobs:
         return
+
+    rows: Dict[str, str] = {}
     try:
-        with open(_EXTERNAL_JOBS_FILE, "a", encoding="utf-8") as handle:
+        with open(_EXTERNAL_JOBS_FILE, "r", encoding="utf-8") as handle:
+            for line in handle:
+                if not line.startswith("| ") or line.startswith("| score "):
+                    continue
+                cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+                if len(cells) == 5 and cells[4].startswith("http"):
+                    rows[cells[4]] = line.rstrip("\n")
+    except OSError:
+        pass  # first run, or unreadable: start from what this run found
+
+    added = 0
+    for scored in jobs:
+        url = scored.job.url
+        if url in rows:
+            continue
+        rows[url] = "| %.1f | %s | %s | %s | %s |" % (
+            scored.score,
+            scored.job.title or "-",
+            scored.job.company or "-",
+            scored.job.posted_label or "-",
+            url,
+        )
+        added += 1
+
+    def _score_of(row: str) -> float:
+        try:
+            return float(row.strip().strip("|").split("|")[0].strip())
+        except ValueError:
+            return 0.0
+
+    ordered = sorted(rows.values(), key=_score_of, reverse=True)
+    try:
+        with open(_EXTERNAL_JOBS_FILE, "w", encoding="utf-8") as handle:
             handle.write(
-                "\n## %s - %d roles that apply on the company site\n\n"
-                % (datetime.now().strftime("%Y-%m-%d %H:%M"), len(jobs))
+                "# Roles that apply on the company site\n\n"
+                "These cannot be submitted through Naukri and use none of the\n"
+                "daily quota. Apply by hand. Updated %s.\n\n"
+                % datetime.now().strftime("%Y-%m-%d %H:%M")
             )
             handle.write("| score | role | company | posted | link |\n")
             handle.write("|---|---|---|---|---|\n")
-            for scored in jobs:
-                handle.write(
-                    "| %.1f | %s | %s | %s | %s |\n"
-                    % (
-                        scored.score,
-                        scored.job.title or "-",
-                        scored.job.company or "-",
-                        scored.job.posted_label or "-",
-                        scored.job.url,
-                    )
-                )
+            for row in ordered:
+                handle.write(row + "\n")
     except OSError as exc:
         logger.warning("Could not write %s: %s", _EXTERNAL_JOBS_FILE, exc)
         return
+
     logger.info(
-        "%d roles apply on the company site and need applying by hand; listed in %s",
+        "%d company-site role(s) this run, %d new; %s now lists %d to apply to by hand",
         len(jobs),
+        added,
         _EXTERNAL_JOBS_FILE,
+        len(ordered),
     )
 
 
-def _report_plan(selected: List[ScoredJob], ranking_module: Any, limit: int) -> None:
-    shown = selected[: max(0, limit)]
+def _report_plan(
+    selected: List[ScoredJob], ranking_module: Any, settings: Settings
+) -> None:
+    # A dry run exists to be read, so it prints the whole queue including
+    # the fallback tiers. A real run prints only what it expects to reach.
+    shown = (
+        selected
+        if settings.dry_run
+        else selected[: max(0, settings.target_applications)]
+    )
     logger.info(
         "--- application plan (%d shown of %d eligible, best first) ---",
         len(shown),
@@ -284,9 +329,10 @@ def _report_plan(selected: List[ScoredJob], ranking_module: Any, limit: int) -> 
     )
     for position, scored in enumerate(shown, start=1):
         logger.info(
-            "%2d. [%5.1f] %s @ %s (%s)",
+            "%2d. [%5.1f] [tier %s] %s @ %s (%s)",
             position,
             scored.score,
+            ranking_module.tier_of(scored, settings) or "-",
             scored.job.title or "<no title>",
             scored.job.company or "<no company>",
             scored.job.posted_label or "age unknown",
@@ -460,7 +506,7 @@ def run(
             summary.quota_after = ledger.quota_used()
             return summary
 
-        _report_plan(selected, ranking, settings.target_applications)
+        _report_plan(selected, ranking, settings)
 
         if settings.dry_run:
             logger.info("Dry run: stopping before the first click.")
@@ -485,9 +531,10 @@ def run(
                 break
 
             logger.info(
-                "[%d of %d applied] %s @ %s",
+                "[%d of %d applied] [tier %s] %s @ %s",
                 summary.applied,
                 settings.target_applications,
+                ranking.tier_of(scored, settings) or "-",
                 scored.job.title,
                 scored.job.company,
             )

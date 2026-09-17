@@ -233,37 +233,104 @@ def rank(
     return shortlist
 
 
+def _tier_of(candidate: ScoredJob, settings: Settings) -> Optional[int]:
+    """Return the preference tier a candidate belongs to, or None to drop it.
+
+    Tier 1 is what the old hard filters allowed: good enough and fresh enough.
+    Tier 2 keeps the quality bar but forgives age, because a job that cleared
+    min_score four days ago is a better use of the quota than nothing at all.
+    Tier 3 forgives score down to a floor, and exists only so that a thin day
+    still reaches the target. Below the floor a candidate is dropped outright:
+    a real application is sent under the user's name and is visible in their
+    Naukri history forever, so padding the count with irrelevant roles costs
+    more than falling short.
+    """
+    days = candidate.job.posted_days_ago
+    fresh = days is None or days <= settings.max_days_old
+    within_fallback = days is None or days <= settings.max_days_old_fallback
+
+    if candidate.score >= settings.min_score:
+        if fresh:
+            return 1
+        if within_fallback:
+            return 2
+        return None
+
+    floor = settings.min_score_floor
+    if floor > 0 and candidate.score >= floor and within_fallback:
+        return 3
+    return None
+
+
 def select_for_application(
     ranked: List[ScoredJob], settings: Settings, is_already_applied
 ) -> List[ScoredJob]:
-    """Apply ledger, quality, freshness, and quota filters to ranked jobs."""
-    selected: List[ScoredJob] = []
+    """Order ranked jobs by preference tier so the apply loop can reach its target.
+
+    The caller stops once target_applications have actually been *submitted*,
+    so this returns every acceptable candidate rather than a fixed slice. Jobs
+    that cannot be applied to through Naukri at all -- company-site redirects,
+    unanswerable questionnaires -- are only discoverable once a job page is
+    open, so the preferred tier is routinely too thin to fill the target on its
+    own. Lower tiers sit behind it and are consumed only if it runs out.
+    """
+    tiers: Dict[int, List[ScoredJob]] = {1: [], 2: [], 3: []}
     dropped_applied = 0
-    dropped_score = 0
+    dropped_below_floor = 0
     dropped_stale = 0
+
     for candidate in ranked:
         if is_already_applied(candidate.job.job_id):
             dropped_applied += 1
             continue
-        if candidate.score < settings.min_score:
-            dropped_score += 1
+        tier = _tier_of(candidate, settings)
+        if tier is None:
+            days = candidate.job.posted_days_ago
+            if days is not None and days > settings.max_days_old_fallback:
+                dropped_stale += 1
+            else:
+                dropped_below_floor += 1
             continue
-        days = candidate.job.posted_days_ago
-        if days is not None and days > settings.max_days_old:
-            dropped_stale += 1
-            continue
-        selected.append(candidate)
+        tiers[tier].append(candidate)
+
+    # Each tier is already in descending score order because `ranked` is, so
+    # concatenating preserves "best first" within every tier.
+    selected = tiers[1] + tiers[2] + tiers[3]
 
     logger.info(
-        "Application selection dropped %d already applied, %d below min score, "
-        "and %d older than max age; %d eligible for a target of %d",
+        "Application selection dropped %d already applied, %d below the score "
+        "floor of %.0f, and %d older than the %d day fallback limit",
         dropped_applied,
-        dropped_score,
+        dropped_below_floor,
+        settings.min_score_floor,
         dropped_stale,
-        len(selected),
-        settings.target_applications,
+        settings.max_days_old_fallback,
     )
+    logger.info(
+        "Eligible for a target of %d: %d preferred (score >= %.0f, <= %d days), "
+        "%d older but good enough, %d below score but above the floor; %d total",
+        settings.target_applications,
+        len(tiers[1]),
+        settings.min_score,
+        settings.max_days_old,
+        len(tiers[2]),
+        len(tiers[3]),
+        len(selected),
+    )
+    if len(selected) < settings.target_applications:
+        logger.warning(
+            "Only %d jobs are eligible, short of the target of %d. Every one "
+            "would have to be applicable to reach it, so expect fewer. Lower "
+            "MIN_SCORE_FLOOR or raise MAX_DAYS_OLD_FALLBACK to widen the pool.",
+            len(selected),
+            settings.target_applications,
+        )
     return selected
+
+
+def tier_of(candidate: ScoredJob, settings: Settings) -> Optional[int]:
+    """Public wrapper so the run log can show which tier a job came from."""
+    return _tier_of(candidate, settings)
 
 
 def explain(scored: ScoredJob) -> str:

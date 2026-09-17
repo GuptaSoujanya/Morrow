@@ -99,6 +99,12 @@ def load_settings(
         "llm_rank_top_n": _env_int("LLM_RANK_TOP_N", defaults.llm_rank_top_n),
         "min_score": _env_float("MIN_SCORE", defaults.min_score),
         "max_days_old": _env_int("MAX_DAYS_OLD", defaults.max_days_old),
+        "min_score_floor": _env_float(
+            "MIN_SCORE_FLOOR", defaults.min_score_floor
+        ),
+        "max_days_old_fallback": _env_int(
+            "MAX_DAYS_OLD_FALLBACK", defaults.max_days_old_fallback
+        ),
         "keywords": _env_list("KEYWORDS", defaults.keywords),
         "location": os.getenv("LOCATION", defaults.location),
         "pages_per_keyword": _env_int(

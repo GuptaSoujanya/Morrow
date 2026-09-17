@@ -273,6 +273,10 @@ class Settings:
     llm_rank_top_n: int = 150
     min_score: float = 55.0
     max_days_old: int = 7
+    # Fallback tiers, used only when the preferred tier cannot fill
+    # target_applications. A floor of 0 disables the tier entirely.
+    min_score_floor: float = 50.0
+    max_days_old_fallback: int = 14
 
     keywords: List[str] = field(default_factory=list)
     location: str = ""
