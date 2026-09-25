@@ -75,6 +75,10 @@ def test_zero_disables_the_rule():
 @pytest.mark.parametrize(
     "question,expected_grounding",
     [
+        # These match the years regex AND a specific mapping, so they are the
+        # only cases that can actually detect the rule shadowing a real fact.
+        ("How many years of total experience do you have?", "total_experience_years"),
+        ("How many years of overall experience do you have?", "total_experience_years"),
         ("Total Experience (In Years)", "total_experience_years"),
         ("What is your overall experience?", "total_experience_years"),
         ("What is your notice period?", "notice_period_days"),
