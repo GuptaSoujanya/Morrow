@@ -249,8 +249,12 @@ def score_jobs(
         '{"jobs": [{"job_id": "...", "score": 0, '
         '"verdict": "strong|possible|weak", "reasons": ["..."]}]}'
     )
-    for start in range(0, len(jobs), 12):
-        batch = jobs[start : start + 12]
+    # score_jobs takes no settings; the client carries them.
+    batch_size = max(
+        1, getattr(getattr(client, "settings", None), "llm_rank_batch_size", 20)
+    )
+    for start in range(0, len(jobs), batch_size):
+        batch = jobs[start : start + batch_size]
         allowed_ids = {job.job_id for job in batch}
         payload = [
             {

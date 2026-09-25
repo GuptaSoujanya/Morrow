@@ -277,6 +277,12 @@ class Settings:
     # target_applications. A floor of 0 disables the tier entirely.
     min_score_floor: float = 50.0
     max_days_old_fallback: int = 14
+    # Stops one prolific poster's near-duplicate listings from taking a
+    # large share of the day's applications. 0 disables the cap.
+    max_per_company: int = 3
+    # Jobs per LLM ranking call. Larger batches mean fewer sequential calls
+    # and a much shorter run, at the cost of a bigger prompt per call.
+    llm_rank_batch_size: int = 20
 
     keywords: List[str] = field(default_factory=list)
     location: str = ""

@@ -243,7 +243,27 @@ def derive_keywords(profile: Profile, settings: Settings) -> List[str]:
     return keywords
 
 
-def _write_external_jobs(jobs: List[ScoredJob]) -> None:
+def _company_key(company: Optional[str]) -> str:
+    """Normalise a company name enough to group its postings together.
+
+    Naukri prints the same employer inconsistently ("Soul Ai", "Soul AI",
+    "Soul Ai  "), so the cap has to compare something steadier than the raw
+    string. Suffixes like Pvt Ltd are dropped for the same reason.
+    """
+    if not company:
+        return ""
+    name = " ".join(company.split()).casefold()
+    for suffix in (
+        " private limited", " pvt ltd", " pvt. ltd.", " pvt limited",
+        " limited", " ltd.", " ltd", " inc.", " inc", " llp", " llc",
+    ):
+        if name.endswith(suffix):
+            name = name[: -len(suffix)]
+            break
+    return name.strip(" .,-")
+
+
+def _write_external_jobs(jobs: List[ScoredJob], announce: bool = True) -> None:
     """Merge this run's company-site roles into the standing to-do list.
 
     The file is a worklist the user works through by hand over several days,
@@ -303,13 +323,14 @@ def _write_external_jobs(jobs: List[ScoredJob]) -> None:
         logger.warning("Could not write %s: %s", _EXTERNAL_JOBS_FILE, exc)
         return
 
-    logger.info(
-        "%d company-site role(s) this run, %d new; %s now lists %d to apply to by hand",
-        len(jobs),
-        added,
-        _EXTERNAL_JOBS_FILE,
-        len(ordered),
-    )
+    if announce:
+        logger.info(
+            "%d company-site role(s) this run, %d new; %s now lists %d to apply to by hand",
+            len(jobs),
+            added,
+            _EXTERNAL_JOBS_FILE,
+            len(ordered),
+        )
 
 
 def _report_plan(
@@ -518,6 +539,7 @@ def run(
         )
 
         external_jobs: List[ScoredJob] = []
+        per_company: Dict[str, int] = {}
 
         for scored in selected:
             if summary.applied >= settings.target_applications:
@@ -529,6 +551,22 @@ def run(
             if ledger.quota_remaining(settings.daily_quota) <= 0:
                 logger.warning("Quota exhausted mid-run. Stopping cleanly.")
                 break
+
+            # One prolific poster can list a dozen near-identical roles, each
+            # scoring well. Left uncapped they take a large share of the day.
+            company_key = _company_key(scored.job.company)
+            if (
+                settings.max_per_company > 0
+                and company_key
+                and per_company.get(company_key, 0) >= settings.max_per_company
+            ):
+                logger.info(
+                    "Skipping %s @ %s: already applied to %d roles at this company",
+                    scored.job.title,
+                    scored.job.company,
+                    per_company[company_key],
+                )
+                continue
 
             logger.info(
                 "[%d of %d applied] [tier %s] %s @ %s",
@@ -543,10 +581,13 @@ def run(
             )
             ledger.record_attempt(result)
             _tally(summary, result)
+            if result.status == ApplyStatus.APPLIED and company_key:
+                per_company[company_key] = per_company.get(company_key, 0) + 1
             logger.info("      -> %s (%s)", result.status, result.detail or "-")
 
             if result.status == ApplyStatus.EXTERNAL_SKIPPED:
                 external_jobs.append(scored)
+                _write_external_jobs([scored], announce=False)
 
             if result.status in ApplyStatus.TERMINAL:
                 logger.warning(
@@ -554,7 +595,8 @@ def run(
                 )
                 break
 
-        _write_external_jobs(external_jobs)
+        if external_jobs:
+            _write_external_jobs(external_jobs)
         summary.quota_after = ledger.quota_used()
         return summary
 

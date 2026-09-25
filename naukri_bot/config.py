@@ -105,6 +105,10 @@ def load_settings(
         "max_days_old_fallback": _env_int(
             "MAX_DAYS_OLD_FALLBACK", defaults.max_days_old_fallback
         ),
+        "max_per_company": _env_int("MAX_PER_COMPANY", defaults.max_per_company),
+        "llm_rank_batch_size": _env_int(
+            "LLM_RANK_BATCH_SIZE", defaults.llm_rank_batch_size
+        ),
         "keywords": _env_list("KEYWORDS", defaults.keywords),
         "location": os.getenv("LOCATION", defaults.location),
         "pages_per_keyword": _env_int(

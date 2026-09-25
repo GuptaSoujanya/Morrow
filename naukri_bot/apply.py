@@ -238,6 +238,37 @@ def _result(
     )
 
 
+def _visible_control_texts(driver: WebDriver, limit: int = 10) -> str:
+    """List the visible clickable labels on the page, for diagnosis.
+
+    An apply control matched _apply_controls_present but classification found
+    nothing to click, and the two are impossible to tell apart from the status
+    alone. Naming what was actually on screen turns that into a one-line
+    diagnosis, the way reporting 'continue with google' identified a signed-out
+    session immediately.
+    """
+    try:
+        elements = driver.find_elements(By.CSS_SELECTOR, "button, a, [role='button']")
+    except WebDriverException as exc:
+        logger.debug("Could not list page controls: %s", exc)
+        return ""
+
+    seen = []
+    for element in elements:
+        try:
+            if not element.is_displayed():
+                continue
+            text = _normalise(_element_text(element) or "")
+        except WebDriverException:
+            continue
+        if not text or len(text) > 40 or text in seen:
+            continue
+        seen.append(text)
+        if len(seen) >= limit:
+            break
+    return repr(seen) if seen else ""
+
+
 def _looks_logged_out(driver: WebDriver) -> bool:
     try:
         controls = driver.find_elements(
@@ -304,7 +335,12 @@ def apply_to_job(
                     ApplyStatus.NO_APPLY_BUTTON,
                     "no apply control rendered within %ds" % int(_CONTROL_RENDER_TIMEOUT),
                 )
-            return _result(job, ApplyStatus.NO_APPLY_BUTTON, "no actionable apply control")
+            return _result(
+                job,
+                ApplyStatus.NO_APPLY_BUTTON,
+                "no actionable apply control; page offered %s"
+                % (_visible_control_texts(driver) or "no visible buttons or links"),
+            )
         if classification == "external":
             text = _element_text(button) or "Apply on company site"
             logger.info(

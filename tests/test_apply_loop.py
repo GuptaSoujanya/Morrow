@@ -187,6 +187,75 @@ def test_terminal_status_stops_the_run_immediately(fake_naukri, tmp_path):
     assert len(attempted) == 4, "loop continued past a terminal status"
 
 
+def test_per_company_cap_spreads_applications(fake_naukri, tmp_path):
+    """One prolific poster must not take a large share of the day's quota."""
+    install, attempted = fake_naukri
+    # 20 roles at one employer, all scoring well, then 10 elsewhere.
+    hoard = [_scored(80.0 - i * 0.01, 1, "soul%02d" % i) for i in range(20)]
+    others = [_scored(60.0, 1, "other%02d" % i) for i in range(10)]
+    for s in hoard:
+        s.job.company = "Soul Ai"
+    for i, s in enumerate(others):
+        s.job.company = "Company %d" % i
+    install(hoard + others, {})
+
+    summary = _run(tmp_path, _settings(target_applications=10, max_per_company=3))
+
+    soul = [j for j in attempted if j.startswith("soul")]
+    assert len(soul) == 3, "cap did not hold: %d roles attempted at one company" % len(soul)
+    assert summary.applied == 10, "cap must not stop the run reaching its target"
+
+
+def test_company_cap_ignores_suffix_and_case_differences(fake_naukri, tmp_path):
+    """Naukri prints the same employer inconsistently; the cap must still group them."""
+    install, attempted = fake_naukri
+    variants = ["Soul Ai", "SOUL AI", "Soul Ai Pvt Ltd", "soul ai private limited"]
+    jobs = [_scored(80.0 - i, 1, "v%d" % i) for i in range(4)]
+    for job, name in zip(jobs, variants):
+        job.job.company = name
+    filler = [_scored(60.0, 1, "f%02d" % i) for i in range(10)]
+    for i, f in enumerate(filler):
+        f.job.company = "Other %d" % i
+    install(jobs + filler, {})
+
+    _run(tmp_path, _settings(target_applications=5, max_per_company=2))
+
+    assert len([j for j in attempted if j.startswith("v")]) == 2, (
+        "suffix or case variants were treated as different companies"
+    )
+
+
+def test_external_roles_survive_an_interrupted_run(fake_naukri, tmp_path, monkeypatch):
+    """The worklist is written as roles are found, not after the loop ends.
+
+    A terminal status still breaks the loop cleanly and reaches the post-loop
+    write, so it proves nothing here. This kills the run mid-loop the way a
+    crash or a SIGKILL does, where no code after the loop ever executes.
+    """
+    install, attempted = fake_naukri
+    queue = [_scored(80.0, 1, "j%02d" % i) for i in range(10)]
+    install(queue, {"j%02d" % i: ApplyStatus.EXTERNAL_SKIPPED for i in range(4)})
+
+    # Blow up on the 5th job, after four company-site roles have been found.
+    real_apply = apply_module.apply_to_job
+
+    def _explode(driver, job, profile, engine, settings):
+        if job.job_id == "j04":
+            raise RuntimeError("simulated crash mid-loop")
+        return real_apply(driver, job, profile, engine, settings)
+
+    monkeypatch.setattr(apply_module, "apply_to_job", _explode)
+
+    with pytest.raises(RuntimeError):
+        _run(tmp_path, _settings(target_applications=50))
+
+    written = (tmp_path / "external_jobs.md").read_text()
+    for i in range(4):
+        assert "job-listings-j%02d" % i in written, (
+            "company-site role found before the crash was lost"
+        )
+
+
 def test_company_site_roles_are_recorded_for_manual_application(fake_naukri, tmp_path):
     install, attempted = fake_naukri
     queue = [_scored(80.0, 1, "j%02d" % i) for i in range(10)]
