@@ -106,6 +106,9 @@ def load_settings(
             "MAX_DAYS_OLD_FALLBACK", defaults.max_days_old_fallback
         ),
         "max_per_company": _env_int("MAX_PER_COMPANY", defaults.max_per_company),
+        "min_llm_rank_coverage": _env_float(
+            "MIN_LLM_RANK_COVERAGE", defaults.min_llm_rank_coverage
+        ),
         "default_skill_experience_years": _env_float(
             "DEFAULT_SKILL_EXPERIENCE_YEARS",
             defaults.default_skill_experience_years,

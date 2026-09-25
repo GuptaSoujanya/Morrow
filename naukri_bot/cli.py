@@ -514,6 +514,35 @@ def run(
         ranked = ranking.rank(profile, candidates, client, settings)
         summary.ranked = len(ranked)
 
+        rated = sum(1 for scored in ranked if scored.llm_score is not None)
+        coverage = (rated / len(ranked)) if ranked else 0.0
+        logger.info(
+            "LLM ranking covered %d of %d jobs (%.0f%%)",
+            rated,
+            len(ranked),
+            coverage * 100,
+        )
+        if (
+            not settings.dry_run
+            and settings.min_llm_rank_coverage > 0
+            and coverage < settings.min_llm_rank_coverage
+        ):
+            # A lexical score and a blended score are different quantities, so
+            # min_score no longer means what the user chose and the shortlist is
+            # not the one they asked for. Stopping costs a run; applying anyway
+            # spends quota on jobs that were never really ranked.
+            logger.error(
+                "Only %.0f%% of jobs carry an LLM score, below the required %.0f%%. "
+                "Ranking is effectively lexical, so min_score means something "
+                "different and no application will be sent. Re-run when the LLM "
+                "backend is working, or set MIN_LLM_RANK_COVERAGE=0 to accept "
+                "lexical-only ranking.",
+                coverage * 100,
+                settings.min_llm_rank_coverage * 100,
+            )
+            summary.quota_after = ledger.quota_used()
+            return summary
+
         selected = ranking.select_for_application(
             ranked, settings, ledger.has_applied
         )

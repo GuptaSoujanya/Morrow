@@ -286,6 +286,12 @@ class Settings:
     # in a technology the resume does not mention. 0 disables the rule and
     # those questions go back to abstaining.
     default_skill_experience_years: float = 0.0
+    # Smallest share of ranked jobs that must carry a real LLM score before
+    # any application is sent. A lexical score and a blended score are not
+    # the same quantity, so min_score means something different once the LLM
+    # drops out, and applying anyway spends quota against a bar the user
+    # never chose. 0 allows a fully lexical run.
+    min_llm_rank_coverage: float = 0.5
     # Jobs per LLM ranking call. Larger batches mean fewer sequential calls
     # and a much shorter run, at the cost of a bigger prompt per call.
     llm_rank_batch_size: int = 20

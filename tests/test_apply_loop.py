@@ -49,6 +49,9 @@ def _settings(**overrides):
 
 
 def _scored(score, days, jid):
+    # llm_score is set because these tests are about the apply loop, not about
+    # ranking health: without it every job looks unranked and the LLM coverage
+    # guard stops the run before the loop is reached.
     return ScoredJob(
         job=JobPosting(
             job_id=jid,
@@ -58,6 +61,7 @@ def _scored(score, days, jid):
             posted_days_ago=days,
         ),
         score=score,
+        llm_score=score,
     )
 
 

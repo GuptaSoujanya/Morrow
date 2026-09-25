@@ -79,7 +79,21 @@ class ClaudeCLIClient(LLMClient):
         self.settings = settings or Settings()
 
     def available(self) -> bool:
-        return shutil.which("claude") is not None
+        """Report whether the claude executable can be found.
+
+        A run once reported the CLI present at startup and missing six minutes
+        later in the same process, which silently downgraded ranking to lexical
+        scoring. The cause was never identified, so this records what the lookup
+        actually saw rather than leaving the next occurrence equally opaque.
+        """
+        found = shutil.which("claude")
+        if found is None:
+            logger.warning(
+                "claude executable not found; PATH=%s",
+                os.environ.get("PATH", "<unset>"),
+            )
+            return False
+        return True
 
     def complete_json(
         self, prompt: str, schema_hint: str

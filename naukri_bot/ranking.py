@@ -297,12 +297,17 @@ def select_for_application(
     # concatenating preserves "best first" within every tier.
     selected = tiers[1] + tiers[2] + tiers[3]
 
+    # With the floor disabled the bar that actually rejected these jobs is
+    # min_score, and reporting "below the score floor of 0" was nonsense.
+    effective_bar = (
+        settings.min_score_floor if settings.min_score_floor > 0 else settings.min_score
+    )
     logger.info(
-        "Application selection dropped %d already applied, %d below the score "
-        "floor of %.0f, and %d older than the %d day fallback limit",
+        "Application selection dropped %d already applied, %d scoring under %.0f, "
+        "and %d older than %d days",
         dropped_applied,
         dropped_below_floor,
-        settings.min_score_floor,
+        effective_bar,
         dropped_stale,
         settings.max_days_old_fallback,
     )
