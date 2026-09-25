@@ -280,6 +280,12 @@ class Settings:
     # Stops one prolific poster's near-duplicate listings from taking a
     # large share of the day's applications. 0 disables the cap.
     max_per_company: int = 3
+    # Years to answer for any "how many years of experience in X" question,
+    # whatever X is. The LLM cannot do this: it is told to answer only from
+    # the facts and never infer, and it correctly refuses to claim experience
+    # in a technology the resume does not mention. 0 disables the rule and
+    # those questions go back to abstaining.
+    default_skill_experience_years: float = 0.0
     # Jobs per LLM ranking call. Larger batches mean fewer sequential calls
     # and a much shorter run, at the cost of a bigger prompt per call.
     llm_rank_batch_size: int = 20

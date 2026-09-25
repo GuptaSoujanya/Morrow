@@ -3,6 +3,7 @@
 import hashlib
 import json
 import logging
+import re
 import os
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
@@ -81,6 +82,12 @@ def _profile_fingerprint(profile: Profile) -> str:
     payload = json.dumps(profile.known_facts(), sort_keys=True, default=str)
     payload += profile.resume_text or ""
     return hashlib.sha1(payload.encode("utf-8")).hexdigest()[:16]
+
+
+_SKILL_YEARS_RE = re.compile(
+    r"(how many years|years of (experience|exp)\b|relevant experience"
+    r"|experience in years|yrs of (experience|exp)\b)"
+)
 
 
 class AnswerEngine:
@@ -249,7 +256,45 @@ class AnswerEngine:
                     confidence=1.0,
                 )
             )
-        return None
+        return self._skill_years_answer(normalised_question, options)
+
+    def _skill_years_answer(
+        self, normalised_question: str, options: Optional[List[str]]
+    ) -> Optional[AnswerResolution]:
+        """Answer "how many years of experience in X" for any X, if configured.
+
+        Reached only after the specific mappings above, so total and overall
+        experience still answer from total_experience_years. This exists because
+        the instruction cannot live in profile.yaml: resolve_answer tells the
+        model to answer only from the supplied facts and never infer, and it
+        rightly declines to claim years in a technology the resume never
+        mentions. Stating the policy as a rule makes it the user's explicit
+        choice rather than something coaxed out of the model.
+        """
+        years = self.settings.default_skill_experience_years
+        if years <= 0:
+            return None
+        if not _SKILL_YEARS_RE.search(normalised_question):
+            return None
+
+        text = ("%g" % years)
+        if options is not None:
+            matched = None
+            for candidate in (text, "%s years" % text, "%s year" % text):
+                matched = self._exact_option(candidate, options)
+                if matched is not None:
+                    break
+            if matched is None:
+                return None  # let the LLM try to pick from the offered choices
+            text = matched
+        return AnswerResolution.resolved(
+            Answer(
+                text=text,
+                grounded_in="default_skill_experience_years",
+                source=AnswerSource.PROFILE,
+                confidence=1.0,
+            )
+        )
 
     @staticmethod
     def _profile_candidates(field_name: str, value: Any) -> List[str]:
