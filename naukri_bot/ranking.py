@@ -262,6 +262,41 @@ def _tier_of(candidate: ScoredJob, settings: Settings) -> Optional[int]:
     return None
 
 
+def drop_stale_candidates(
+    jobs: List[JobPosting], settings: Settings
+) -> Tuple[List[JobPosting], int]:
+    """Remove jobs too old to be applied to, before they are sent to the LLM.
+
+    Age is only used as a cut in select_for_application, which runs after
+    ranking, so a run scored every collected posting and then discarded the
+    stale ones: on 25 September that was 556 of 900, about five sixths of an
+    hour of LLM calls spent on jobs that could never be applied to. Because
+    max_candidates is a hard cap, those postings also displaced fresher ones
+    from the pool.
+
+    Jobs whose age could not be parsed are kept. _tier_of treats an unknown age
+    as fresh, and a large share of selected jobs have no readable age, so
+    dropping them here would quietly gut the shortlist.
+    """
+    limit = max(settings.max_days_old, settings.max_days_old_fallback)
+    kept = [
+        job
+        for job in jobs
+        if job.posted_days_ago is None or job.posted_days_ago <= limit
+    ]
+    dropped = len(jobs) - len(kept)
+    if dropped:
+        logger.info(
+            "Dropped %d of %d candidates older than %d days before ranking; "
+            "%d go to the LLM",
+            dropped,
+            len(jobs),
+            limit,
+            len(kept),
+        )
+    return kept, dropped
+
+
 def select_for_application(
     ranked: List[ScoredJob], settings: Settings, is_already_applied
 ) -> List[ScoredJob]:

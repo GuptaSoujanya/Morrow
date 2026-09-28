@@ -511,6 +511,19 @@ def run(
         for job in candidates:
             ledger.record_seen(job)
 
+        # Age is a hard gate, so applying it before ranking rather than after
+        # keeps the LLM budget on jobs that can actually be applied to.
+        candidates, dropped_stale = ranking.drop_stale_candidates(candidates, settings)
+        if not candidates:
+            logger.warning(
+                "Every one of the %d collected postings is older than %d days. "
+                "Nothing was applied to.",
+                summary.collected,
+                max(settings.max_days_old, settings.max_days_old_fallback),
+            )
+            summary.quota_after = ledger.quota_used()
+            return summary
+
         ranked = ranking.rank(profile, candidates, client, settings)
         summary.ranked = len(ranked)
 
