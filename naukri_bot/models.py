@@ -292,6 +292,11 @@ class Settings:
     # drops out, and applying anyway spends quota against a bar the user
     # never chose. 0 allows a fully lexical run.
     min_llm_rank_coverage: float = 0.5
+    # Consecutive keyword searches returning nothing before search collection
+    # is abandoned. When Naukri's search page is down every search waits the
+    # full render timeout and returns nothing, so 21 keywords cost about 14
+    # minutes of requests against a failing endpoint. 0 disables the guard.
+    max_empty_searches: int = 3
     # Jobs per LLM ranking call. Larger batches mean fewer sequential calls
     # and a much shorter run, at the cost of a bigger prompt per call.
     llm_rank_batch_size: int = 20

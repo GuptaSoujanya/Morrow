@@ -106,6 +106,9 @@ def load_settings(
             "MAX_DAYS_OLD_FALLBACK", defaults.max_days_old_fallback
         ),
         "max_per_company": _env_int("MAX_PER_COMPANY", defaults.max_per_company),
+        "max_empty_searches": _env_int(
+            "MAX_EMPTY_SEARCHES", defaults.max_empty_searches
+        ),
         "min_llm_rank_coverage": _env_float(
             "MIN_LLM_RANK_COVERAGE", defaults.min_llm_rank_coverage
         ),

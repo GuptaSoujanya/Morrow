@@ -477,20 +477,39 @@ def collect_candidates(
             collect_from_recommended(driver, tab_id=tab_id),
             "recommended:%s" % tab_id,
         )
+    consecutive_empty = 0
     for keyword in keywords:
         if len(result) >= settings.max_candidates:
             break
         search_source = "search:%s" % keyword
-        add_unique(
-            collect_from_search(
-                driver,
-                keyword,
-                location=location,
-                pages=settings.pages_per_keyword,
-                sort_by_date=True,
-            ),
-            search_source,
+        found = collect_from_search(
+            driver,
+            keyword,
+            location=location,
+            pages=settings.pages_per_keyword,
+            sort_by_date=True,
         )
+        add_unique(found, search_source)
+
+        # A search that returns nothing waits the full render timeout first, so
+        # when the search page itself is failing every keyword costs that timeout
+        # and yields nothing. Naukri's search broke for logged-in users on
+        # 28 September and the run was on course to spend fourteen minutes
+        # requesting a page that was returning an error to everyone.
+        if found:
+            consecutive_empty = 0
+            continue
+        consecutive_empty += 1
+        if 0 < settings.max_empty_searches <= consecutive_empty:
+            logger.warning(
+                "Abandoning keyword search: %d searches in a row returned no "
+                "jobs, so the search page is most likely failing rather than "
+                "every keyword genuinely having no matches. Continuing with the "
+                "%d candidates already collected.",
+                consecutive_empty,
+                len(result),
+            )
+            break
 
     for source, count in breakdown.items():
         logger.info("Candidate source %s contributed %d unique jobs", source, count)
