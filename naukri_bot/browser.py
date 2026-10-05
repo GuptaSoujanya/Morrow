@@ -60,7 +60,8 @@ def _add_common_options(options, user_agent: str, headless: bool,
     options.add_argument("--disable-blink-features=AutomationControlled")
     options.add_experimental_option("excludeSwitches", ["enable-automation"])
     options.add_experimental_option("useAutomationExtension", False)
-    options.add_argument("--user-agent=%s" % user_agent)
+    if user_agent:
+        options.add_argument("--user-agent=%s" % user_agent)
     options.add_argument("--start-maximized")
     options.add_argument("--disable-notifications")
     options.add_argument("--disable-dev-shm-usage")
@@ -78,7 +79,7 @@ def _chrome_options(
     settings: Settings, profile: Optional[str] = None
 ) -> webdriver.ChromeOptions:
     options = webdriver.ChromeOptions()
-    _add_common_options(options, _CHROME_USER_AGENT, settings.headless, profile)
+    _add_common_options(options, settings.user_agent, settings.headless, profile)
     return options
 
 
@@ -86,7 +87,7 @@ def _edge_options(
     settings: Settings, profile: Optional[str] = None
 ) -> webdriver.EdgeOptions:
     options = webdriver.EdgeOptions()
-    _add_common_options(options, _EDGE_USER_AGENT, settings.headless, profile)
+    _add_common_options(options, settings.user_agent, settings.headless, profile)
     return options
 
 

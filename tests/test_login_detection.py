@@ -41,11 +41,51 @@ def test_the_url_alone_does_not_prove_a_session_when_we_navigated_there():
     assert auth.is_logged_in(driver, trust_url=False) is False
 
 
-def test_a_signed_out_marker_beats_everything():
+def test_a_real_signed_in_marker_wins_over_login_markup():
+    """Naukri keeps login markup in the DOM of signed-in pages.
+
+    An earlier version of this test asserted the opposite, and that ordering
+    reported a valid session as anonymous: _selector_present matches DOM
+    presence rather than what is on screen.
+    """
     driver = _FakeDriver("https://www.naukri.com/mnjuser/homepage",
                          present=[SIGNED_OUT, SIGNED_IN])
-    assert auth.is_logged_in(driver) is False, (
-        "the login/register block means anonymous, whatever else is on the page"
+    assert auth.is_logged_in(driver, trust_url=False) is True
+
+
+def test_the_anonymous_nav_alone_means_signed_out():
+    driver = _FakeDriver("https://www.naukri.com/mnjuser/homepage",
+                         present=[SIGNED_OUT])
+    assert auth.is_logged_in(driver, trust_url=False) is False
+
+
+def test_a_login_link_is_not_evidence_of_being_signed_out():
+    """The selector that broke it: signed-in pages carry login links too."""
+    assert "a[href*='nlogin/login']" not in auth._SIGNED_OUT_SELECTORS
+
+
+@pytest.mark.parametrize("page_text", [
+    "login using otp",          # Naukri offers this on every login page
+    "use otp to login",
+    "login with password or otp",
+])
+def test_the_otp_login_option_is_not_a_challenge(page_text):
+    """Every login was reported as needing a human because "otp" matched here."""
+    assert not any(m in page_text for m in auth._CHALLENGE_TEXT), (
+        "%r was treated as a captcha/OTP challenge" % page_text
+    )
+
+
+@pytest.mark.parametrize("page_text", [
+    "enter otp sent to your mobile",
+    "please enter the otp",
+    "otp sent to +91xxxxx",
+    "enter captcha to continue",
+    "i'm not a robot",
+])
+def test_a_genuine_challenge_is_still_detected(page_text):
+    assert any(m in page_text for m in auth._CHALLENGE_TEXT), (
+        "%r should have been detected as a challenge" % page_text
     )
 
 

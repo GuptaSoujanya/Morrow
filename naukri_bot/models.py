@@ -297,6 +297,12 @@ class Settings:
     # mornings. That form intermittently reports itself as not interactable and
     # has cost two runs. Empty disables it and every run logs in afresh.
     browser_profile_dir: str = ".browser-profile"
+    # Override the browser's User-Agent header. Empty means send the browser's
+    # own, which is the only value guaranteed to agree with what JavaScript
+    # reports. A pinned string goes stale: the bot claimed Chrome 131 while
+    # running Chrome 154, and navigator.userAgentData reports the real version,
+    # so the mismatch was an automation signal rather than a disguise.
+    user_agent: str = ""
     # Random pause between successful applications. Applying back to back is the
     # most machine-like thing the bot does; Naukri's terms do not permit
     # automation at all, so looking like a person browsing matters. 0 disables.

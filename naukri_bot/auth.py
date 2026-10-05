@@ -34,11 +34,10 @@ _SUCCESS_SELECTORS = (
 )
 # Naukri's global nav shows the login/register block only to anonymous users, so
 # it is proof of the opposite. It used to sit in _SUCCESS_SELECTORS.
-_SIGNED_OUT_SELECTORS = (
-    "#root .nI-gNb-log-reg",
-    "a[href*='nlogin/login']",
-    "#login_Layer",
-)
+# Only the anonymous global-nav block. A bare link to the login page is not
+# evidence: signed-in pages carry those too, and presence is checked in the DOM
+# rather than on screen.
+_SIGNED_OUT_SELECTORS = ("#root .nI-gNb-log-reg",)
 _CHALLENGE_SELECTORS = (
     "iframe[src*='recaptcha']",
     "[class*='captcha']",
@@ -48,7 +47,19 @@ _CHALLENGE_SELECTORS = (
     "input[name*='otp']",
 )
 _ERROR_SELECTORS = (".erLbl", ".commonErrorMsg", "[class*='error']")
-_CHALLENGE_TEXT = ("captcha", "otp", "verification code", "recaptcha")
+# Phrases that mean a challenge is actually being asked for. "otp" alone
+# matched Naukri's "Login using OTP" alternative, which is offered on every
+# login page, so every login was reported as needing a human.
+_CHALLENGE_TEXT = (
+    "enter otp",
+    "enter the otp",
+    "otp sent",
+    "verify otp",
+    "otp has been sent",
+    "enter captcha",
+    "verification code",
+    "i'm not a robot",
+)
 _CREDENTIAL_TEXT = (
     "invalid username",
     "invalid password",
@@ -146,6 +157,12 @@ def is_logged_in(driver: WebDriver, trust_url: bool = True) -> bool:
     reported "Reusing the saved Naukri session" against a signed-out browser
     for exactly that reason.
     """
+    # A real signed-in marker settles it first. _selector_present matches DOM
+    # presence rather than visibility, and Naukri keeps login links in the
+    # markup of signed-in pages, so checking signed-out markers first reported
+    # a valid session as anonymous.
+    if _selector_present(driver, _SUCCESS_SELECTORS):
+        return True
     if _selector_present(driver, _SIGNED_OUT_SELECTORS):
         return False
     if trust_url:
