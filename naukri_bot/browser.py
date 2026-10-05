@@ -1,9 +1,10 @@
 """Browser creation and human-like interaction helpers."""
 
 import logging
+import os
 import random
 import time
-from typing import List
+from typing import List, Optional
 
 from requests.exceptions import RequestException
 from selenium import webdriver
@@ -42,7 +43,20 @@ Object.defineProperty(navigator, 'languages', {get: () => ['en-US', 'en']});
 """
 
 
-def _add_common_options(options, user_agent: str, headless: bool) -> None:
+def profile_dir_for(settings: Settings, browser: str) -> Optional[str]:
+    """Absolute per-browser profile directory, or None when disabled.
+
+    Chrome and Edge must not share a user-data directory, so each gets its own
+    subdirectory under the configured base.
+    """
+    raw = (settings.browser_profile_dir or "").strip()
+    if not raw:
+        return None
+    return os.path.join(os.path.abspath(os.path.expanduser(raw)), browser)
+
+
+def _add_common_options(options, user_agent: str, headless: bool,
+                        profile: Optional[str] = None) -> None:
     options.add_argument("--disable-blink-features=AutomationControlled")
     options.add_experimental_option("excludeSwitches", ["enable-automation"])
     options.add_experimental_option("useAutomationExtension", False)
@@ -51,19 +65,28 @@ def _add_common_options(options, user_agent: str, headless: bool) -> None:
     options.add_argument("--disable-notifications")
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--no-sandbox")
+    if profile:
+        # Keeps cookies between runs, so a verified session is reused and the
+        # login form is never touched while it holds.
+        os.makedirs(profile, exist_ok=True)
+        options.add_argument("--user-data-dir=%s" % profile)
     if headless:
         options.add_argument("--headless=new")
 
 
-def _chrome_options(settings: Settings) -> webdriver.ChromeOptions:
+def _chrome_options(
+    settings: Settings, profile: Optional[str] = None
+) -> webdriver.ChromeOptions:
     options = webdriver.ChromeOptions()
-    _add_common_options(options, _CHROME_USER_AGENT, settings.headless)
+    _add_common_options(options, _CHROME_USER_AGENT, settings.headless, profile)
     return options
 
 
-def _edge_options(settings: Settings) -> webdriver.EdgeOptions:
+def _edge_options(
+    settings: Settings, profile: Optional[str] = None
+) -> webdriver.EdgeOptions:
     options = webdriver.EdgeOptions()
-    _add_common_options(options, _EDGE_USER_AGENT, settings.headless)
+    _add_common_options(options, _EDGE_USER_AGENT, settings.headless, profile)
     return options
 
 
@@ -96,7 +119,27 @@ def _discard_driver(driver: WebDriver) -> None:
 
 
 def create_driver(settings: Settings) -> webdriver.Remote:
-    """Create a stealth-configured Chrome or Edge WebDriver."""
+    """Create a stealth-configured Chrome or Edge WebDriver.
+
+    Tries the persistent profile first and falls back to a throwaway session if
+    that fails, because a profile directory already held open by another Chrome
+    window cannot be reused and must not block the morning run.
+    """
+    if profile_dir_for(settings, "chrome") is None:
+        return _try_create_driver(settings, use_profile=False)
+    try:
+        return _try_create_driver(settings, use_profile=True)
+    except BrowserError as exc:
+        logger.warning(
+            "Could not start a browser with the persistent profile (%s). Close "
+            "any Chrome window using it. Continuing without it, so this run "
+            "will log in from scratch.",
+            exc,
+        )
+        return _try_create_driver(settings, use_profile=False)
+
+
+def _try_create_driver(settings: Settings, use_profile: bool) -> webdriver.Remote:
     if settings.headless:
         logger.warning(
             "Headless mode materially raises automation detection risk on Naukri"
@@ -107,10 +150,15 @@ def create_driver(settings: Settings) -> webdriver.Remote:
     try:
         driver = webdriver.Chrome(
             service=ChromeService(ChromeDriverManager().install()),
-            options=_chrome_options(settings),
+            options=_chrome_options(
+                settings, profile_dir_for(settings, "chrome") if use_profile else None
+            ),
         )
         configured = _configure_driver(driver)
-        logger.info("Using Chrome with webdriver-manager")
+        logger.info(
+            "Using Chrome with webdriver-manager%s",
+            " and the persistent profile" if use_profile else "",
+        )
         return configured
     except (WebDriverException, RequestException, OSError) as exc:
         failures.append("Chrome/webdriver-manager: %s" % type(exc).__name__)
@@ -126,7 +174,9 @@ def create_driver(settings: Settings) -> webdriver.Remote:
     try:
         driver = webdriver.Edge(
             service=EdgeService(EdgeChromiumDriverManager().install()),
-            options=_edge_options(settings),
+            options=_edge_options(
+                settings, profile_dir_for(settings, "edge") if use_profile else None
+            ),
         )
         configured = _configure_driver(driver)
         logger.info("Using Edge with webdriver-manager")
@@ -143,7 +193,11 @@ def create_driver(settings: Settings) -> webdriver.Remote:
 
     driver = None
     try:
-        driver = webdriver.Chrome(options=_chrome_options(settings))
+        driver = webdriver.Chrome(
+            options=_chrome_options(
+                settings, profile_dir_for(settings, "chrome") if use_profile else None
+            )
+        )
         configured = _configure_driver(driver)
         logger.info("Using Chrome with Selenium Manager")
         return configured

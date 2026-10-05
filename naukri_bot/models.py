@@ -292,6 +292,16 @@ class Settings:
     # drops out, and applying anyway spends quota against a bar the user
     # never chose. 0 allows a fully lexical run.
     min_llm_rank_coverage: float = 0.5
+    # Directory for a persistent browser profile, so the Naukri session
+    # survives between runs and the login form is not touched at all on most
+    # mornings. That form intermittently reports itself as not interactable and
+    # has cost two runs. Empty disables it and every run logs in afresh.
+    browser_profile_dir: str = ".browser-profile"
+    # Random pause between successful applications. Applying back to back is the
+    # most machine-like thing the bot does; Naukri's terms do not permit
+    # automation at all, so looking like a person browsing matters. 0 disables.
+    apply_delay_min_s: float = 10.0
+    apply_delay_max_s: float = 30.0
     # Consecutive keyword searches returning nothing before search collection
     # is abandoned. When Naukri's search page is down every search waits the
     # full render timeout and returns nothing, so 21 keywords cost about 14

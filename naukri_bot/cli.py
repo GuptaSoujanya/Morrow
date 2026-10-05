@@ -21,7 +21,9 @@ Exit codes: 0 ok, 1 configuration problem, 2 login needs a human, 3 run failed.
 
 import argparse
 import logging
+import random
 import sys
+import time
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -241,6 +243,22 @@ def derive_keywords(profile: Profile, settings: Settings) -> List[str]:
             "falling back to the recommended feed only."
         )
     return keywords
+
+
+def _pause_between_applications(settings: Settings) -> None:
+    """Wait a random interval after an application.
+
+    Applying back to back is the most machine-like thing the run does. Naukri
+    does not permit automation at all, so the cost of looking like a person
+    browsing is a few minutes and the cost of not doing so is the account.
+    """
+    low = max(0.0, settings.apply_delay_min_s)
+    high = max(low, settings.apply_delay_max_s)
+    if high <= 0.0:
+        return
+    delay = random.uniform(low, high)
+    logger.info("Pausing %.0fs before the next job.", delay)
+    time.sleep(delay)
 
 
 def _company_key(company: Optional[str]) -> str:
@@ -464,7 +482,7 @@ def run(
 
         driver = browser.create_driver(settings)
 
-        login_result = auth.login(driver, settings)
+        login_result = auth.ensure_logged_in(driver, settings)
         if not login_result.ok:
             if login_result.needs_manual:
                 raise _NeedsHuman(login_result.reason)
@@ -630,6 +648,12 @@ def run(
             _tally(summary, result)
             if result.status == ApplyStatus.APPLIED and company_key:
                 per_company[company_key] = per_company.get(company_key, 0) + 1
+            if (
+                result.status == ApplyStatus.APPLIED
+                and not settings.dry_run
+                and summary.applied < settings.target_applications
+            ):
+                _pause_between_applications(settings)
             logger.info("      -> %s (%s)", result.status, result.detail or "-")
 
             if result.status == ApplyStatus.EXTERNAL_SKIPPED:

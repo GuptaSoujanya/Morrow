@@ -41,6 +41,8 @@ def _settings(**overrides):
         min_score=55.0,
         max_days_old=3,
         min_score_floor=50.0,
+        apply_delay_min_s=0.0,
+        apply_delay_max_s=0.0,
         max_days_old_fallback=14,
         dry_run=False,
     )
@@ -88,7 +90,9 @@ def fake_naukri(monkeypatch, tmp_path):
     monkeypatch.setattr(llm, "build_client", lambda settings: _Client())
     monkeypatch.setattr(browser, "create_driver", lambda settings: object())
     monkeypatch.setattr(
-        auth, "login", lambda driver, settings: LoginResult(ok=True, reason="verified")
+        auth,
+        "ensure_logged_in",
+        lambda driver, settings: LoginResult(ok=True, reason="session_reused"),
     )
     monkeypatch.setattr(sources, "collect_candidates", lambda *a, **k: [])
 

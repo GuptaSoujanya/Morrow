@@ -45,3 +45,6 @@ naukri_bot.db-shm
 # Run outputs (job data, regenerated each run)
 external_jobs.md
 unanswered_questions.md
+
+# Persistent browser profile: holds the live Naukri login session
+.browser-profile/

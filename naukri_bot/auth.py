@@ -221,8 +221,22 @@ def login(driver: WebDriver, settings: Settings) -> LoginResult:
     )
 
 
+_DASHBOARD_URL = "https://www.naukri.com/mnjuser/homepage"
+
+
 def ensure_logged_in(driver: WebDriver, settings: Settings) -> LoginResult:
-    """Reuse an authenticated session or perform a verified login."""
+    """Reuse a saved session if there is one, otherwise log in.
+
+    is_logged_in only inspects the page already open, and a fresh driver sits on
+    about:blank, so the dashboard is loaded first. With a persistent browser
+    profile this is normally all that happens: the login form is never touched,
+    and that form is what intermittently reports itself as not interactable.
+    """
     if is_logged_in(driver):
-        return LoginResult(ok=True, reason="verified", needs_manual=False)
+        return LoginResult(ok=True, reason="session_reused", needs_manual=False)
+
+    if safe_get(driver, _DASHBOARD_URL) and is_logged_in(driver):
+        logger.info("Reusing the saved Naukri session; no login needed")
+        return LoginResult(ok=True, reason="session_reused", needs_manual=False)
+
     return login(driver, settings)

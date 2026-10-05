@@ -109,6 +109,15 @@ def load_settings(
         "max_empty_searches": _env_int(
             "MAX_EMPTY_SEARCHES", defaults.max_empty_searches
         ),
+        "browser_profile_dir": os.getenv(
+            "BROWSER_PROFILE_DIR", defaults.browser_profile_dir
+        ),
+        "apply_delay_min_s": _env_float(
+            "APPLY_DELAY_MIN_S", defaults.apply_delay_min_s
+        ),
+        "apply_delay_max_s": _env_float(
+            "APPLY_DELAY_MAX_S", defaults.apply_delay_max_s
+        ),
         "min_llm_rank_coverage": _env_float(
             "MIN_LLM_RANK_COVERAGE", defaults.min_llm_rank_coverage
         ),
