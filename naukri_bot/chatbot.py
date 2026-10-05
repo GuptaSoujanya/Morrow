@@ -228,7 +228,9 @@ def handle_radio(driver: WebDriver, answer_engine: AnswerEngine) -> Optional[boo
             logger.error("Radio option %r did not become selected", resolution.answer.text)
             return False
         return click_send(driver)
-    logger.error("Resolved radio answer %r was absent from the rendered options", resolution.answer.text)
+    # The fact was there and the answer was resolved; the rendering is what did
+    # not match. Reporting that as an abstain hid the difference.
+    answer_engine.record_option_mismatch(question, resolution.answer.text, options)
     return None
 
 
@@ -263,20 +265,34 @@ def _option_label(container: WebElement, control: WebElement) -> str:
 
 
 def _handle_checkbox(driver: WebDriver, answer_engine: AnswerEngine) -> Optional[bool]:
+    """Answer a select-all-that-apply question by ticking every match.
+
+    Previously this resolved a single answer and ticked the one option equal to
+    it, so a question wanting several was unanswerable and silently abandoned.
+    """
     drawers = _visible(driver.find_elements(By.CSS_SELECTOR, _DRAWER))
     if not drawers:
         return False
     controls = _visible(drawers[0].find_elements(By.CSS_SELECTOR, _CHECKBOXES))
     if not controls:
         return False
+
     options = [_option_label(drawers[0], control) for control in controls]
     question = _latest_question(driver, _QUESTION_WAIT)
-    resolution = answer_engine.resolve(question, options=options, field_type="checkbox")
-    if resolution.abstained or resolution.answer is None:
+    if not any(option.strip() for option in options):
+        logger.error(
+            "Checkbox question %r rendered %d control(s) with no readable labels",
+            question,
+            len(controls),
+        )
         return None
-    # Resolving takes seconds - waiting for the question to paint, then an LLM
-    # call - and Naukri re-renders the drawer in that window, so any handle
-    # captured earlier is stale by now.
+
+    selections, _reason = answer_engine.resolve_many(question, options)
+    if not selections:
+        return None
+
+    # Resolving takes seconds and Naukri re-renders the drawer in that window,
+    # so every handle captured before the call is stale.
     drawers = _visible(driver.find_elements(By.CSS_SELECTOR, _DRAWER))
     if not drawers:
         logger.error("Chatbot drawer disappeared while the answer was resolved")
@@ -286,16 +302,36 @@ def _handle_checkbox(driver: WebDriver, answer_engine: AnswerEngine) -> Optional
         logger.error("Checkbox options disappeared while the answer was resolved")
         return None
     options = [_option_label(drawers[0], control) for control in controls]
-    wanted = _normalise(resolution.answer.text)
+
+    wanted = {_normalise(selection) for selection in selections}
+    ticked = []
     for index, option in enumerate(options):
-        if _normalise(option) != wanted:
+        if _normalise(option) not in wanted:
             continue
-        controls[index].click()
-        if not controls[index].is_selected():
-            logger.error("Checkbox option %r did not become selected", option)
+        try:
+            if not controls[index].is_selected():
+                controls[index].click()
+            if not controls[index].is_selected():
+                logger.error("Checkbox option %r did not become selected", option)
+                return False
+            ticked.append(option)
+        except (ElementClickInterceptedException, WebDriverException) as exc:
+            logger.error("Could not tick %r (%s): %s", option, type(exc).__name__, exc)
             return False
-        return click_send(driver)
-    return None
+
+    if not ticked:
+        answer_engine.record_option_mismatch(question, ", ".join(selections), options)
+        return None
+    if len(ticked) != len(selections):
+        logger.warning(
+            "Ticked %d of %d selections for %r; missing %s",
+            len(ticked),
+            len(selections),
+            question,
+            [sel for sel in selections if _normalise(sel) not in {_normalise(t) for t in ticked}],
+        )
+    logger.info("Selected %s for %r", ticked, question)
+    return click_send(driver)
 
 
 def _handle_plain_text(driver: WebDriver, answer_engine: AnswerEngine) -> Optional[bool]:
@@ -348,6 +384,42 @@ def _dom_state(driver: WebDriver) -> Tuple[int, int, int, int, int, str]:
         len(driver.find_elements(By.CSS_SELECTOR, _TEXT_AREAS + ", " + _PLAIN_INPUTS)),
         _latest_question(driver),
     )
+
+
+def _describe_drawer(driver: WebDriver, limit: int = 8) -> str:
+    """Summarise what is in the chatbot drawer, for diagnosing a stall."""
+    try:
+        drawers = _visible(driver.find_elements(By.CSS_SELECTOR, _DRAWER))
+        if not drawers:
+            return "drawer not visible"
+        drawer = drawers[0]
+        counts = {
+            "radios": len(_visible(drawer.find_elements(By.CSS_SELECTOR, _RADIOS))),
+            "checkboxes": len(_visible(drawer.find_elements(By.CSS_SELECTOR, _CHECKBOXES))),
+            "textareas": len(_visible(drawer.find_elements(By.CSS_SELECTOR, _TEXT_AREAS))),
+            "inputs": len(_visible(drawer.find_elements(By.CSS_SELECTOR, _PLAIN_INPUTS))),
+        }
+        tags = []
+        for element in drawer.find_elements(By.CSS_SELECTOR, "input, select, textarea, button")[:40]:
+            try:
+                if not element.is_displayed():
+                    continue
+                tag = element.tag_name
+                kind = element.get_attribute("type") or ""
+                label = "%s%s" % (tag, "[%s]" % kind if kind else "")
+                if label not in tags:
+                    tags.append(label)
+            except WebDriverException:
+                continue
+            if len(tags) >= limit:
+                break
+        return "question=%r controls=%s visible=%s" % (
+            _latest_question(driver)[:120],
+            counts,
+            tags or "none",
+        )
+    except WebDriverException as exc:
+        return "could not inspect drawer: %s" % type(exc).__name__
 
 
 def handle_chatbot(
@@ -410,7 +482,11 @@ def handle_chatbot(
                 continue
 
             if time.monotonic() - changed_at >= _STALL_TIMEOUT:
-                return ChatbotOutcome(False, answered, 0, "stalled")
+                # No handler recognised the drawer, so nothing happened until
+                # this timeout. "stalled" alone cost a whole run to diagnose.
+                return ChatbotOutcome(
+                    False, answered, 0, "stalled; %s" % _describe_drawer(driver)
+                )
             human_pause(0.3, 0.75)
         except (NoSuchElementException, StaleElementReferenceException) as exc:
             logger.debug("Chatbot DOM changed during dispatch (%s): %s", type(exc).__name__, exc)

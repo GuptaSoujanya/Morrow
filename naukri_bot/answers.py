@@ -166,6 +166,58 @@ class AnswerEngine:
             )
         return self._finish(question, resolution, False)
 
+    def resolve_many(
+        self, question: str, options: List[str]
+    ) -> Tuple[Optional[List[str]], str]:
+        """Resolve a select-all-that-apply question.
+
+        Returns (selections, reason). Nothing is cached: the cache is keyed on a
+        single answer string, and a partial hit would silently drop selections.
+        Abstains are recorded like any other so the question reaches
+        unanswered_questions.md.
+        """
+        self._current_options = options
+        if not options:
+            self._record_abstain(question, "no_options_rendered", options)
+            return None, "no_options_rendered"
+
+        selections, reason = llm.resolve_selection(
+            self.client, self.profile, question, options
+        )
+        if selections is None:
+            self.abstained += 1
+            logger.info("Abstaining from question %r: %s", question, reason)
+            _record_unanswered(question, reason, options)
+            return None, reason
+        self.answered += 1
+        logger.info("[multi] %s -> %s", question, selections)
+        return selections, ""
+
+    def record_option_mismatch(
+        self, question: str, answer_text: str, options: Optional[List[str]]
+    ) -> None:
+        """Note an answer that was resolved but matched none of the controls.
+
+        This is not the same as being unable to answer, and reporting it as an
+        abstain hid the difference: the fact was present and the rendering was
+        the problem.
+        """
+        logger.warning(
+            "Resolved answer %r matched none of the rendered options %s",
+            answer_text,
+            options,
+        )
+        _record_unanswered(
+            question, "answer_%r_not_among_rendered_options" % answer_text, options
+        )
+
+    def _record_abstain(
+        self, question: str, reason: str, options: Optional[List[str]]
+    ) -> None:
+        self.abstained += 1
+        logger.info("Abstaining from question %r: %s", question, reason)
+        _record_unanswered(question, reason, options)
+
     def _finish(
         self, question: str, resolution: AnswerResolution, already_logged: bool
     ) -> AnswerResolution:

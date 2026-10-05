@@ -6,7 +6,7 @@ import math
 import os
 import shutil
 import subprocess
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from .models import (
     Answer,
@@ -345,6 +345,64 @@ def _abstain(question: str, reason: str) -> AnswerResolution:
     return AnswerResolution.abstain(reason)
 
 
+def resolve_selection(
+    client: LLMClient,
+    profile: Profile,
+    question: str,
+    options: List[str],
+) -> Tuple[Optional[List[str]], str]:
+    """Choose every option that applies, for a select-all-that-apply question.
+
+    Returns (selected options, reason). The selections are returned exactly as
+    rendered, so the caller can match them back to controls. A single-answer
+    resolution cannot serve here: the checkbox handler used to resolve one
+    answer and tick one box, which makes a genuine multi-select unanswerable.
+    """
+    if not client.available():
+        return None, "llm_unavailable"
+    if not options:
+        return None, "no_options_rendered"
+
+    facts = profile.known_facts()
+    if profile.resume_text:
+        facts["resume"] = profile.resume_text[:6000]
+    prompt = (
+        "This question allows more than one answer. Choose EVERY supplied option "
+        "that is true for this candidate, using ONLY the supplied facts. Copy "
+        "each chosen option exactly as given. Choose none if the facts do not "
+        "support any. Never infer and never estimate.\nInput: %s"
+    ) % json.dumps(
+        {"facts": facts, "question": question, "options": options},
+        ensure_ascii=True,
+    )
+    schema = '{"selected": ["..."], "grounded_in": "", "confidence": 0.0}'
+    response = client.complete_json(prompt, schema)
+    if response is None:
+        return None, "llm_no_response"
+
+    raw = response.get("selected")
+    if not isinstance(raw, list):
+        return None, "llm_no_selection"
+
+    lookup = {_normalise_space(option).casefold(): option for option in options}
+    chosen: List[str] = []
+    for item in raw:
+        if not isinstance(item, str):
+            continue
+        matched = lookup.get(_normalise_space(item).casefold())
+        if matched is not None and matched not in chosen:
+            chosen.append(matched)
+    if not chosen:
+        return None, "llm_selected_nothing" if raw == [] else "llm_selection_not_in_options"
+
+    grounded = response.get("grounded_in")
+    if not isinstance(grounded, str) or not grounded.strip():
+        return None, "ungrounded"
+    if not _grounding_matches(grounded, list(facts.keys())):
+        return None, "grounding_not_verifiable"
+    return chosen, ""
+
+
 def resolve_answer(
     client: LLMClient,
     profile: Profile,
@@ -359,7 +417,7 @@ def resolve_answer(
     if profile.resume_text:
         facts["resume"] = profile.resume_text[:6000]
     request: Dict[str, Any] = {"facts": facts, "question": question}
-    if options is not None:
+    if options:
         request["options"] = options
     if prior:
         request["prior_answers"] = prior
@@ -400,7 +458,10 @@ def resolve_answer(
     confidence = min(confidence, 1.0)
 
     answer_text = answer_value.strip()
-    if options is not None:
+    # `options` empty rather than None means the page offered choices and none
+    # could be scraped. Matching against nothing rejected every answer, so the
+    # walk-in and salutation questions abstained with a fact sitting right there.
+    if options:
         option_lookup = {
             _normalise_space(option).casefold(): option for option in options
         }
