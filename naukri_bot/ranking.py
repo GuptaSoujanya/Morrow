@@ -99,12 +99,25 @@ def lexical_score(profile: Profile, job: JobPosting) -> Tuple[float, List[str]]:
         if title.strip() and _phrase_pattern(title).search(job.title)
     ]
     wrong_titles = [title for title in _WRONG_TITLES if _phrase_pattern(title).search(job.title)]
-    if wrong_titles:
+    # A preferred-title match is the stronger signal and wins. The penalty list
+    # mixes role words that genuinely disqualify, like telecaller, with domain
+    # words like insurance or hr, and an AI Engineer at an insurance company is
+    # exactly the kind of job wanted. Previously the penalty fired and the bonus
+    # was skipped, so "Senior AI Engineer (Insurance Domain)" scored 17 where the
+    # same job titled "AI Engineer" scored 67, and it was rejected even when the
+    # model rated it 80 out of 100.
+    if title_matches:
+        score += _TITLE_MATCH_BONUS
+        if wrong_titles:
+            reasons.append(
+                "title matches preferred role '%s'; '%s' treated as a domain, "
+                "not the role" % (title_matches[0], wrong_titles[0])
+            )
+        else:
+            reasons.append("title matches preferred role '%s'" % title_matches[0])
+    elif wrong_titles:
         score -= _WRONG_TITLE_PENALTY
         reasons.append("title contains '%s' (penalty)" % wrong_titles[0])
-    elif title_matches:
-        score += _TITLE_MATCH_BONUS
-        reasons.append("title matches preferred role '%s'" % title_matches[0])
     else:
         reasons.append("no preferred title match")
 
@@ -357,6 +370,8 @@ def select_for_application(
         len(tiers[3]),
         len(selected),
     )
+    _report_near_misses(ranked, settings, is_already_applied)
+
     if len(selected) < settings.target_applications:
         logger.warning(
             "Only %d jobs are eligible, short of the target of %d. Every one "
@@ -371,6 +386,48 @@ def select_for_application(
 def tier_of(candidate: ScoredJob, settings: Settings) -> Optional[int]:
     """Public wrapper so the run log can show which tier a job came from."""
     return _tier_of(candidate, settings)
+
+
+def _report_near_misses(
+    ranked: List[ScoredJob], settings: Settings, is_already_applied, margin: float = 10.0
+) -> None:
+    """Log the jobs that only just failed the score bar.
+
+    Selection reports how many jobs it dropped but never which, so a run that
+    rejected 79 of 121 left no way to tell whether anything good was lost. These
+    are the ones worth a human glance, and the reasons show which component sank
+    each of them.
+    """
+    bar = settings.min_score
+    floor = settings.min_score_floor if settings.min_score_floor > 0 else bar
+    near = [
+        candidate
+        for candidate in ranked
+        if candidate.score < floor
+        and candidate.score >= floor - margin
+        and not is_already_applied(candidate.job.job_id)
+    ]
+    if not near:
+        return
+    logger.info(
+        "--- %d job(s) within %.0f points below the bar of %.0f, best first ---",
+        len(near),
+        margin,
+        floor,
+    )
+    for candidate in near[:20]:
+        logger.info(
+            "    [%5.1f] %s @ %s (%s)",
+            candidate.score,
+            candidate.job.title or "<no title>",
+            candidate.job.company or "<no company>",
+            candidate.job.posted_label or "age unknown",
+        )
+        logger.info("        %s", "; ".join(
+            " ".join(reason.split()) for reason in candidate.reasons
+        )[:400])
+    if len(near) > 20:
+        logger.info("    ... and %d more", len(near) - 20)
 
 
 def explain(scored: ScoredJob) -> str:

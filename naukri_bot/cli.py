@@ -280,7 +280,11 @@ def _write_external_jobs(jobs: List[ScoredJob], announce: bool = True) -> None:
             for line in handle:
                 if not line.startswith("| ") or line.startswith("| score "):
                     continue
-                cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+                # Split from the right: Naukri titles contain pipes
+                # ("Walk-in || GenAI Developer"), which produced more than five
+                # fields and silently dropped the row on the next merge. Three
+                # saved roles were lost this way before it was noticed.
+                cells = [cell.strip() for cell in line.strip().strip("|").rsplit("|", 4)]
                 if len(cells) == 5 and cells[4].startswith("http"):
                     rows[cells[4]] = line.rstrip("\n")
     except OSError:
@@ -291,18 +295,19 @@ def _write_external_jobs(jobs: List[ScoredJob], announce: bool = True) -> None:
         url = scored.job.url
         if url in rows:
             continue
+        # Escape pipes on the way in so a title cannot break the table either.
         rows[url] = "| %.1f | %s | %s | %s | %s |" % (
             scored.score,
-            scored.job.title or "-",
-            scored.job.company or "-",
-            scored.job.posted_label or "-",
+            (scored.job.title or "-").replace("|", "/"),
+            (scored.job.company or "-").replace("|", "/"),
+            (scored.job.posted_label or "-").replace("|", "/"),
             url,
         )
         added += 1
 
     def _score_of(row: str) -> float:
         try:
-            return float(row.strip().strip("|").split("|")[0].strip())
+            return float(row.strip().strip("|").split("|", 1)[0].strip())
         except ValueError:
             return 0.0
 
