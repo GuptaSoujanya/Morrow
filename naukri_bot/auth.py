@@ -31,7 +31,13 @@ _SUCCESS_SELECTORS = (
     ".nI-gNb-drawer__icon",
     "[class*='nI-gNb-menuItems']",
     ".view-profile-wrapper",
+)
+# Naukri's global nav shows the login/register block only to anonymous users, so
+# it is proof of the opposite. It used to sit in _SUCCESS_SELECTORS.
+_SIGNED_OUT_SELECTORS = (
     "#root .nI-gNb-log-reg",
+    "a[href*='nlogin/login']",
+    "#login_Layer",
 )
 _CHALLENGE_SELECTORS = (
     "iframe[src*='recaptcha']",
@@ -132,13 +138,24 @@ def _credential_error(driver: WebDriver) -> Optional[str]:
     return None
 
 
-def is_logged_in(driver: WebDriver) -> bool:
-    """Return whether the current page contains a verified login marker."""
-    try:
-        if "naukri.com/mnjuser" in driver.current_url.lower():
-            return True
-    except WebDriverException as exc:
-        logger.warning("Could not inspect current URL (%s): %s", type(exc).__name__, exc)
+def is_logged_in(driver: WebDriver, trust_url: bool = True) -> bool:
+    """Return whether the current page shows a verified login marker.
+
+    trust_url must be False when the caller navigated to a /mnjuser/ address
+    itself: the URL check would then only confirm its own navigation. A run
+    reported "Reusing the saved Naukri session" against a signed-out browser
+    for exactly that reason.
+    """
+    if _selector_present(driver, _SIGNED_OUT_SELECTORS):
+        return False
+    if trust_url:
+        try:
+            if "naukri.com/mnjuser" in driver.current_url.lower():
+                return True
+        except WebDriverException as exc:
+            logger.warning(
+                "Could not inspect current URL (%s): %s", type(exc).__name__, exc
+            )
     return _selector_present(driver, _SUCCESS_SELECTORS)
 
 
@@ -235,8 +252,12 @@ def ensure_logged_in(driver: WebDriver, settings: Settings) -> LoginResult:
     if is_logged_in(driver):
         return LoginResult(ok=True, reason="session_reused", needs_manual=False)
 
-    if safe_get(driver, _DASHBOARD_URL) and is_logged_in(driver):
+    # trust_url=False: we just navigated to /mnjuser/ ourselves, so the URL
+    # proves nothing. Only a real signed-in marker counts.
+    if safe_get(driver, _DASHBOARD_URL) and is_logged_in(driver, trust_url=False):
         logger.info("Reusing the saved Naukri session; no login needed")
         return LoginResult(ok=True, reason="session_reused", needs_manual=False)
+
+    logger.info("No saved session to reuse; logging in")
 
     return login(driver, settings)

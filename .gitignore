@@ -48,3 +48,6 @@ unanswered_questions.md
 
 # Persistent browser profile: holds the live Naukri login session
 .browser-profile/
+
+# Run lock, so two runbook.sh invocations cannot share one Chrome profile
+.runbook.lock/
