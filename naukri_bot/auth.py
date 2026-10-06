@@ -258,6 +258,22 @@ def login(driver: WebDriver, settings: Settings) -> LoginResult:
 _DASHBOARD_URL = "https://www.naukri.com/mnjuser/homepage"
 
 
+def _wait_for_signed_in(driver: WebDriver, timeout: float = 8.0) -> bool:
+    """Wait briefly for a signed-in marker to render, then report."""
+    try:
+        WebDriverWait(driver, timeout).until(
+            lambda d: _selector_present(d, _SUCCESS_SELECTORS)
+        )
+        return True
+    except TimeoutException:
+        return is_logged_in(driver, trust_url=False)
+    except WebDriverException as exc:
+        logger.warning(
+            "Could not wait for the signed-in marker (%s): %s", type(exc).__name__, exc
+        )
+        return False
+
+
 def ensure_logged_in(driver: WebDriver, settings: Settings) -> LoginResult:
     """Reuse a saved session if there is one, otherwise log in.
 
@@ -270,8 +286,11 @@ def ensure_logged_in(driver: WebDriver, settings: Settings) -> LoginResult:
         return LoginResult(ok=True, reason="session_reused", needs_manual=False)
 
     # trust_url=False: we just navigated to /mnjuser/ ourselves, so the URL
-    # proves nothing. Only a real signed-in marker counts.
-    if safe_get(driver, _DASHBOARD_URL) and is_logged_in(driver, trust_url=False):
+    # proves nothing. Only a real signed-in marker counts -- and the dashboard
+    # paints those client-side, so checking the instant the navigation returns
+    # found nothing and fell through to the login form, which Naukri does not
+    # even serve to a browser that is already signed in.
+    if safe_get(driver, _DASHBOARD_URL) and _wait_for_signed_in(driver):
         logger.info("Reusing the saved Naukri session; no login needed")
         return LoginResult(ok=True, reason="session_reused", needs_manual=False)
 
