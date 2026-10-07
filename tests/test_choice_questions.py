@@ -166,3 +166,24 @@ def test_an_option_mismatch_is_recorded_as_such_not_as_an_abstain(tmp_path, monk
     assert "Salutation" in written
     assert "not_among_rendered_options" in written
     assert "options: ['Mr.', 'Ms.']" in written
+
+
+def test_the_apply_wait_requires_a_visible_control():
+    """A hidden duplicate must not satisfy the wait.
+
+    A live PwC posting reported "no actionable apply control" because the page
+    ships two #apply-button elements, one of them hidden. _apply_controls_present
+    checked DOM presence, so it matched instantly and the wait never waited;
+    classification then looked for a visible control and found only the footer.
+    """
+    import inspect
+
+    from naukri_bot import apply as apply_module
+
+    source = inspect.getsource(apply_module._apply_controls_present)
+    assert "_find_visible" in source, (
+        "the wait must require visibility, or a hidden element ends it early"
+    )
+    assert "driver.find_elements" not in source, (
+        "a bare presence check reintroduces the bug"
+    )

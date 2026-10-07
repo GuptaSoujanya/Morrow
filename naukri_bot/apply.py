@@ -70,12 +70,19 @@ def _on_job_page(driver: WebDriver) -> bool:
 
 
 def _apply_controls_present(driver: WebDriver) -> bool:
-    """Report whether any apply control or applied marker is in the DOM yet."""
-    if driver.find_elements(By.CSS_SELECTOR, _APPLY_CONTROL_CSS):
+    """Report whether a *visible* apply control or applied marker has rendered.
+
+    Visibility matters, not mere presence. A Naukri job page ships two
+    #apply-button elements and one of them is hidden, so a presence check
+    matched instantly and the wait never waited: classification then looked for
+    a visible control, found only the footer, and reported "no actionable apply
+    control" on a perfectly live posting.
+    """
+    if _find_visible(driver, By.CSS_SELECTOR, _APPLY_CONTROL_CSS) is not None:
         return True
-    if driver.find_elements(By.XPATH, _EXTERNAL_TEXT_XPATH):
+    if _find_visible(driver, By.XPATH, _EXTERNAL_TEXT_XPATH) is not None:
         return True
-    if driver.find_elements(By.XPATH, _APPLY_TEXT_XPATH):
+    if _find_visible(driver, By.XPATH, _APPLY_TEXT_XPATH) is not None:
         return True
     return bool(_applied_marker(driver))
 
