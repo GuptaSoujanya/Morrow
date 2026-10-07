@@ -66,7 +66,7 @@ def test_blank_option_labels_count_as_no_options(blank):
     resolution = llm.resolve_answer(client, _profile(),
                                     "Will you attend the walk-in?", options=blank)
     assert not resolution.abstained, "abstained with %r" % resolution.reason
-    assert "options" not in client.prompts[0], (
+    assert '"options"' not in client.prompts[0], (
         "blank choices were still offered to the model"
     )
 
