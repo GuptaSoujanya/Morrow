@@ -281,78 +281,208 @@ def _company_key(company: Optional[str]) -> str:
     return name.strip(" .,-")
 
 
-def _write_external_jobs(jobs: List[ScoredJob], announce: bool = True) -> None:
-    """Merge this run's company-site roles into the standing to-do list.
+_EXTERNAL_ARCHIVE_FILE = "external_archive.md"
+_EXTERNAL_OPENED_FILE = "external_opened.tsv"
+_EXTERNAL_MAX_OPENS = 3
+_EXTERNAL_STALE_DAYS = 10
 
-    The file is a worklist the user works through by hand over several days,
-    not a per-run log, so the same role surfacing in three runs must appear
-    once. Existing rows are read back and keyed on URL, which is stable across
-    runs in a way the title is not.
+
+def _read_opened_counts() -> Dict[str, int]:
+    """How many times each role has been opened by open-external-jobs.sh.
+
+    Opening a role is the only signal available that the user has dealt with
+    it: whether they then applied happens on the employer's own site, which
+    nothing here can see. Asking them to maintain a list by hand was the
+    alternative, and it would not have been kept up.
+    """
+    counts: Dict[str, int] = {}
+    try:
+        with open(_EXTERNAL_OPENED_FILE, "r", encoding="utf-8") as handle:
+            for line in handle:
+                parts = line.rstrip("\n").split("\t")
+                if len(parts) >= 2 and parts[0].startswith("http"):
+                    try:
+                        counts[parts[0]] = int(parts[1])
+                    except ValueError:
+                        continue
+    except OSError:
+        pass
+    return counts
+
+
+def _days_since(timestamp: str) -> Optional[int]:
+    try:
+        seen = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    if seen.tzinfo is not None:
+        seen = seen.replace(tzinfo=None)
+    return max(0, (datetime.now() - seen).days)
+
+
+def _external_row(scored: ScoredJob, first_seen: str, opens: int) -> str:
+    return "| %.1f | %s | %s | %s | %s | %d | %s |" % (
+        scored.score,
+        (scored.job.title or "-").replace("|", "/"),
+        (scored.job.company or "-").replace("|", "/"),
+        (scored.job.posted_label or "-").replace("|", "/"),
+        first_seen[:10] if first_seen else "-",
+        opens,
+        scored.job.url,
+    )
+
+
+def _parse_external_rows(path: str) -> Dict[str, Dict[str, str]]:
+    """Read the worklist back, accepting both the old and current column counts.
+
+    Roles the bot did not reach in this run must survive: the apply loop stops
+    once the target is met, so a role still listed on Naukri can be absent from
+    a given run without having gone away. Rebuilding the file from one run's
+    findings alone would quietly discard them.
+    """
+    rows: Dict[str, Dict[str, str]] = {}
+    try:
+        handle = open(path, "r", encoding="utf-8")
+    except OSError:
+        return rows
+    with handle:
+        for line in handle:
+            if not line.startswith("| ") or line.startswith("| score "):
+                continue
+            # Split from the right: titles contain pipes ("Walk-in || GenAI").
+            for fields in (7, 5):
+                cells = [
+                    cell.strip()
+                    for cell in line.strip().strip("|").rsplit("|", fields - 1)
+                ]
+                if len(cells) != fields or not cells[-1].startswith("http"):
+                    continue
+                # A five-column row whose title contains pipes also splits into
+                # seven, so the wider reading is only accepted when the column
+                # that should hold an open count actually holds a number.
+                if fields == 7 and not cells[5].isdigit():
+                    continue
+                if True:
+                    url = cells[-1]
+                    rows[url] = {
+                        "score": cells[0],
+                        "title": cells[1],
+                        "company": cells[2],
+                        "posted": cells[3],
+                        "first_seen": cells[4] if fields == 7 else "",
+                        "opened": cells[5] if fields == 7 else "0",
+                        "url": url,
+                    }
+                    break
+    return rows
+
+
+def _write_external_jobs(
+    jobs: List[ScoredJob],
+    history: Optional[Dict[str, Any]] = None,
+    announce: bool = True,
+) -> None:
+    """Merge company-site roles into the worklist, newest first.
+
+    The file is cleared by hand most mornings, so on its own it cannot remember
+    which roles have already been offered -- the same ones reappear in Naukri's
+    listings day after day and looked new every time. The ledger does remember,
+    so roles first seen in this run are listed separately from ones carried
+    over, and a role retires itself once it has been opened a few times or once
+    Naukri stops listing it.
     """
     if not jobs:
         return
 
-    rows: Dict[str, str] = {}
-    try:
-        with open(_EXTERNAL_JOBS_FILE, "r", encoding="utf-8") as handle:
-            for line in handle:
-                if not line.startswith("| ") or line.startswith("| score "):
-                    continue
-                # Split from the right: Naukri titles contain pipes
-                # ("Walk-in || GenAI Developer"), which produced more than five
-                # fields and silently dropped the row on the next merge. Three
-                # saved roles were lost this way before it was noticed.
-                cells = [cell.strip() for cell in line.strip().strip("|").rsplit("|", 4)]
-                if len(cells) == 5 and cells[4].startswith("http"):
-                    rows[cells[4]] = line.rstrip("\n")
-    except OSError:
-        pass  # first run, or unreadable: start from what this run found
+    history = history or {}
+    opened = _read_opened_counts()
+    today = datetime.now().strftime("%Y-%m-%d")
+    rows = _parse_external_rows(_EXTERNAL_JOBS_FILE)
 
     added = 0
     for scored in jobs:
         url = scored.job.url
-        if url in rows:
-            continue
-        # Escape pipes on the way in so a title cannot break the table either.
-        rows[url] = "| %.1f | %s | %s | %s | %s |" % (
-            scored.score,
-            (scored.job.title or "-").replace("|", "/"),
-            (scored.job.company or "-").replace("|", "/"),
-            (scored.job.posted_label or "-").replace("|", "/"),
-            url,
-        )
-        added += 1
+        if url not in rows:
+            added += 1
+        record = history.get(url, {})
+        rows[url] = {
+            "score": "%.1f" % scored.score,
+            "title": (scored.job.title or "-").replace("|", "/"),
+            "company": (scored.job.company or "-").replace("|", "/"),
+            "posted": (scored.job.posted_label or "-").replace("|", "/"),
+            "first_seen": (record.get("first_seen") or today)[:10],
+            "opened": str(opened.get(url, 0)),
+            "url": url,
+        }
 
-    def _score_of(row: str) -> float:
+    fresh, carried, archived = [], [], []
+    for url, row in rows.items():
+        recorded = row.get("opened") or "0"
+        opens = opened.get(url, int(recorded) if recorded.isdigit() else 0)
+        row["opened"] = str(opens)
+        last_seen = (history.get(url, {}).get("last_seen") or row["first_seen"])
+        stale = _days_since(last_seen)
+        if opens >= _EXTERNAL_MAX_OPENS or (
+            stale is not None and stale > _EXTERNAL_STALE_DAYS
+        ):
+            archived.append(row)
+        elif row["first_seen"] == today:
+            fresh.append(row)
+        else:
+            carried.append(row)
+
+    def _render(row: Dict[str, str]) -> str:
+        return "| %s | %s | %s | %s | %s | %s | %s |" % (
+            row["score"], row["title"], row["company"], row["posted"],
+            row["first_seen"], row["opened"], row["url"],
+        )
+
+    def _by_score(row: Dict[str, str]) -> float:
         try:
-            return float(row.strip().strip("|").split("|", 1)[0].strip())
+            return float(row["score"])
         except ValueError:
             return 0.0
 
-    ordered = sorted(rows.values(), key=_score_of, reverse=True)
+    header = ("| score | role | company | posted | first seen | opened | link |\n"
+              "|---|---|---|---|---|---|---|\n")
     try:
         with open(_EXTERNAL_JOBS_FILE, "w", encoding="utf-8") as handle:
             handle.write(
                 "# Roles that apply on the company site\n\n"
-                "These cannot be submitted through Naukri and use none of the\n"
-                "daily quota. Apply by hand. Updated %s.\n\n"
-                % datetime.now().strftime("%Y-%m-%d %H:%M")
+                "These cannot be submitted through Naukri and use none of the daily\n"
+                "quota. Apply by hand. Updated %s.\n\n"
+                "Run ./open-external-jobs.sh to open the new ones. A role retires to\n"
+                "%s once it has been opened %d times, or once Naukri has stopped\n"
+                "listing it for %d days.\n"
+                % (datetime.now().strftime("%Y-%m-%d %H:%M"), _EXTERNAL_ARCHIVE_FILE,
+                   _EXTERNAL_MAX_OPENS, _EXTERNAL_STALE_DAYS)
             )
-            handle.write("| score | role | company | posted | link |\n")
-            handle.write("|---|---|---|---|---|\n")
-            for row in ordered:
-                handle.write(row + "\n")
+            for label, group in (("New in this run", fresh), ("Seen before", carried)):
+                if label == "New in this run" or group:
+                    handle.write("\n## %s (%d)\n\n" % (label, len(group)))
+                    handle.write(header)
+                    for row in sorted(group, key=_by_score, reverse=True):
+                        handle.write(_render(row) + "\n")
     except OSError as exc:
         logger.warning("Could not write %s: %s", _EXTERNAL_JOBS_FILE, exc)
         return
 
+    if archived:
+        try:
+            with open(_EXTERNAL_ARCHIVE_FILE, "a", encoding="utf-8") as handle:
+                handle.write("\n## Retired %s (%d)\n\n" % (today, len(archived)))
+                handle.write(header)
+                for row in sorted(archived, key=_by_score, reverse=True):
+                    handle.write(_render(row) + "\n")
+        except OSError as exc:
+            logger.warning("Could not write %s: %s", _EXTERNAL_ARCHIVE_FILE, exc)
+
     if announce:
         logger.info(
-            "%d company-site role(s) this run, %d new; %s now lists %d to apply to by hand",
-            len(jobs),
-            added,
-            _EXTERNAL_JOBS_FILE,
-            len(ordered),
+            "%d company-site role(s) this run, %d new to the list; worklist now "
+            "holds %d new and %d carried over, %d retired to %s",
+            len(jobs), added, len(fresh), len(carried), len(archived),
+            _EXTERNAL_ARCHIVE_FILE,
         )
 
 
@@ -603,6 +733,7 @@ def run(
         )
 
         external_jobs: List[ScoredJob] = []
+        external_history = ledger.external_history()
         per_company: Dict[str, int] = {}
 
         for scored in selected:
@@ -642,7 +773,9 @@ def run(
             result = apply_module.apply_to_job(
                 driver, scored.job, profile, answer_engine, settings
             )
-            ledger.record_attempt(result)
+            ledger.record_attempt(
+                result, title=scored.job.title or "", company=scored.job.company or ""
+            )
             _tally(summary, result)
             if result.status == ApplyStatus.APPLIED and company_key:
                 per_company[company_key] = per_company.get(company_key, 0) + 1
@@ -656,7 +789,9 @@ def run(
 
             if result.status == ApplyStatus.EXTERNAL_SKIPPED:
                 external_jobs.append(scored)
-                _write_external_jobs([scored], announce=False)
+                _write_external_jobs(
+                    [scored], external_history, announce=False
+                )
 
             if result.status in ApplyStatus.TERMINAL:
                 logger.warning(
@@ -665,7 +800,7 @@ def run(
                 break
 
         if external_jobs:
-            _write_external_jobs(external_jobs)
+            _write_external_jobs(external_jobs, external_history)
         summary.quota_after = ledger.quota_used()
         return summary
 

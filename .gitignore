@@ -51,3 +51,7 @@ unanswered_questions.md
 
 # Run lock, so two runbook.sh invocations cannot share one Chrome profile
 .runbook.lock/
+
+# Company-site worklist state
+external_archive.md
+external_opened.tsv

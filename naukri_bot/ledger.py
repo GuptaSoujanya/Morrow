@@ -234,6 +234,37 @@ class Ledger:
             logger.exception("failed to record attempt for job %s", result.job_id)
             raise
 
+    def external_history(self) -> Dict[str, Dict[str, Any]]:
+        """When each company-site role was first and last encountered.
+
+        The worklist file is cleared by hand most mornings, so it cannot
+        remember which roles have already been offered. The ledger can: every
+        skipped company-site role is recorded with a timestamp.
+        """
+        try:
+            with self._lock:
+                rows = self._connection.execute(
+                    """SELECT url,
+                              MIN(at) AS first_seen,
+                              MAX(at) AS last_seen,
+                              COUNT(*) AS times_seen
+                       FROM applications
+                       WHERE status = ?
+                       GROUP BY url""",
+                    (ApplyStatus.EXTERNAL_SKIPPED,),
+                ).fetchall()
+            return {
+                row["url"]: {
+                    "first_seen": row["first_seen"],
+                    "last_seen": row["last_seen"],
+                    "times_seen": int(row["times_seen"]),
+                }
+                for row in rows
+            }
+        except sqlite3.Error:
+            logger.exception("failed to read company-site history")
+            return {}
+
     def quota_used(self, window_hours: int = 24) -> int:
         cutoff = (datetime.now(timezone.utc) - timedelta(hours=window_hours)).isoformat()
         try:
