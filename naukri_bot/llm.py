@@ -416,9 +416,14 @@ def resolve_answer(
     facts = profile.known_facts()
     if profile.resume_text:
         facts["resume"] = profile.resume_text[:6000]
+    # A list of blank strings is not a list of choices. handle_radio builds
+    # options from label text, and when the labels have not painted it produces
+    # ['', ''] -- truthy, so an earlier guard let it through, the model was
+    # handed two blank options and answered in prose, and nothing matched.
+    usable_options = [o for o in (options or []) if o and o.strip()]
     request: Dict[str, Any] = {"facts": facts, "question": question}
-    if options:
-        request["options"] = options
+    if usable_options:
+        request["options"] = usable_options
     if prior:
         request["prior_answers"] = prior
     prompt = (
@@ -461,9 +466,10 @@ def resolve_answer(
     # `options` empty rather than None means the page offered choices and none
     # could be scraped. Matching against nothing rejected every answer, so the
     # walk-in and salutation questions abstained with a fact sitting right there.
-    if options:
+    if usable_options:
         option_lookup = {
-            _normalise_space(option).casefold(): option for option in options
+            _normalise_space(option).casefold(): option
+            for option in usable_options
         }
         matched_option = option_lookup.get(_normalise_space(answer_text).casefold())
         if matched_option is None:

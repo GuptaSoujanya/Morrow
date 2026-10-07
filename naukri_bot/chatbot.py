@@ -192,6 +192,29 @@ def click_send(driver: WebDriver) -> bool:
         return False
 
 
+def _wait_for_option_labels(
+    container: WebElement, timeout: float = 4.0
+) -> List[str]:
+    """Read option labels, waiting briefly for their text to paint.
+
+    Reading them the instant the drawer appears yields a list of blank strings,
+    which is worse than none at all: the question still looks like a choice but
+    there is nothing to choose from.
+    """
+    deadline = time.monotonic() + timeout
+    options: List[str] = []
+    while time.monotonic() < deadline:
+        try:
+            labels = container.find_elements(By.CSS_SELECTOR, _RADIO_LABELS)
+            options = [" ".join(label.text.split()) for label in labels]
+        except (StaleElementReferenceException, WebDriverException):
+            return options
+        if options and all(option for option in options):
+            return options
+        time.sleep(0.25)
+    return options
+
+
 def handle_radio(driver: WebDriver, answer_engine: AnswerEngine) -> Optional[bool]:
     """Resolve, select, verify, and send the visible radio question."""
     containers = _visible(driver.find_elements(By.CSS_SELECTOR, _RADIO_CONTAINER))
@@ -199,10 +222,11 @@ def handle_radio(driver: WebDriver, answer_engine: AnswerEngine) -> Optional[boo
         return False
     container = containers[0]
     radios = container.find_elements(By.CSS_SELECTOR, _RADIOS)
-    labels = container.find_elements(By.CSS_SELECTOR, _RADIO_LABELS)
-    options = [" ".join(label.text.split()) for label in labels]
+    asked_with = _wait_for_option_labels(container)
     question = _latest_question(driver, _QUESTION_WAIT)
-    resolution = answer_engine.resolve(question, options=options, field_type="radio")
+    resolution = answer_engine.resolve(
+        question, options=asked_with, field_type="radio"
+    )
     if resolution.abstained or resolution.answer is None:
         return None
     # Resolving takes seconds - waiting for the question to paint, then an LLM
@@ -216,6 +240,7 @@ def handle_radio(driver: WebDriver, answer_engine: AnswerEngine) -> Optional[boo
     radios = container.find_elements(By.CSS_SELECTOR, _RADIOS)
     labels = container.find_elements(By.CSS_SELECTOR, _RADIO_LABELS)
     options = [" ".join(label.text.split()) for label in labels]
+    usable = [option for option in options if option and option.strip()]
     wanted = _normalise(resolution.answer.text)
     for index, radio in enumerate(radios):
         label_text = options[index] if index < len(options) else ""
@@ -228,9 +253,29 @@ def handle_radio(driver: WebDriver, answer_engine: AnswerEngine) -> Optional[boo
             logger.error("Radio option %r did not become selected", resolution.answer.text)
             return False
         return click_send(driver)
-    # The fact was there and the answer was resolved; the rendering is what did
-    # not match. Reporting that as an abstain hid the difference.
-    answer_engine.record_option_mismatch(question, resolution.answer.text, options)
+    # The answer did not match. If it was resolved without usable options -- the
+    # labels had not painted when it was asked -- ask again now that they have.
+    # Three applications were abandoned this way with answers that plainly meant
+    # one of the choices, phrased as prose: "No, cannot attend walk-in drives"
+    # against ['Yes', 'No'].
+    asked_usable = [o for o in asked_with if o and o.strip()]
+    if usable and usable != asked_usable:
+        logger.info(
+            "Re-resolving %r now that the options have rendered: %s", question, usable
+        )
+        retry = answer_engine.resolve(question, options=usable, field_type="radio")
+        if not retry.abstained and retry.answer is not None:
+            for index, option in enumerate(options):
+                if _normalise(option) != _normalise(retry.answer.text):
+                    continue
+                target = labels[index] if index < len(labels) else radios[index]
+                target.click()
+                if not radios[index].is_selected():
+                    logger.error("Radio option %r did not become selected", option)
+                    return False
+                return click_send(driver)
+
+    answer_engine.record_option_mismatch(question, resolution.answer.text, usable)
     return None
 
 

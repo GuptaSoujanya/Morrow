@@ -52,6 +52,25 @@ def test_an_empty_options_list_does_not_block_every_answer():
     assert resolution.answer.text.startswith("No")
 
 
+@pytest.mark.parametrize("blank", [["", ""], [" ", "  "], [""]])
+def test_blank_option_labels_count_as_no_options(blank):
+    """handle_radio builds options from label text, which paints late.
+
+    A list of blank strings is truthy, so it passed the empty-list guard: the
+    model was handed two blank choices, answered in prose, and nothing matched.
+    Three applications were abandoned this way on 7 October with answers that
+    plainly meant one of the choices.
+    """
+    client = _Client({"can_answer": True, "answer": "No, cannot attend walk-in drives",
+                      "grounded_in": "current_location", "confidence": 0.9})
+    resolution = llm.resolve_answer(client, _profile(),
+                                    "Will you attend the walk-in?", options=blank)
+    assert not resolution.abstained, "abstained with %r" % resolution.reason
+    assert "options" not in client.prompts[0], (
+        "blank choices were still offered to the model"
+    )
+
+
 def test_real_options_are_still_matched_exactly():
     client = _Client({"can_answer": True, "answer": "Gurugram",
                       "grounded_in": "current_location", "confidence": 0.9})
