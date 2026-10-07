@@ -40,6 +40,12 @@ _TEXT_AREAS = (
 )
 _PLAIN_INPUTS = "input:not([type]), input[type='text'], input[type='number'], textarea"
 _CHECKBOXES = "input[type='checkbox'], [role='checkbox']"
+# Naukri's multi-select renders hidden checkboxes styled through their labels,
+# so the inputs are never displayed and a visibility filter discarded them all:
+# "Please select the city you are currently residing in" stalled for thirty
+# seconds with every handler reporting nothing to do.
+_CHECKBOX_CONTAINER = ".multiselectcheckboxes, .multicheckboxes-container"
+_CHECKBOX_LABELS = ".mcc__label"
 _OVERALL_TIMEOUT = 180.0
 _STALL_TIMEOUT = 30.0
 _QUESTION_WAIT = 8.0
@@ -180,30 +186,51 @@ def _send_control(driver: WebDriver) -> Optional[WebElement]:
     return None
 
 
-def click_send(driver: WebDriver) -> bool:
-    """Click the send control unless it is visibly disabled."""
+def _send_is_disabled(control: WebElement) -> bool:
+    """Read disabled state from the button and any wrapper carrying it."""
+    ancestors = control.find_elements(
+        By.XPATH,
+        "./ancestor::*[contains(translate(@class,'ABCDEFGHIJKLMNOPQRSTUVWXYZ',"
+        "'abcdefghijklmnopqrstuvwxyz'),'send')]",
+    )
+    classes = " ".join(
+        [control.get_attribute("class") or ""]
+        + [ancestor.get_attribute("class") or "" for ancestor in ancestors]
+    )
+    if "disabled" in classes.casefold():
+        return True
+    if (control.get_attribute("aria-disabled") or "").casefold() == "true":
+        return True
+    return not control.is_enabled()
+
+
+def click_send(driver: WebDriver, wait_s: float = 6.0) -> bool:
+    """Click the send control, waiting briefly for it to become enabled.
+
+    The chatbot enables the button in response to its own input handling, which
+    happens after the text is in the DOM. Checking the instant the text was
+    written found it still disabled and gave up, so every answer long enough to
+    be inserted in one step was left unsent and the application never
+    confirmed: four of four such jobs failed in one run. Short answers typed
+    key by key took seconds, by which time the button had long since enabled,
+    which is why only long answers were affected.
+    """
     try:
         control = _send_control(driver)
         if control is None:
             return False
-        # Naukri carries the send class on the button itself, with no wrapper.
-        # Requiring that wrapper refused every click and left answers typed but
-        # unsent, so disabled state is read from the button and any wrapper.
-        ancestors = control.find_elements(
-            By.XPATH,
-            "./ancestor::*[contains(translate(@class,'ABCDEFGHIJKLMNOPQRSTUVWXYZ',"
-            "'abcdefghijklmnopqrstuvwxyz'),'send')]",
-        )
-        classes = " ".join(
-            [control.get_attribute("class") or ""]
-            + [ancestor.get_attribute("class") or "" for ancestor in ancestors]
-        )
-        aria_disabled = (control.get_attribute("aria-disabled") or "").casefold()
-        if "disabled" in classes.casefold() or aria_disabled == "true":
-            logger.debug("Send control is disabled; leaving the answer unsent")
-            return False
-        if not control.is_enabled():
-            logger.debug("Send control is not enabled; leaving the answer unsent")
+
+        deadline = time.monotonic() + max(0.0, wait_s)
+        while _send_is_disabled(control) and time.monotonic() < deadline:
+            time.sleep(0.25)
+            refreshed = _send_control(driver)
+            if refreshed is not None:
+                control = refreshed
+        if _send_is_disabled(control):
+            logger.warning(
+                "Send control still disabled after %.0fs; leaving the answer unsent",
+                wait_s,
+            )
             return False
         control.click()
         return True
@@ -325,6 +352,39 @@ def handle_text(driver: WebDriver, answer_engine: AnswerEngine) -> Optional[bool
     return click_send(driver)
 
 
+def _checkbox_target(container: WebElement, control: WebElement) -> WebElement:
+    """The element to click for a checkbox: its label when the input is hidden."""
+    control_id = control.get_attribute("id") or ""
+    if control_id:
+        labels = container.find_elements(
+            By.CSS_SELECTOR, "label[for='%s']" % control_id.replace("'", "\\'")
+        )
+        for label in labels:
+            try:
+                if label.is_displayed():
+                    return label
+            except WebDriverException:
+                continue
+    return control
+
+
+def _selectable_checkboxes(drawer: WebElement) -> List[WebElement]:
+    """Checkboxes a person could tick, including ones hidden behind a label.
+
+    Requiring the input itself to be displayed found nothing on Naukri's
+    multi-select, because it hides the inputs and styles their labels.
+    """
+    controls = drawer.find_elements(By.CSS_SELECTOR, _CHECKBOXES)
+    usable = []
+    for control in controls:
+        try:
+            if control.is_displayed() or _checkbox_target(drawer, control) is not control:
+                usable.append(control)
+        except WebDriverException:
+            continue
+    return usable
+
+
 def _option_label(container: WebElement, control: WebElement) -> str:
     control_id = control.get_attribute("id") or ""
     if control_id:
@@ -343,7 +403,7 @@ def _handle_checkbox(driver: WebDriver, answer_engine: AnswerEngine) -> Optional
     drawers = _visible(driver.find_elements(By.CSS_SELECTOR, _DRAWER))
     if not drawers:
         return False
-    controls = _visible(drawers[0].find_elements(By.CSS_SELECTOR, _CHECKBOXES))
+    controls = _selectable_checkboxes(drawers[0])
     if not controls:
         return False
 
@@ -367,7 +427,7 @@ def _handle_checkbox(driver: WebDriver, answer_engine: AnswerEngine) -> Optional
     if not drawers:
         logger.error("Chatbot drawer disappeared while the answer was resolved")
         return None
-    controls = _visible(drawers[0].find_elements(By.CSS_SELECTOR, _CHECKBOXES))
+    controls = _selectable_checkboxes(drawers[0])
     if not controls:
         logger.error("Checkbox options disappeared while the answer was resolved")
         return None
@@ -380,7 +440,7 @@ def _handle_checkbox(driver: WebDriver, answer_engine: AnswerEngine) -> Optional
             continue
         try:
             if not controls[index].is_selected():
-                controls[index].click()
+                _checkbox_target(drawers[0], controls[index]).click()
             if not controls[index].is_selected():
                 logger.error("Checkbox option %r did not become selected", option)
                 return False
