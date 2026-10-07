@@ -303,6 +303,10 @@ class Settings:
     # running Chrome 154, and navigator.userAgentData reports the real version,
     # so the mismatch was an automation signal rather than a disguise.
     user_agent: str = ""
+    # Longest answer submitted to a screening question. The old fixed 600 cut
+    # a long-form answer mid-word -- "...dynamic prompt templates with gr" --
+    # and sent it to an employer.
+    max_answer_chars: int = 1200
     # Random pause between successful applications. Applying back to back is the
     # most machine-like thing the bot does; Naukri's terms do not permit
     # automation at all, so looking like a person browsing matters. 0 disables.

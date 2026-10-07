@@ -345,6 +345,26 @@ def _abstain(question: str, reason: str) -> AnswerResolution:
     return AnswerResolution.abstain(reason)
 
 
+def _trim_to_boundary(text: str, limit: int) -> str:
+    """Cut to at most `limit` characters without ending mid-word.
+
+    A hard slice produced "...engineering dynamic prompt templates with gr",
+    which a person then read. Prefer the last sentence end, then the last word
+    break, so what is submitted at least finishes a thought.
+    """
+    if len(text) <= limit:
+        return text
+    window = text[:limit]
+    for terminator in (". ", "! ", "? ", ".\n", ".", "!", "?"):
+        cut = window.rfind(terminator)
+        if cut >= limit // 2:
+            return window[: cut + len(terminator.rstrip())].rstrip()
+    cut = window.rfind(" ")
+    if cut >= limit // 2:
+        return window[:cut].rstrip()
+    return window.rstrip()
+
+
 def resolve_selection(
     client: LLMClient,
     profile: Profile,
@@ -476,9 +496,16 @@ def resolve_answer(
             return _abstain(question, "llm_answer_not_in_options")
         answer_text = matched_option
 
-    if len(answer_text) > 600:
-        logger.warning("Truncating overlong LLM answer for question %r", question)
-        answer_text = answer_text[:600]
+    limit = getattr(
+        getattr(client, "settings", None), "max_answer_chars", 1200
+    )
+    if len(answer_text) > limit:
+        answer_text = _trim_to_boundary(answer_text, limit)
+        logger.warning(
+            "Trimmed an overlong answer to %d characters for question %r",
+            len(answer_text),
+            question,
+        )
 
     return AnswerResolution.resolved(
         Answer(

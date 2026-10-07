@@ -110,6 +110,9 @@ def load_settings(
             "MAX_EMPTY_SEARCHES", defaults.max_empty_searches
         ),
         "user_agent": os.getenv("USER_AGENT", defaults.user_agent),
+        "max_answer_chars": _env_int(
+            "MAX_ANSWER_CHARS", defaults.max_answer_chars
+        ),
         "browser_profile_dir": os.getenv(
             "BROWSER_PROFILE_DIR", defaults.browser_profile_dir
         ),

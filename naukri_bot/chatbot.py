@@ -115,8 +115,30 @@ def _read_contenteditable(element: WebElement) -> str:
     return ""
 
 
+_TYPE_KEY_BY_KEY_LIMIT = 120
+
+
+def _insert_text(driver: WebDriver, element: WebElement, text: str) -> None:
+    """Put text in a contenteditable in one step, firing the events a React
+    chat box listens for."""
+    driver.execute_script(
+        "arguments[0].focus();"
+        "var r=document.createRange();r.selectNodeContents(arguments[0]);"
+        "var s=window.getSelection();s.removeAllRanges();s.addRange(r);"
+        "document.execCommand('insertText',false,arguments[1]);"
+        "arguments[0].dispatchEvent(new InputEvent('input',"
+        "{bubbles:true,inputType:'insertText',data:arguments[1]}));"
+        "arguments[0].dispatchEvent(new Event('change',{bubbles:true}));",
+        element,
+        text,
+    )
+
+
 def write_contenteditable(driver: WebDriver, element: WebElement, text: str) -> bool:
     """Type with real key events and return true only after DOM verification."""
+    # Newlines are Enter in a chat box, which submits the message half-written,
+    # so they never reach the keyboard.
+    text = " ".join(text.split())
     intended = _normalise(text)
     try:
         element.click()
@@ -124,21 +146,24 @@ def write_contenteditable(driver: WebDriver, element: WebElement, text: str) -> 
         modifier = Keys.COMMAND if "mac" in platform_name else Keys.CONTROL
         element.send_keys(modifier, "a")
         element.send_keys(Keys.DELETE)
-        human_type(element, text)
+
+        # Key-by-key typing runs at 40-140ms per character, so a long answer
+        # takes close to a minute, and Naukri re-renders the drawer within that
+        # window: three applications failed with a stale element mid-write. Keep
+        # the human pacing for short answers and insert longer ones at once.
+        if len(text) > _TYPE_KEY_BY_KEY_LIMIT:
+            logger.info(
+                "Inserting a %d character answer at once rather than typing it",
+                len(text),
+            )
+            _insert_text(driver, element, text)
+        else:
+            human_type(element, text)
+
         if _read_contenteditable(element) == intended:
             return True
         logger.warning("Real key events did not produce the requested chatbot text; retrying")
-        driver.execute_script(
-            "arguments[0].focus();"
-            "var r=document.createRange();r.selectNodeContents(arguments[0]);"
-            "var s=window.getSelection();s.removeAllRanges();s.addRange(r);"
-            "document.execCommand('insertText',false,arguments[1]);"
-            "arguments[0].dispatchEvent(new InputEvent('input',"
-            "{bubbles:true,inputType:'insertText',data:arguments[1]}));"
-            "arguments[0].dispatchEvent(new Event('change',{bubbles:true}));",
-            element,
-            text,
-        )
+        _insert_text(driver, element, text)
         verified = _read_contenteditable(element) == intended
         if not verified:
             logger.error("Chatbot contenteditable write could not be verified")
