@@ -1,95 +1,153 @@
-# Copy this file to profile.yaml, review every value, and keep it private.
-# These facts are used to answer employer screening questions, so only state facts
-# that Madhur has personally confirmed. YAML null values are intentionally unknown.
+# Template for profile.yaml. Copy it, then replace every placeholder.
+#
+#     cp naukri_bot/profile.example.yaml profile.yaml
+#
+# profile.yaml is gitignored and must stay that way: it holds a tax ID, a phone
+# number and salary expectations.
+#
+# HOW THESE FACTS ARE USED
+#
+# Employers attach screening questions to a Naukri application, and the bot
+# answers them from this file plus the resume. It answers ONLY from what is
+# here: if a question cannot be grounded in a fact, the bot abandons that
+# application rather than guessing, because the answer goes to an employer
+# under your name. Every abandoned question is written to
+# unanswered_questions.md so you can add the missing fact and let the next run
+# through.
+#
+# So each fact is a statement you are prepared to stand behind in an
+# interview. A wrong one is worse than a missing one.
+#
+# The top-level fields below are read directly by the code. Anything under
+# extra_facts is free-form: the key is a label and the value is the fact, so
+# add your own as new questions appear.
 
-# Identity and contact details from Madhur Bagdare's resume.
-full_name: Madhur Bagdare
-first_name: Madhur
-last_name: Bagdare
-email: madhur.bagdare@gmail.com
-phone: "+91 96444 51099"
+# --- identity and contact ---------------------------------------------------
+full_name: "Your Full Name"
+first_name: "Your"
+last_name: "Name"
+email: "you@example.com"
+phone: "+91 00000 00000"
 
-# Current and preferred work locations.
-current_location: Indore, India
+# --- where you are and where you will work ----------------------------------
+current_location: "Your City"
 preferred_locations:
   - Bengaluru
   - Hyderabad
+  - Pune
+  - Gurugram
   - Remote
-  - Indore
 
-# Experience shown by the resume (February 2024 to present).
-total_experience_years: 2.5
-highest_qualification: "B.Tech Computer Science Engineering, Medi-Caps University (2024)"
+# Experience the resume supports. Screening forms ask for this constantly, and
+# it must agree with the figure on your Naukri profile, which is also what
+# Naukri's own "Work Experience" match tick compares against.
+total_experience_years: 3
+highest_qualification: "B.Tech Computer Science, Your University (2024)"
 
-# Target roles supported by Madhur's resume.
+# --- what you are looking for -----------------------------------------------
+# titles feed the lexical ranking: a job title matching one of these earns a
+# bonus, so list the roles you actually want rather than every role you could do.
 titles:
   - AI Engineer
-  - AI Research Engineer
   - Machine Learning Engineer
-  - LLM Engineer
-  - Applied Scientist
-  - Software Engineer - AI
+  - Data Scientist
 
-# Skills explicitly represented in Madhur's resume.
+# skills are matched against the job text. Keep these to things you can be
+# questioned on. Note that a long list dilutes each individual match, so
+# precision beats quantity.
 skills:
   - Python
-  - C++
   - SQL
+  - PyTorch
   - LLM evaluation
-  - LLM benchmarking
   - agentic AI
-  - multi-agent orchestration
   - prompt engineering
   - RAG
-  - hybrid retrieval
   - embeddings
   - vector search
-  - RLHF
-  - fine-tuning
-  - OpenAI API
-  - Anthropic API
-  - LangChain
-  - LiteLLM
-  - OpenHands
-  - Hugging Face Transformers
-  - PyTorch
-  - FastAPI
-  - pytest
-  - spaCy
-  - Pandas
-  - NumPy
-  - Scikit-learn
-  - PySpark
-  - AWS Bedrock
-  - AWS EC2
-  - AWS S3
   - Docker
   - Git
-  - Git LFS
-  - CI/CD
-  - PostgreSQL
-  - FAISS
-  - pgvector
-  - Linux
 
-# Confirmed authorization fact.
 work_authorization: "Indian citizen, no sponsorship required"
 
-# IMPORTANT: null makes the bot SKIP a job asking the corresponding question.
-# The bot will never guess or make a false statement to an employer.
+# --- money and notice -------------------------------------------------------
+# Leave these null and the bot abstains on salary questions rather than
+# inventing a number. Fill them in only when you are ready to state them.
 current_ctc_lpa: null
-# Madhur's resume targets a 22-28 LPA band, but Madhur must state this number himself.
 expected_ctc_lpa: null
-notice_period_days: null
-serving_notice: null
-willing_to_relocate: null
-has_passport: null
+notice_period_days: 30
+serving_notice: false
 
-# Add personally confirmed facts here. Leave unknown values null or commented out.
+willing_to_relocate: true
+has_passport: true
+
+# --- everything else employers ask -----------------------------------------
+# Free-form. The key is only a label; the value is the fact the bot quotes.
+# These cover the questions seen most often in real runs.
 extra_facts:
-  # reason_for_change: "Seeking ..."
-  # current_company: "Company name"
-  # current_designation: "Job title"
-  # date_of_birth: "YYYY-MM-DD"
-  # gender: "Self-described value"
-  # differently_abled: false
+  # identity and background
+  gender: "Male"
+  date_of_birth: "YYYY-MM-DD"
+  marital_status: "Single"
+  languages_known: "English, Hindi"
+  differently_abled: false
+  pan_number: "AAAAA0000A"          # a tax ID: never commit this file
+
+  # education, as forms ask for it
+  tenth_standard: "00% (0.0 CGPA)"
+  twelfth_standard: "00% (0.0 CGPA)"
+  graduation_percentage: "00% (0.0 CGPA)"
+  degree_mode: "Full time regular degree, not distance or part time"
+  full_time_education_15_years: true
+
+  # current role and history
+  current_company: "Your Employer"
+  current_designation: "Your Job Title"
+  employment_history: >-
+    Your Employer since Month Year (current), and Previous Employer before
+    that. No other employer. Spell this out: asked whether you have worked at
+    a particular company, the bot can only answer from what is written here.
+  reason_for_change: "Seeking broader scope and scale in applied work"
+
+  # notice, joining, provident fund
+  earliest_joining: "30 days from the date of offer"
+  last_working_day: "Not serving notice, so there is no last working day"
+  notice_period_buyout_possible: true
+  pf_deduction: "Yes, PF is deducted in the current organisation"
+  pf_all_employments: "Yes, PF has been deducted in all employments"
+  offers_in_hand: 0
+
+  # availability and willingness
+  work_mode_preference: "Flexible - open to office, hybrid or fully remote"
+  willing_night_shifts: false
+  willing_rotational_shifts: false
+  timezone_shifts: "Not available for US time zone shifts"
+  willing_in_person_interview: true
+  willing_virtual_interview: "Yes, available for a virtual or online interview"
+  attend_walk_in: "No, cannot attend walk-in drives"
+  willing_to_sign_bond: false
+  open_to_startup: "Yes, open to working at a startup"
+  contract_roles: "Yes, comfortable with a 12 month contract role"
+  relocation_scope: >-
+    Currently in Your City and willing to relocate to any of the preferred
+    locations listed in this profile.
+
+  # links
+  github_url: "https://github.com/your-handle"
+  linkedin_url: "https://www.linkedin.com/in/your-handle"
+
+  # Answers "how did you hear about us", which usually offers a fixed list that
+  # does not include Naukri. Worded as permission, because the bot is told never
+  # to infer and would otherwise abstain rather than pick from the choices.
+  job_discovery_source: >-
+    Found this role on the Naukri.com job portal. If Naukri is not one of the
+    offered choices, any of Company Website or LinkedIn is acceptable - there
+    is no preference and this does not need to be exact.
+
+  # Answers "how many years of experience in X" for any X. Set
+  # DEFAULT_SKILL_EXPERIENCE_YEARS in .env to answer these from a rule instead;
+  # the model alone will not use this fact, because it is instructed never to
+  # infer and rightly refuses to claim experience the resume does not show.
+  skill_experience_years: >-
+    3 years of hands-on experience with any individual skill, technology, tool,
+    framework or role title named in a question.
