@@ -99,12 +99,6 @@ def load_settings(
         "llm_rank_top_n": _env_int("LLM_RANK_TOP_N", defaults.llm_rank_top_n),
         "min_score": _env_float("MIN_SCORE", defaults.min_score),
         "max_days_old": _env_int("MAX_DAYS_OLD", defaults.max_days_old),
-        "min_score_floor": _env_float(
-            "MIN_SCORE_FLOOR", defaults.min_score_floor
-        ),
-        "max_days_old_fallback": _env_int(
-            "MAX_DAYS_OLD_FALLBACK", defaults.max_days_old_fallback
-        ),
         "max_per_company": _env_int("MAX_PER_COMPANY", defaults.max_per_company),
         "max_empty_searches": _env_int(
             "MAX_EMPTY_SEARCHES", defaults.max_empty_searches

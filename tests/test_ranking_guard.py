@@ -38,8 +38,6 @@ def _settings(**overrides):
         target_applications=50,
         min_score=55.0,
         max_days_old=3,
-        min_score_floor=0.0,
-        max_days_old_fallback=3,
         min_llm_rank_coverage=0.5,
         apply_delay_min_s=0.0,
         apply_delay_max_s=0.0,

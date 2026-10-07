@@ -17,12 +17,11 @@ from naukri_bot import ranking
 from naukri_bot.models import JobPosting, Settings
 
 
-def _settings(max_days_old=3, fallback=3):
+def _settings(max_days_old=3):
     return Settings(
         email="t@example.com",
         password="secret",
         max_days_old=max_days_old,
-        max_days_old_fallback=fallback,
     )
 
 
@@ -46,11 +45,11 @@ def test_unknown_age_is_kept():
     assert dropped == 1
 
 
-def test_the_wider_of_the_two_age_limits_is_used():
-    """With the fallback tier enabled, its jobs must survive to be ranked."""
-    jobs = [_job("fresh", 1), _job("fallback_age", 9), _job("beyond", 20)]
-    kept, dropped = ranking.drop_stale_candidates(jobs, _settings(3, 14))
-    assert [j.job_id for j in kept] == ["fresh", "fallback_age"]
+def test_a_wider_max_days_old_keeps_more(jobs=None):
+    """max_days_old is now the single age gate; there is no second limit."""
+    jobs = [_job("fresh", 1), _job("nine", 9), _job("twenty", 20)]
+    kept, dropped = ranking.drop_stale_candidates(jobs, _settings(14))
+    assert [j.job_id for j in kept] == ["fresh", "nine"]
     assert dropped == 1
 
 
@@ -68,23 +67,43 @@ def test_the_filter_does_not_change_order():
     assert [j.job_id for j in kept] == ["a", "b", "c"]
 
 
-def test_survivors_still_reach_the_same_tier_as_before():
-    """The pre-filter must not remove anything select_for_application would keep.
+def test_the_filter_never_removes_what_selection_would_keep():
+    """The pre-filter and selection must use the same age rule.
 
-    Both use the same limits, so any job the filter drops must also have been
-    dropped by tiering. This pins the two together.
+    Both read max_days_old, so anything the filter drops must also have been
+    rejected by selection. This pins the two together so they cannot drift.
     """
-    settings = _settings(3, 14)
+    settings = _settings(4)
     jobs = [_job("j%02d" % i, d) for i, d in
-            enumerate([0, 1, 3, 4, 9, 14, 15, 30, None])]
-    kept, _ = ranking.drop_stale_candidates(jobs, settings)
-    kept_ids = {j.job_id for j in kept}
+            enumerate([0, 1, 3, 4, 5, 9, 14, 20, None])]
+    kept_ids = {j.job_id for j in ranking.drop_stale_candidates(jobs, settings)[0]}
 
-    for job in jobs:
-        scored = ranking.ScoredJob(job=job, score=70.0)  # comfortably over min_score
-        tier = ranking.tier_of(scored, settings)
-        if job.job_id not in kept_ids:
-            assert tier is None, (
-                "%r (age %s) was filtered out but tiering would have kept it"
-                % (job.job_id, job.posted_days_ago)
-            )
+    scored = [ranking.ScoredJob(job=job, score=70.0) for job in jobs]
+    selected_ids = {
+        c.job.job_id
+        for c in ranking.select_for_application(scored, settings, lambda jid: False)
+    }
+    assert selected_ids <= kept_ids, (
+        "selection kept %s which the pre-filter had already dropped"
+        % (selected_ids - kept_ids)
+    )
+
+
+def test_selection_orders_by_score_even_if_given_unsorted_input():
+    """The queue must be best-first regardless of the order it arrives in.
+
+    rank() happens to return score-sorted candidates, so without this the sort
+    in select_for_application is never exercised and could be removed unnoticed.
+    """
+    settings = _settings(4)
+    scores = [55.0, 80.0, 61.0, 72.0, 58.0]
+    scored = [
+        ranking.ScoredJob(
+            job=_job("j%d" % i, 1),
+            score=score,
+        )
+        for i, score in enumerate(scores)
+    ]
+    selected = ranking.select_for_application(scored, settings, lambda jid: False)
+    got = [c.score for c in selected]
+    assert got == sorted(scores, reverse=True), "not ordered best first: %s" % got

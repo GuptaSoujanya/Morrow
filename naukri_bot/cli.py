@@ -373,10 +373,9 @@ def _report_plan(
     )
     for position, scored in enumerate(shown, start=1):
         logger.info(
-            "%2d. [%5.1f] [tier %s] %s @ %s (%s)",
+            "%2d. [%5.1f] %s @ %s (%s)",
             position,
             scored.score,
-            ranking_module.tier_of(scored, settings) or "-",
             scored.job.title or "<no title>",
             scored.job.company or "<no company>",
             scored.job.posted_label or "age unknown",
@@ -542,7 +541,7 @@ def run(
                 "Every one of the %d collected postings is older than %d days. "
                 "Nothing was applied to.",
                 summary.collected,
-                max(settings.max_days_old, settings.max_days_old_fallback),
+                settings.max_days_old,
             )
             summary.quota_after = ledger.quota_used()
             return summary
@@ -634,10 +633,9 @@ def run(
                 continue
 
             logger.info(
-                "[%d of %d applied] [tier %s] %s @ %s",
+                "[%d of %d applied] %s @ %s",
                 summary.applied,
                 settings.target_applications,
-                ranking.tier_of(scored, settings) or "-",
                 scored.job.title,
                 scored.job.company,
             )

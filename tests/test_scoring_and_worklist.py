@@ -68,8 +68,7 @@ def test_genuinely_wrong_roles_are_still_penalised(title):
 
 def test_near_misses_are_reported(caplog):
     """A run that rejects most of its pool must say what it nearly took."""
-    settings = Settings(email="t@e.com", password="p", min_score=55.0,
-                        min_score_floor=0.0)
+    settings = Settings(email="t@e.com", password="p", min_score=55.0)
     ranked = [
         ScoredJob(job=JobPosting(job_id="hit", url="u", title="Taken",
                                  company="C"), score=60.0),

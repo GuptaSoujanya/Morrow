@@ -273,10 +273,7 @@ class Settings:
     llm_rank_top_n: int = 150
     min_score: float = 55.0
     max_days_old: int = 7
-    # Fallback tiers, used only when the preferred tier cannot fill
-    # target_applications. A floor of 0 disables the tier entirely.
-    min_score_floor: float = 50.0
-    max_days_old_fallback: int = 14
+
     # Stops one prolific poster's near-duplicate listings from taking a
     # large share of the day's applications. 0 disables the cap.
     max_per_company: int = 3

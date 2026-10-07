@@ -40,10 +40,8 @@ def _settings(**overrides):
         target_applications=50,
         min_score=55.0,
         max_days_old=3,
-        min_score_floor=50.0,
         apply_delay_min_s=0.0,
         apply_delay_max_s=0.0,
-        max_days_old_fallback=14,
         dry_run=False,
     )
     values.update(overrides)
@@ -148,30 +146,32 @@ def test_loop_stops_exactly_at_the_target(fake_naukri, tmp_path):
     assert len(attempted) == 50, "loop kept applying past the target"
 
 
-def test_loop_descends_into_fallback_tiers_only_after_tier_one(fake_naukri, tmp_path):
-    """Tier 1 is preferred, but must not cap the run when it cannot fill the target."""
+def test_the_loop_works_down_the_queue_in_score_order(fake_naukri, tmp_path):
+    """Selection returns one score-ordered queue; the loop walks it in order.
+
+    This replaced a test for a three-tier scheme that preferred fresher jobs
+    over higher-scoring stale ones. The tiers were removed because the orders
+    they produced were identical to plain score ordering, and because freshness
+    already earns up to ten points inside the score.
+    """
     install, attempted = fake_naukri
-    tier1 = [_scored(60.0, 1, "fresh%02d" % i) for i in range(10)]
-    tier2 = [_scored(75.0, 9, "old%02d" % i) for i in range(10)]  # higher score, older
-    tier3 = [_scored(52.0, 1, "weak%02d" % i) for i in range(10)]
-    # Only half of tier 1 is applicable, so the target needs tier 2 as well.
-    script = {"fresh%02d" % i: ApplyStatus.EXTERNAL_SKIPPED for i in range(0, 10, 2)}
-    install(tier1 + tier2 + tier3, script)
+    queue = [_scored(80.0 - i, 1, "j%02d" % i) for i in range(20)]
+    # Half of the best ones cannot be applied to, so the loop must keep going.
+    script = {"j%02d" % i: ApplyStatus.EXTERNAL_SKIPPED for i in range(0, 10, 2)}
+    install(queue, script)
 
     summary = _run(tmp_path, _settings(target_applications=10))
 
     assert summary.applied == 10
-    assert attempted[:10] == ["fresh%02d" % i for i in range(10)], (
-        "fresh jobs must be offered before older ones even when scored lower"
-    )
-    assert any(jid.startswith("old") for jid in attempted), "never reached tier 2"
-    assert not any(jid.startswith("weak") for jid in attempted), (
-        "reached tier 3 while tier 2 still had applicable jobs"
-    )
+    assert attempted == sorted(attempted), "the queue was not walked in order"
+    assert attempted[0] == "j00", "did not start with the highest score"
 
 
-def test_below_the_floor_is_never_applied_to(fake_naukri, tmp_path):
-    """A short run is preferable to an irrelevant application under the user's name."""
+def test_below_min_score_is_never_applied_to(fake_naukri, tmp_path):
+    """A short run is preferable to an irrelevant application under the user's name.
+
+    min_score is now the single quality bar; there is no second floor.
+    """
     install, attempted = fake_naukri
     good = [_scored(60.0, 1, "ok%02d" % i) for i in range(5)]
     junk = [_scored(30.0, 1, "junk%02d" % i) for i in range(50)]

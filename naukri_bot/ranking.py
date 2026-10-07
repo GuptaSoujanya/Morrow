@@ -246,52 +246,21 @@ def rank(
     return shortlist
 
 
-def _tier_of(candidate: ScoredJob, settings: Settings) -> Optional[int]:
-    """Return the preference tier a candidate belongs to, or None to drop it.
-
-    Tier 1 is what the old hard filters allowed: good enough and fresh enough.
-    Tier 2 keeps the quality bar but forgives age, because a job that cleared
-    min_score four days ago is a better use of the quota than nothing at all.
-    Tier 3 forgives score down to a floor, and exists only so that a thin day
-    still reaches the target. Below the floor a candidate is dropped outright:
-    a real application is sent under the user's name and is visible in their
-    Naukri history forever, so padding the count with irrelevant roles costs
-    more than falling short.
-    """
-    days = candidate.job.posted_days_ago
-    fresh = days is None or days <= settings.max_days_old
-    within_fallback = days is None or days <= settings.max_days_old_fallback
-
-    if candidate.score >= settings.min_score:
-        if fresh:
-            return 1
-        if within_fallback:
-            return 2
-        return None
-
-    floor = settings.min_score_floor
-    if floor > 0 and candidate.score >= floor and within_fallback:
-        return 3
-    return None
-
-
 def drop_stale_candidates(
     jobs: List[JobPosting], settings: Settings
 ) -> Tuple[List[JobPosting], int]:
     """Remove jobs too old to be applied to, before they are sent to the LLM.
 
-    Age is only used as a cut in select_for_application, which runs after
-    ranking, so a run scored every collected posting and then discarded the
-    stale ones: on 25 September that was 556 of 900, about five sixths of an
-    hour of LLM calls spent on jobs that could never be applied to. Because
-    max_candidates is a hard cap, those postings also displaced fresher ones
-    from the pool.
+    Age is a hard gate, so applying it here rather than after ranking keeps the
+    LLM budget on jobs that can actually be applied to: on 25 September that was
+    556 of 900 postings scored and then discarded. Because max_candidates is a
+    hard cap, those postings also displaced fresher ones from the pool.
 
-    Jobs whose age could not be parsed are kept. _tier_of treats an unknown age
-    as fresh, and a large share of selected jobs have no readable age, so
-    dropping them here would quietly gut the shortlist.
+    Jobs whose age could not be parsed are kept, because selection treats an
+    unknown age as acceptable and a large share of selected jobs have no
+    readable age.
     """
-    limit = max(settings.max_days_old, settings.max_days_old_fallback)
+    limit = settings.max_days_old
     kept = [
         job
         for job in jobs
@@ -313,62 +282,49 @@ def drop_stale_candidates(
 def select_for_application(
     ranked: List[ScoredJob], settings: Settings, is_already_applied
 ) -> List[ScoredJob]:
-    """Order ranked jobs by preference tier so the apply loop can reach its target.
+    """Return every applicable candidate, best score first.
 
-    The caller stops once target_applications have actually been *submitted*,
-    so this returns every acceptable candidate rather than a fixed slice. Jobs
-    that cannot be applied to through Naukri at all -- company-site redirects,
-    unanswerable questionnaires -- are only discoverable once a job page is
-    open, so the preferred tier is routinely too thin to fill the target on its
-    own. Lower tiers sit behind it and are consumed only if it runs out.
+    One rule: clear min_score and be no older than max_days_old. The caller
+    stops once target_applications have been *submitted*, so this returns
+    everything acceptable rather than a fixed slice -- company-site redirects
+    and unanswerable questionnaires are only discoverable with a job page open,
+    so the queue has to be longer than the target.
+
+    This replaced a three-tier scheme that preferred fresher jobs over
+    higher-scoring stale ones. It was removed because the orders it produced
+    were identical to plain score ordering, and because freshness already earns
+    up to ten points inside the score, so the tiers were counting it twice.
     """
-    tiers: Dict[int, List[ScoredJob]] = {1: [], 2: [], 3: []}
+    selected: List[ScoredJob] = []
     dropped_applied = 0
-    dropped_below_floor = 0
+    dropped_score = 0
     dropped_stale = 0
 
     for candidate in ranked:
         if is_already_applied(candidate.job.job_id):
             dropped_applied += 1
             continue
-        tier = _tier_of(candidate, settings)
-        if tier is None:
-            days = candidate.job.posted_days_ago
-            if days is not None and days > settings.max_days_old_fallback:
-                dropped_stale += 1
-            else:
-                dropped_below_floor += 1
+        if candidate.score < settings.min_score:
+            dropped_score += 1
             continue
-        tiers[tier].append(candidate)
+        days = candidate.job.posted_days_ago
+        if days is not None and days > settings.max_days_old:
+            dropped_stale += 1
+            continue
+        selected.append(candidate)
 
-    # Each tier is already in descending score order because `ranked` is, so
-    # concatenating preserves "best first" within every tier.
-    selected = tiers[1] + tiers[2] + tiers[3]
+    selected.sort(key=lambda candidate: candidate.score, reverse=True)
 
-    # With the floor disabled the bar that actually rejected these jobs is
-    # min_score, and reporting "below the score floor of 0" was nonsense.
-    effective_bar = (
-        settings.min_score_floor if settings.min_score_floor > 0 else settings.min_score
-    )
     logger.info(
-        "Application selection dropped %d already applied, %d scoring under %.0f, "
-        "and %d older than %d days",
+        "Application selection dropped %d already applied, %d scoring under "
+        "%.0f, and %d older than %d days; %d eligible for a target of %d",
         dropped_applied,
-        dropped_below_floor,
-        effective_bar,
-        dropped_stale,
-        settings.max_days_old_fallback,
-    )
-    logger.info(
-        "Eligible for a target of %d: %d preferred (score >= %.0f, <= %d days), "
-        "%d older but good enough, %d below score but above the floor; %d total",
-        settings.target_applications,
-        len(tiers[1]),
+        dropped_score,
         settings.min_score,
+        dropped_stale,
         settings.max_days_old,
-        len(tiers[2]),
-        len(tiers[3]),
         len(selected),
+        settings.target_applications,
     )
     _report_near_misses(ranked, settings, is_already_applied)
 
@@ -376,16 +332,11 @@ def select_for_application(
         logger.warning(
             "Only %d jobs are eligible, short of the target of %d. Every one "
             "would have to be applicable to reach it, so expect fewer. Lower "
-            "MIN_SCORE_FLOOR or raise MAX_DAYS_OLD_FALLBACK to widen the pool.",
+            "MIN_SCORE or raise MAX_DAYS_OLD to widen the pool.",
             len(selected),
             settings.target_applications,
         )
     return selected
-
-
-def tier_of(candidate: ScoredJob, settings: Settings) -> Optional[int]:
-    """Public wrapper so the run log can show which tier a job came from."""
-    return _tier_of(candidate, settings)
 
 
 def _report_near_misses(
@@ -399,12 +350,11 @@ def _report_near_misses(
     each of them.
     """
     bar = settings.min_score
-    floor = settings.min_score_floor if settings.min_score_floor > 0 else bar
     near = [
         candidate
         for candidate in ranked
-        if candidate.score < floor
-        and candidate.score >= floor - margin
+        if candidate.score < bar
+        and candidate.score >= bar - margin
         and not is_already_applied(candidate.job.job_id)
     ]
     if not near:
@@ -413,7 +363,7 @@ def _report_near_misses(
         "--- %d job(s) within %.0f points below the bar of %.0f, best first ---",
         len(near),
         margin,
-        floor,
+        bar,
     )
     for candidate in near[:20]:
         logger.info(
