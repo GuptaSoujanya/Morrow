@@ -81,7 +81,35 @@ SLUG_P2 = (
     "https://www.naukri.com/ai-engineer-jobs-2"
     "?k=ai%20engineer&sort=f&experience=3"
 )
-QUERY_P1 = "https://www.naukri.com/jobs-in-india?k=AI%20Engineer&sort=f"
+QUERY_P1 = (
+    "https://www.naukri.com/ai-engineer-jobs-in-india?k=AI%20Engineer&sort=f"
+)
+QUERY_P2 = (
+    "https://www.naukri.com/ai-engineer-jobs-in-india-2?k=AI%20Engineer&sort=f"
+)
+
+
+def test_the_fallback_endpoint_keeps_its_sort_on_every_page():
+    """/jobs-in-india?k=... is redirected and loses sort=f, page 1 included.
+
+    Measured on Machine Learning Engineer: the query form gave 6 of 20 cards
+    within 4 days and a 21-day-old oldest card, the path form 20 of 20 posted
+    today, and the same on pages 2 and 3.
+    """
+    assert sources._search_url("AI Engineer", "", 1, True) == QUERY_P1
+    assert sources._search_url("AI Engineer", "", 2, True) == QUERY_P2
+    assert "pageNo" not in sources._search_url("AI Engineer", "", 2, True)
+    assert sources._search_url("AI Engineer", "", 3, True).startswith(
+        "https://www.naukri.com/ai-engineer-jobs-in-india-3?"
+    )
+
+
+def test_a_keyword_with_no_sluggable_characters_still_searches():
+    """"++" has no path to build from, so take the redirect over "/-jobs-in-india"."""
+    url = sources._search_url("++", "", 2, True)
+
+    assert url.startswith("https://www.naukri.com/jobs-in-india?")
+    assert "pageNo=2" in url
 
 
 def test_the_filter_only_goes_on_the_slug_url():

@@ -283,7 +283,7 @@ def _slug_search_url(
 
 
 def _search_url(keyword: str, location: str, page: int, sort_by_date: bool) -> str:
-    """Build a Naukri search URL using the query endpoint.
+    """Build a Naukri search URL for keywords with no slug landing page.
 
     An earlier version built SEO slug paths like ``/llm-engineer-jobs``.  Those
     landing pages only exist for a curated set of popular terms, so niche
@@ -291,16 +291,38 @@ def _search_url(keyword: str, location: str, page: int, sort_by_date: bool) -> s
     only visible symptom is "zero cards".  ``/jobs-in-india?k=...`` is the real
     search endpoint; Naukri server-redirects it to whatever slug it considers
     canonical for that keyword.
+
+    That redirect is the problem: it discards the query string, taking `sort=f`
+    with it, so this endpoint was never date-sorted on any page -- not just the
+    paged ones. Requesting the redirect target directly, `/<slug>-jobs-in-india`
+    with the page number in the path, keeps it. Measured on Machine Learning
+    Engineer: `?k=...&sort=f` gave 6 of 20 cards within 4 days and a 21-day-old
+    oldest, the path form 20 of 20 with everything posted today, and the same
+    on pages 2 and 3.
+
+    Unlike `/<slug>-jobs`, this path is generated from the keyword rather than
+    curated, so an invented keyword still returns its handful of matches. Pages
+    past the last one wrap back to page 1, which the caller deduplicates by job
+    id.
     """
+    slug = re.sub(r"[^a-z0-9]+", "-", keyword.casefold()).strip("-")
     params = [("k", keyword)]
     if location:
         params.append(("l", location))
     if sort_by_date:
         params.append(("sort", "f"))
+    if not slug:
+        # Nothing to build a path from, so accept the redirect and its dropped
+        # sort rather than requesting "/-jobs-in-india".
+        if page > 1:
+            params.append(("pageNo", str(page)))
+        return "https://www.naukri.com/jobs-in-india?%s" % urlencode(
+            params, quote_via=quote
+        )
+    path = "%s-jobs-in-india" % slug
     if page > 1:
-        params.append(("pageNo", str(page)))
-    query = urlencode(params, quote_via=quote)
-    return "https://www.naukri.com/jobs-in-india?%s" % query
+        path = "%s-%d" % (path, page)
+    return "https://www.naukri.com/%s?%s" % (path, urlencode(params, quote_via=quote))
 
 
 def collect_from_search(
