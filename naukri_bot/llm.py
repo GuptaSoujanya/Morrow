@@ -429,6 +429,7 @@ def resolve_answer(
     question: str,
     options: Optional[List[str]] = None,
     prior: Optional[Dict[str, str]] = None,
+    job_context: Optional[Dict[str, str]] = None,
 ) -> AnswerResolution:
     if not client.available():
         return _abstain(question, "llm_unavailable")
@@ -436,6 +437,14 @@ def resolve_answer(
     facts = profile.known_facts()
     if profile.resume_text:
         facts["resume"] = profile.resume_text[:6000]
+    # The posting's own details, under job_* keys so grounding still verifies
+    # against a named fact. "Will you attend the walk-in?" names no city, so a
+    # candidate who attends walk-ins only in Delhi-NCR cannot answer it from the
+    # profile alone and abstained -- three applications lost in one run. The
+    # walk-in is at the employer's location, so the posting resolves it.
+    for key, value in (job_context or {}).items():
+        if value:
+            facts["job_%s" % key] = value
     # A list of blank strings is not a list of choices. handle_radio builds
     # options from label text, and when the labels have not painted it produces
     # ['', ''] -- truthy, so an earlier guard let it through, the model was
@@ -451,6 +460,13 @@ def resolve_answer(
         "is needed, you MUST abstain. Never estimate, never infer, never use a "
         "typical or common value. grounded_in must name the exact supplied fact "
         "key supporting the answer. For options, copy one option exactly.\n"
+        # Without this the model treats the posting's city as the candidate's.
+        "Any fact whose key starts with job_ describes the JOB, not the "
+        "candidate. Use those only to decide which place or role a question "
+        "refers to when the question itself does not say -- for instance an "
+        "interview or walk-in with no city named is at job_location. Never "
+        "treat job_ facts as statements about the candidate, and never answer "
+        "a question about the candidate from them alone.\n"
         # These answers go into a chat box, not a cover letter. A yes/no question
         # answered in 192 characters was rejected outright: the drawer closed
         # without submitting and the application was lost. Four of thirty-eight

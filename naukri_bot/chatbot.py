@@ -4,7 +4,7 @@
 
 import logging
 import time
-from typing import List, Optional, Protocol, Tuple
+from typing import Any, List, Optional, Protocol, Tuple
 
 from selenium.common.exceptions import (
     ElementClickInterceptedException,
@@ -58,6 +58,14 @@ class AnswerEngine(Protocol):
         options: Optional[List[str]] = None,
         field_type: str = "text",
     ) -> AnswerResolution:
+        ...
+
+    def set_job_context(self, job: Any) -> None:
+        """Optional: name the posting these questions belong to.
+
+        apply_to_job calls this when the engine provides it, so a question with
+        no city in it can still be answered from the posting's location.
+        """
         ...
 
 

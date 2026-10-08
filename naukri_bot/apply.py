@@ -314,6 +314,12 @@ def apply_to_job(
         logger.info("[DRY RUN] Would apply to %s at %s", job.job_id, job.url)
         return _result(job, ApplyStatus.APPLIED, "dry_run_no_navigation_or_click")
 
+    # Questions that name no place mean this posting's place, so the engine
+    # needs to know which job it is answering for before the chat opens.
+    set_context = getattr(answer_engine, "set_job_context", None)
+    if callable(set_context):
+        set_context(job)
+
     try:
         if not safe_get(driver, job.url):
             return _result(job, ApplyStatus.ERROR, "navigation_failed")

@@ -122,9 +122,23 @@ extra_facts:
   willing_night_shifts: false
   willing_rotational_shifts: false
   timezone_shifts: "Not available for US time zone shifts"
-  willing_in_person_interview: true
+  # A fact can carry a condition, and the bot will apply it. Questions often
+  # name no city -- "Will you attend the walk-in?" -- so the bot also passes
+  # the posting's own location to the model, which resolves the question
+  # against it. Spell out both sides of a geographic limit, because an answer
+  # that cannot be grounded is abandoned rather than guessed.
+  willing_in_person_interview: >-
+    Yes only for a face-to-face or in-person interview in Your Region, meaning
+    City A, City B and City C. For an in-person round in any other city the
+    answer is No, but a virtual or online interview is available for a role in
+    any location. Willingness to relocate after joining is a separate matter
+    covered by relocation_scope and does not mean travelling to another city to
+    interview.
   willing_virtual_interview: "Yes, available for a virtual or online interview"
-  attend_walk_in: "No, cannot attend walk-in drives"
+  attend_walk_in: >-
+    Yes only for a walk-in drive held in Your Region, meaning City A, City B
+    and City C. For a walk-in in any other city the answer is No, whatever the
+    date.
   willing_to_sign_bond: false
   open_to_startup: "Yes, open to working at a startup"
   contract_roles: "Yes, comfortable with a 12 month contract role"

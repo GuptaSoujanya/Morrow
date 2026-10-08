@@ -78,6 +78,17 @@ def _record_unanswered(question: str, reason: str, options=None) -> None:
         logger.warning("Could not write %s: %s", _UNANSWERED_FILE, exc)
 
 
+def _used_job_context(resolution: AnswerResolution) -> bool:
+    """Did the answer rest on a job_* fact rather than the profile alone?"""
+    answer = resolution.answer
+    if answer is None:
+        return False
+    return any(
+        part.strip().startswith("job_")
+        for part in _normalise(answer.grounded_in or "").replace(",", " ").split()
+    )
+
+
 def _profile_fingerprint(profile: Profile) -> str:
     payload = json.dumps(profile.known_facts(), sort_keys=True, default=str)
     payload += profile.resume_text or ""
@@ -105,6 +116,24 @@ class AnswerEngine:
         self.answered = 0
         self.abstained = 0
         self.profile_fingerprint = _profile_fingerprint(profile)
+        self.job_context: Dict[str, str] = {}
+
+    def set_job_context(self, job: Any) -> None:
+        """Note which posting the next questions belong to.
+
+        A question can name no place and still have one: "Will you attend the
+        walk-in?" means the employer's own location. Without this the model has
+        nothing to resolve it against and abstains, which skips the job.
+        """
+        self.job_context = {
+            key: value
+            for key, value in (
+                ("location", getattr(job, "location", "") or ""),
+                ("title", getattr(job, "title", "") or ""),
+                ("company", getattr(job, "company", "") or ""),
+            )
+            if value
+        }
 
     def resolve(
         self,
@@ -133,7 +162,11 @@ class AnswerEngine:
             return self._accept(question, direct, field_type, persist=True)
 
         llm_resolution = llm.resolve_answer(
-            self.client, self.profile, question, options=options
+            self.client,
+            self.profile,
+            question,
+            options=options,
+            job_context=self.job_context,
         )
         if llm_resolution.abstained:
             return self._finish(question, llm_resolution, False)
@@ -141,7 +174,18 @@ class AnswerEngine:
             return self._finish(
                 question, AnswerResolution.abstain("ask_mode_llm_answer"), False
             )
-        return self._accept(question, llm_resolution, field_type, persist=True)
+        # An answer that leaned on the posting is true of that posting only.
+        # Cached, "Yes" to a walk-in at a Noida employer would be replayed to a
+        # Chennai one, since the cache is keyed on the question text and the
+        # profile fingerprint -- neither of which changes between jobs.
+        persist = not _used_job_context(llm_resolution)
+        if not persist:
+            logger.info(
+                "Not caching the answer to %r: it depends on this posting (%s)",
+                question,
+                llm_resolution.answer.grounded_in if llm_resolution.answer else "",
+            )
+        return self._accept(question, llm_resolution, field_type, persist=persist)
 
     def _accept(
         self,
