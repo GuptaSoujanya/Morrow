@@ -10,7 +10,7 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from naukri_bot import cli, ranking
+from naukri_bot import cli, profile as profile_module, ranking
 from naukri_bot.models import JobPosting, Profile, ScoredJob, Settings
 
 DESC = ("Build agentic AI with Python, LangGraph, RAG, embeddings, vector "
@@ -150,3 +150,26 @@ def test_repeated_writes_never_lose_rows(tmp_path, monkeypatch):
     written = (tmp_path / "external_jobs.md").read_text()
     rows = [l for l in written.splitlines() if l.startswith("| ") and not l.startswith("| score")]
     assert len(rows) == 8, "expected 8 unique rows, got %d" % len(rows)
+
+
+def test_a_binary_resume_says_what_to_do(tmp_path):
+    """Most resumes are PDFs. Read as text they are noise, and noise in the
+    resume quietly degrades every lexical score, so the error has to name the
+    cause and the fix rather than just failing to decode."""
+    pdf = tmp_path / "resume.pdf"
+    pdf.write_bytes(b"%PDF-1.4\n\x00\x80\xff binary \xfe\xed\n%%EOF\n")
+
+    with pytest.raises(profile_module.ProfileError) as caught:
+        profile_module.extract_resume_text(str(pdf))
+
+    message = str(caught.value)
+    assert "not text" in message
+    assert ".txt" in message
+
+
+def test_a_missing_resume_is_reported_as_a_missing_file(tmp_path):
+    """Distinct from the binary case: this one is a wrong RESUME_PATH."""
+    with pytest.raises(profile_module.ProfileError) as caught:
+        profile_module.extract_resume_text(str(tmp_path / "nope.tex"))
+
+    assert "not text" not in str(caught.value)

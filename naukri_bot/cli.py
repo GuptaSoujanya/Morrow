@@ -841,6 +841,15 @@ def main(argv: Optional[List[str]] = None) -> int:
         profile = profile_module.load_profile(settings)
     except profile_module.ProfileError as exc:
         logger.error("Could not load your profile: %s", exc)
+        # Two different first-run mistakes end up here, and blaming the wrong
+        # file sends a new user to edit something that is already correct.
+        if "resume" in str(exc).casefold():
+            logger.error(
+                "RESUME_PATH in your .env points at %s. Set it to a resume "
+                "file that exists, in .tex or .txt form.",
+                settings.resume_path,
+            )
+            return EXIT_CONFIG
         logger.error(
             "Copy profile.example.yaml to %s and fill it in.", settings.profile_path
         )

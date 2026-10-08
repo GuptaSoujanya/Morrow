@@ -70,7 +70,16 @@ def extract_resume_text(path: str) -> str:
     try:
         with resume_path.open("r", encoding="utf-8") as resume_file:
             text = resume_file.read()
-    except (OSError, UnicodeError) as exc:
+    except UnicodeError as exc:
+        # A PDF or DOCX resume, which is what most people have. Reading it as
+        # text yields binary noise, and noise in the resume silently degrades
+        # every lexical score, so say what to do instead of guessing.
+        raise ProfileError(
+            "Could not read resume at %s: it is not text (%s). Only .tex and "
+            ".txt are supported -- export or copy your resume to a .txt file "
+            "and point RESUME_PATH at that." % (path, exc)
+        ) from exc
+    except OSError as exc:
         raise ProfileError("Could not read resume at %s: %s" % (path, exc)) from exc
 
     extension = resume_path.suffix.lower()
