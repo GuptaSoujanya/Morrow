@@ -104,6 +104,9 @@ def load_settings(
             "MAX_EMPTY_SEARCHES", defaults.max_empty_searches
         ),
         "user_agent": os.getenv("USER_AGENT", defaults.user_agent),
+        "search_experience_years": _env_int(
+            "SEARCH_EXPERIENCE_YEARS", defaults.search_experience_years
+        ),
         "max_answer_chars": _env_int(
             "MAX_ANSWER_CHARS", defaults.max_answer_chars
         ),

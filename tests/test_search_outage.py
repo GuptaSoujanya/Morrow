@@ -42,7 +42,9 @@ def fake_sources(monkeypatch):
     monkeypatch.setattr(sources, "RECOMMENDED_TABS", [])
 
     def _install(results_for):
-        def _search(driver, keyword, location="", pages=1, sort_by_date=True):
+        def _search(
+            driver, keyword, location="", pages=1, sort_by_date=True, experience=0
+        ):
             searched.append(keyword)
             return results_for(keyword)
 

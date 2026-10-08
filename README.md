@@ -89,6 +89,9 @@ LOCATION=bangalore
 # Number of search result pages to scrape per keyword (default: 2)
 PAGES_PER_KEYWORD=2
 
+# Only return jobs whose experience range covers this many years (0 = off)
+SEARCH_EXPERIENCE_YEARS=3
+
 # Maximum applications per run (Naukri allows ~100/day)
 MAX_APPLICATIONS=50
 ```

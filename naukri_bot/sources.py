@@ -245,6 +245,37 @@ def _matching_cards(soup: BeautifulSoup, selectors: Tuple[str, ...]) -> Tuple[Li
     return [], selectors[-1]
 
 
+def _slug_search_url(
+    keyword: str, location: str, page: int, sort_by_date: bool, experience: int
+) -> str:
+    """Build the slug search URL, which is the only one honouring `experience`.
+
+    /jobs-in-india?k=... ignores an experience parameter: Naukri redirects it to
+    the canonical slug and drops the filter on the way. Requesting the slug
+    directly keeps it, and the filter is worth having -- unfiltered pages
+    returned 40-70% of cards with a range covering the candidate's experience,
+    filtered ones about 100%.
+
+    Slug pages only exist for terms Naukri has a landing page for, and a missing
+    one serves an empty results page rather than a 404, so the caller must treat
+    zero cards on the first page as "try the query endpoint instead".
+    """
+    slug = re.sub(r"[^a-z0-9]+", "-", keyword.casefold()).strip("-")
+    params = [("k", keyword.casefold())]
+    if location:
+        params.append(("l", location))
+    if sort_by_date:
+        params.append(("sort", "f"))
+    if experience > 0:
+        params.append(("experience", str(experience)))
+    if page > 1:
+        params.append(("pageNo", str(page)))
+    return "https://www.naukri.com/%s-jobs?%s" % (
+        slug,
+        urlencode(params, quote_via=quote),
+    )
+
+
 def _search_url(keyword: str, location: str, page: int, sort_by_date: bool) -> str:
     """Build a Naukri search URL using the query endpoint.
 
@@ -267,12 +298,44 @@ def _search_url(keyword: str, location: str, page: int, sort_by_date: bool) -> s
 
 
 def collect_from_search(
-    driver, keyword: str, location: str = "", pages: int = 3, sort_by_date: bool = True
+    driver, keyword: str, location: str = "", pages: int = 3,
+    sort_by_date: bool = True, experience: int = 0
 ) -> List[JobPosting]:
-    """Collect job cards from date-sorted Naukri search pages."""
+    """Collect job cards from date-sorted Naukri search pages.
+
+    With `experience` set, the slug endpoint is tried first because it is the
+    only one that applies the filter. A slug Naukri has no landing page for
+    serves an empty results page rather than an error, so finding nothing on the
+    first page falls back to the query endpoint for that keyword rather than
+    silently losing it -- the failure that had this approach reverted before.
+    """
+    if experience > 0:
+        jobs = _collect_pages(
+            driver, keyword, location, pages, sort_by_date, experience, slug=True
+        )
+        if jobs:
+            return jobs
+        logger.info(
+            "No cards from the filtered slug for %r; falling back to the query "
+            "endpoint without the experience filter",
+            keyword,
+        )
+    return _collect_pages(
+        driver, keyword, location, pages, sort_by_date, 0, slug=False
+    )
+
+
+def _collect_pages(
+    driver, keyword: str, location: str, pages: int, sort_by_date: bool,
+    experience: int, slug: bool
+) -> List[JobPosting]:
     jobs: List[JobPosting] = []
     for page in range(1, max(0, pages) + 1):
-        url = _search_url(keyword, location, page, sort_by_date)
+        url = (
+            _slug_search_url(keyword, location, page, sort_by_date, experience)
+            if slug
+            else _search_url(keyword, location, page, sort_by_date)
+        )
         if page > 1:
             human_pause()
         try:
@@ -488,6 +551,7 @@ def collect_candidates(
             location=location,
             pages=settings.pages_per_keyword,
             sort_by_date=True,
+            experience=settings.search_experience_years,
         )
         add_unique(found, search_source)
 

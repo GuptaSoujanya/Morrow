@@ -304,6 +304,11 @@ class Settings:
     # a long-form answer mid-word -- "...dynamic prompt templates with gr" --
     # and sent it to an employer.
     max_answer_chars: int = 1200
+    # Years of experience to filter searches by, so Naukri returns only jobs
+    # whose range includes it. Measured on 8 October: the unfiltered endpoint
+    # returned 40-70% of cards with a range covering three years, the filtered
+    # slug returned about 100%, for the same number of page loads. 0 disables.
+    search_experience_years: int = 0
     # Random pause between successful applications. Applying back to back is the
     # most machine-like thing the bot does; Naukri's terms do not permit
     # automation at all, so looking like a person browsing matters. 0 disables.
