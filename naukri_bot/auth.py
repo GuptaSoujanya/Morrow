@@ -27,17 +27,24 @@ _LOGIN_URLS = (
     "https://www.naukri.com/nlogin/login",
     "https://login.naukri.com/",
 )
+# Measured in both states on 8 October. Each of these is present signed in and
+# absent signed out. [class*='nI-gNb-menuItems'] used to be here and is not
+# evidence of anything: it matched 39 elements signed in and 55 on Naukri's own
+# login page, so a first run with no saved session reported "Reusing the saved
+# Naukri session" while sitting on the login form.
 _SUCCESS_SELECTORS = (
     ".nI-gNb-drawer__icon",
-    "[class*='nI-gNb-menuItems']",
     ".view-profile-wrapper",
 )
-# Naukri's global nav shows the login/register block only to anonymous users, so
-# it is proof of the opposite. It used to sit in _SUCCESS_SELECTORS.
-# Only the anonymous global-nav block. A bare link to the login page is not
-# evidence: signed-in pages carry those too, and presence is checked in the DOM
-# rather than on screen.
-_SIGNED_OUT_SELECTORS = ("#root .nI-gNb-log-reg",)
+# Naukri shows these only to anonymous users, so each is proof of the opposite.
+# The log-reg block was qualified with "#root" on the assumption that signed-in
+# pages carry it too. Measured: they do not -- it is 0 signed in and 1 signed
+# out -- and the qualifier cost us the login page, which renders outside #root,
+# leaving nothing at all to contradict a false success marker.
+_SIGNED_OUT_SELECTORS = (".nI-gNb-log-reg", "#login_Layer")
+# Naukri serves this path to anonymous users only, so landing on it settles the
+# question before any selector is consulted.
+_LOGIN_URL_MARKER = "/nlogin/login"
 _CHALLENGE_SELECTORS = (
     "iframe[src*='recaptcha']",
     "[class*='captcha']",
@@ -157,7 +164,17 @@ def is_logged_in(driver: WebDriver, trust_url: bool = True) -> bool:
     reported "Reusing the saved Naukri session" against a signed-out browser
     for exactly that reason.
     """
-    # A real signed-in marker settles it first. _selector_present matches DOM
+    # Being on the login page is decisive and cannot be faked by markup that
+    # happens to appear in both states.
+    try:
+        if _LOGIN_URL_MARKER in (driver.current_url or "").lower():
+            return False
+    except WebDriverException as exc:
+        logger.warning(
+            "Could not inspect current URL (%s): %s", type(exc).__name__, exc
+        )
+
+    # A real signed-in marker settles it next. _selector_present matches DOM
     # presence rather than visibility, and Naukri keeps login links in the
     # markup of signed-in pages, so checking signed-out markers first reported
     # a valid session as anonymous.

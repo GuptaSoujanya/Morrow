@@ -32,7 +32,10 @@ class _FakeDriver:
 
 
 SIGNED_IN = ".nI-gNb-drawer__icon"
-SIGNED_OUT = "#root .nI-gNb-log-reg"
+SIGNED_OUT = ".nI-gNb-log-reg"
+# Present in both states: 39 elements signed in, 55 on Naukri's own login page.
+AMBIGUOUS = "[class*='nI-gNb-menuItems']"
+LOGIN_URL = "https://www.naukri.com/nlogin/login?URL=//www.naukri.com/mnjuser/profile"
 
 
 def test_the_url_alone_does_not_prove_a_session_when_we_navigated_there():
@@ -126,3 +129,50 @@ def test_ensure_logged_in_falls_through_to_login_when_no_session(monkeypatch):
     result = auth.ensure_logged_in(driver, Settings(email="t@e.com", password="p"))
     assert called.get("login"), "did not fall through to a real login"
     assert result.reason != "session_reused"
+
+
+def test_the_login_page_is_never_a_session():
+    """The first-run failure: no saved session, so Naukri redirects every
+    /mnjuser/ address to /nlogin/login -- and the run reported "Reusing the
+    saved Naukri session" from there, because the only success marker it had
+    was global-nav markup the login page also carries.
+    """
+    driver = _FakeDriver(LOGIN_URL, present=[AMBIGUOUS])
+
+    assert auth.is_logged_in(driver) is False
+    assert auth.is_logged_in(driver, trust_url=False) is False
+
+
+def test_the_login_page_wins_even_against_a_real_marker():
+    """Markup can lag a redirect; the URL cannot."""
+    driver = _FakeDriver(LOGIN_URL, present=[SIGNED_IN])
+
+    assert auth.is_logged_in(driver) is False
+
+
+def test_global_nav_markup_is_not_a_success_marker():
+    """It matched more elements signed out than signed in, so it proves nothing."""
+    assert AMBIGUOUS not in auth._SUCCESS_SELECTORS
+
+    driver = _FakeDriver("https://www.naukri.com/", present=[AMBIGUOUS])
+
+    assert auth.is_logged_in(driver, trust_url=False) is False
+
+
+def test_the_unqualified_login_block_counts_as_signed_out():
+    """Measured 0 signed in and 1 signed out, so the "#root" qualifier only
+    ever excluded the login page."""
+    driver = _FakeDriver("https://www.naukri.com/", present=[SIGNED_OUT])
+
+    assert auth.is_logged_in(driver, trust_url=False) is False
+
+
+def test_a_signed_in_dashboard_is_still_recognised():
+    """The fix must not make the normal path stricter: this is the shape of a
+    real signed-in page, measured on 8 October."""
+    driver = _FakeDriver(
+        "https://www.naukri.com/mnjuser/recommendedjobs",
+        present=[SIGNED_IN, AMBIGUOUS],
+    )
+
+    assert auth.is_logged_in(driver, trust_url=False) is True
