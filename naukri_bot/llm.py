@@ -450,7 +450,21 @@ def resolve_answer(
         "Answer ONLY from the supplied facts. If the facts do not contain what "
         "is needed, you MUST abstain. Never estimate, never infer, never use a "
         "typical or common value. grounded_in must name the exact supplied fact "
-        "key supporting the answer. For options, copy one option exactly.\nInput: %s"
+        "key supporting the answer. For options, copy one option exactly.\n"
+        # These answers go into a chat box, not a cover letter. A yes/no question
+        # answered in 192 characters was rejected outright: the drawer closed
+        # without submitting and the application was lost. Four of thirty-eight
+        # attempts failed this way in one run, all of them long answers, while
+        # every short answer went through.
+        "Keep the answer under 90 characters, and make it a complete sentence "
+        "or a bare value -- never a fragment. Naukri's chat box rejects longer "
+        "answers: the drawer closes without submitting and the application is "
+        "lost, which was verified by sending the same answer long and short to "
+        "the same job. A yes or no question gets \"Yes\" or \"No\". A question "
+        "asking for a value gets just the value. Even a question inviting "
+        "several lines must be answered within the limit, so pick the single "
+        "most useful sentence rather than starting a longer answer that will "
+        "be cut off.\nInput: %s"
     ) % json.dumps(request, ensure_ascii=True)
     schema = (
         '{"can_answer": false, "answer": "", "grounded_in": "", '
