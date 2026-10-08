@@ -174,7 +174,14 @@ def lexical_score(profile: Profile, job: JobPosting) -> Tuple[float, List[str]]:
 
 
 def prefilter(profile: Profile, jobs: List[JobPosting], limit: int) -> List[ScoredJob]:
-    """Lexically score every job and return the highest-scoring candidates."""
+    """Lexically score every job and return the highest-scoring candidates.
+
+    When this cuts, it cuts on lexical score alone, and the final score is
+    0.4 lexical + 0.6 LLM -- so a job the lexical rules treat harshly can still
+    clear min_score once the model has seen it. A job cut here never gets that
+    chance, and the cut was silent, so say when it happens and how good the
+    best dropped job looked.
+    """
     scored: List[ScoredJob] = []
     for job in jobs:
         score, reasons = lexical_score(profile, job)
@@ -182,7 +189,20 @@ def prefilter(profile: Profile, jobs: List[JobPosting], limit: int) -> List[Scor
             ScoredJob(job=job, score=score, lexical_score=score, reasons=reasons)
         )
     scored.sort(key=lambda candidate: candidate.score, reverse=True)
-    return scored[: max(0, limit)]
+    keep = max(0, limit)
+    if len(scored) > keep:
+        dropped = scored[keep:]
+        logger.warning(
+            "LLM_RANK_TOP_N=%d cut %d of %d candidates before ranking; the best "
+            "one dropped scored %.1f lexically against %.1f for the last one "
+            "kept. Raise LLM_RANK_TOP_N if those are close.",
+            limit,
+            len(dropped),
+            len(scored),
+            dropped[0].score,
+            scored[keep - 1].score if keep else 0.0,
+        )
+    return scored[:keep]
 
 
 def rank(

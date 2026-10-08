@@ -423,6 +423,9 @@ def resolve_selection(
     return chosen, ""
 
 
+_LOCATION_NOT_STATED = "not stated in this posting"
+
+
 def resolve_answer(
     client: LLMClient,
     profile: Profile,
@@ -442,9 +445,17 @@ def resolve_answer(
     # candidate who attends walk-ins only in Delhi-NCR cannot answer it from the
     # profile alone and abstained -- three applications lost in one run. The
     # walk-in is at the employer's location, so the posting resolves it.
-    for key, value in (job_context or {}).items():
-        if value:
-            facts["job_%s" % key] = value
+    if job_context is not None:
+        for key, value in job_context.items():
+            if value:
+                facts["job_%s" % key] = value
+        # Say so when the posting has no location, rather than leaving the key
+        # out. A question that names no city and a profile that answers by city
+        # leaves the model with nothing to ground on, and it abstains -- which
+        # skips the job. Stated as a value, "not stated" is something a fact can
+        # answer about. Prose in the profile telling the model never to assume a
+        # location did not work: it dragged the in-region answers to No too.
+        facts.setdefault("job_location", _LOCATION_NOT_STATED)
     # A list of blank strings is not a list of choices. handle_radio builds
     # options from label text, and when the labels have not painted it produces
     # ['', ''] -- truthy, so an earlier guard let it through, the model was

@@ -11,6 +11,7 @@ identified, which is exactly why the guard is on coverage rather than on any
 particular failure.
 """
 
+import logging
 import os
 import sys
 
@@ -161,3 +162,34 @@ def test_dry_run_still_reports_the_plan(harness, tmp_path):
     _run(tmp_path, _settings(dry_run=True))
 
     assert attempted == []  # a dry run never applies regardless
+
+
+def test_a_silent_prefilter_cut_is_reported(caplog):
+    """A job cut on lexical score alone never gets its 0.6 LLM weighting.
+
+    LLM_RANK_TOP_N was raised to 900 against ~330 candidates, so the cut does
+    not fire today -- but nothing said when it did, and the blend means a job
+    the lexical rules penalise can still clear min_score once scored.
+    """
+    profile = Profile(full_name="T", email="t@e.com", phone="0", skills=["Python"])
+    jobs = [
+        JobPosting(job_id=str(n), url="u%d" % n, title="Python Engineer",
+                   company="c", description="Python")
+        for n in range(5)
+    ]
+
+    with caplog.at_level(logging.WARNING):
+        kept = ranking.prefilter(profile, jobs, 2)
+
+    assert len(kept) == 2
+    assert "cut 3 of 5 candidates" in caplog.text
+
+
+def test_no_cut_is_reported_when_the_limit_is_not_reached(caplog):
+    profile = Profile(full_name="T", email="t@e.com", phone="0", skills=["Python"])
+    jobs = [JobPosting(job_id="1", url="u", title="Python Engineer", company="c")]
+
+    with caplog.at_level(logging.WARNING):
+        ranking.prefilter(profile, jobs, 900)
+
+    assert "cut" not in caplog.text

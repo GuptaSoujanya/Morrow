@@ -140,6 +140,49 @@ def test_the_model_is_told_job_facts_are_not_about_the_candidate():
     assert "describes the JOB, not the" in prompt
 
 
+def test_a_posting_without_a_location_says_so():
+    """Leaving the key out makes the question ungroundable and it abstains.
+
+    The candidate answers these by city, so with no city in the question and
+    none from the posting the model has nothing to ground on. Stated as a
+    value, "not stated" is something the profile can answer about -- and the
+    profile answers No, since an unknown city is not Delhi-NCR. Saying it in
+    prose instead ("never assume a location") pulled the in-region answers to
+    No as well, which is why it is a value and not an instruction.
+    """
+    client = _Client({"can_answer": True, "answer": "No",
+                      "grounded_in": "attend_walk_in, job_location",
+                      "confidence": 0.9})
+
+    llm.resolve_answer(client, _profile(), QUESTION,
+                       job_context={"title": "AI Engineer"})
+
+    assert llm._LOCATION_NOT_STATED in client.prompts[0]
+
+
+def test_an_empty_context_also_says_not_stated():
+    """apply_to_job sets a context for every job; a bare one still means no city."""
+    client = _Client({"can_answer": True, "answer": "No",
+                      "grounded_in": "attend_walk_in, job_location",
+                      "confidence": 0.9})
+
+    llm.resolve_answer(client, _profile(), QUESTION, job_context={})
+
+    assert llm._LOCATION_NOT_STATED in client.prompts[0]
+
+
+def test_a_real_location_is_not_overwritten():
+    client = _Client({"can_answer": True, "answer": "Yes",
+                      "grounded_in": "attend_walk_in, job_location",
+                      "confidence": 0.9})
+
+    llm.resolve_answer(client, _profile(), QUESTION,
+                       job_context={"location": "Noida"})
+
+    assert "Noida" in client.prompts[0]
+    assert llm._LOCATION_NOT_STATED not in client.prompts[0]
+
+
 def test_no_job_context_adds_no_job_facts():
     """Nothing changes for callers that do not set a posting."""
     client = _Client({"can_answer": False, "answer": "", "grounded_in": "",
