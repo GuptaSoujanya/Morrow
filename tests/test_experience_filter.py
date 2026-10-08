@@ -73,7 +73,14 @@ SLUG_P1 = (
     "https://www.naukri.com/ai-engineer-jobs"
     "?k=ai%20engineer&sort=f&experience=3"
 )
-SLUG_P2 = SLUG_P1 + "&pageNo=2"
+# The page number goes in the path. ?pageNo=2 is redirected to this path with
+# the query string discarded, which cost nothing visible in the log -- the
+# requested URL still read "sort=f&experience=3" -- while page 2 came back
+# unfiltered: 0 of 20 cards covering 3 years against 20 of 20 on page 1.
+SLUG_P2 = (
+    "https://www.naukri.com/ai-engineer-jobs-2"
+    "?k=ai%20engineer&sort=f&experience=3"
+)
 QUERY_P1 = "https://www.naukri.com/jobs-in-india?k=AI%20Engineer&sort=f"
 
 
@@ -85,6 +92,22 @@ def test_the_filter_only_goes_on_the_slug_url():
 
 def test_the_slug_url_is_the_one_measured_to_work():
     assert sources._slug_search_url("AI Engineer", "", 1, True, 3) == SLUG_P1
+
+
+def test_the_page_number_goes_in_the_path_not_the_query():
+    """?pageNo= is redirected to the path form and the filter is lost with it."""
+    url = sources._slug_search_url("AI Engineer", "", 2, True, 3)
+
+    assert url == SLUG_P2
+    assert "pageNo" not in url
+    assert sources._slug_search_url("AI Engineer", "", 3, True, 3).startswith(
+        "https://www.naukri.com/ai-engineer-jobs-3?"
+    )
+
+
+def test_page_one_has_no_page_suffix():
+    """/ai-engineer-jobs-1 is not a page Naukri serves."""
+    assert "-jobs?" in sources._slug_search_url("AI Engineer", "", 1, True, 3)
 
 
 def test_every_page_of_a_keyword_stays_filtered(no_wait):

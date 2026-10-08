@@ -259,8 +259,16 @@ def _slug_search_url(
     Slug pages only exist for terms Naukri has a landing page for, and a missing
     one serves an empty results page rather than a 404, so the caller must treat
     zero cards on the first page as "try the query endpoint instead".
+
+    The page number goes in the path, as `-jobs-2`, because `?pageNo=2` is
+    redirected to that path with the whole query string discarded -- so page 2
+    arrived unfiltered and relevance-sorted while the requested URL still read
+    correctly in the log. Measured on /machine-learning-engineer-jobs, page 2:
+    `?pageNo=2` gave 0 of 20 cards covering 3 years and ages of 3-7 days, the
+    path form 20 of 20 and every card posted today.
     """
     slug = re.sub(r"[^a-z0-9]+", "-", keyword.casefold()).strip("-")
+    path = "%s-jobs" % slug if page <= 1 else "%s-jobs-%d" % (slug, page)
     params = [("k", keyword.casefold())]
     if location:
         params.append(("l", location))
@@ -268,10 +276,8 @@ def _slug_search_url(
         params.append(("sort", "f"))
     if experience > 0:
         params.append(("experience", str(experience)))
-    if page > 1:
-        params.append(("pageNo", str(page)))
-    return "https://www.naukri.com/%s-jobs?%s" % (
-        slug,
+    return "https://www.naukri.com/%s?%s" % (
+        path,
         urlencode(params, quote_via=quote),
     )
 
