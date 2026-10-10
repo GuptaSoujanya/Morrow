@@ -1,5 +1,6 @@
 """Load user-authored facts and resume text into the shared Profile contract."""
 
+import datetime
 import logging
 import re
 from pathlib import Path
@@ -123,6 +124,17 @@ def _yaml_list(facts: Dict[str, Any], key: str) -> List[str]:
     return list(value)
 
 
+def _dates_as_text(value: Any) -> Any:
+    """YAML reads an unquoted 2003-04-05 as a date object; keep it as the text typed."""
+    if isinstance(value, (datetime.date, datetime.datetime)):
+        return value.isoformat()
+    if isinstance(value, dict):
+        return {key: _dates_as_text(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_dates_as_text(item) for item in value]
+    return value
+
+
 def load_profile(settings: Settings) -> Profile:
     """Load the configured YAML facts and resume without inventing facts."""
     try:
@@ -149,7 +161,7 @@ def load_profile(settings: Settings) -> Profile:
     if loaded is None:
         facts: Dict[str, Any] = {}
     elif isinstance(loaded, dict):
-        facts = loaded
+        facts = _dates_as_text(loaded)
     else:
         raise ProfileError("Profile YAML must contain a mapping of fact names to values")
 
