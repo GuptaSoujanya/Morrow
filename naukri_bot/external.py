@@ -1,0 +1,1542 @@
+"""Apply on an employer's own site when Naukri's button leaves Naukri.
+
+"Apply on company site" opens the employer's career page, nearly always an
+applicant tracking system (Greenhouse, Lever, Ashby, Workable, SmartRecruiters,
+Workday, ...). This module follows that link in a new tab, fills the form from
+the facts file, data/answers.txt and the resume, attaches the PDF, and submits
+only when every required field has an answer and the site then confirms the
+submission. Anything short of that is written to data/company_sites.md for a
+person to finish, and the open questions wait in data/answers.txt.
+"""
+
+import argparse
+import logging
+import re
+import sys
+import time
+from dataclasses import dataclass, field
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
+from urllib.parse import urlparse
+
+from selenium.common.exceptions import (
+    ElementClickInterceptedException,
+    StaleElementReferenceException,
+    WebDriverException,
+)
+from selenium.webdriver.common.by import By
+from selenium.webdriver.common.keys import Keys
+
+from .answers import match_option
+from .browser import human_pause, human_type, safe_get
+from .models import ApplyResult, ApplyStatus, JobPosting, Profile, Settings
+
+
+logger = logging.getLogger(__name__)
+
+OPEN_WAIT_S = 20.0
+FORM_WAIT_S = 12.0
+FILE_WAIT_S = 15.0
+CONFIRM_WAIT_S = 30.0
+GOOGLE_WAIT_S = 30.0
+MANUAL_LOGIN_TIMEOUT_S = 300
+POLL_S = 0.5
+OPTION_WAIT_S = 3.0
+
+DRY_RUN = "dry_run"
+
+ATS_HOSTS = (
+    ("greenhouse.io", "greenhouse"),
+    ("lever.co", "lever"),
+    ("ashbyhq.com", "ashby"),
+    ("workable.com", "workable"),
+    ("smartrecruiters.com", "smartrecruiters"),
+    ("myworkdayjobs.com", "workday"),
+    ("workday.com", "workday"),
+    ("icims.com", "icims"),
+    ("bamboohr.com", "bamboohr"),
+    ("jobvite.com", "jobvite"),
+    ("taleo.net", "taleo"),
+    ("successfactors", "successfactors"),
+    ("oraclecloud.com", "oracle"),
+    ("linkedin.com", "linkedin"),
+    ("indeed.com", "indeed"),
+    ("naukri.com", "naukri"),
+)
+#: Sites that insist on a per-employer account before showing any form.
+# Applying there needs that network's own session, not a career-site account.
+NOT_A_CAREER_SITE = ("linkedin", "indeed")
+MAX_PAGES = 8
+
+_FIELD_RULES = (
+    (re.compile(r"\bfirst\s*name\b|\bgiven\s*name\b|\bforename\b", re.I), "first_name"),
+    (re.compile(r"\blast\s*name\b|\bsurname\b|\bfamily\s*name\b", re.I), "last_name"),
+    (re.compile(r"\bfull\s*name\b|\blegal\s*name\b|\byour\s*name\b|^\W*name\W*$", re.I), "full_name"),
+    (re.compile(r"e-?mail", re.I), "email"),
+    (re.compile(r"\bphone|\bmobile|\bcontact\s*(number|no)|\btelephone|\bcell\b", re.I), "phone"),
+    (re.compile(r"linkedin", re.I), "linkedin_url"),
+    (re.compile(r"github", re.I), "github_url"),
+    (re.compile(r"portfolio|personal\s*(web)?site|\bwebsite\b|\bblog\b", re.I), "portfolio_url"),
+    (re.compile(r"\bcurrent\s*(company|employer|organi[sz]ation)\b|\bcompany\s*name\b|\bemployer\b", re.I), "current_company"),
+    (re.compile(r"\bcurrent\s*(job\s*)?(title|designation|role|position)\b|\bjob\s*title\b", re.I), "current_designation"),
+    (re.compile(r"\blocation\b|\bcity\b|where\s+are\s+you\s+(based|located)|\bcurrent\s*address\b", re.I), "current_location"),
+    (re.compile(r"\bcountry\b", re.I), "country"),
+)
+_YES_NO_QUESTION = re.compile(
+    r"^\W*(are|do|does|did|will|would|have|has|had|is|was|were|can|could|should|may|shall)\b", re.I
+)
+_PLACE = re.compile(r"\blocation\b|\bcity\b|\btown\b", re.I)
+_TEXT_KINDS = ("text", "email", "tel", "url", "number", "search", "textarea")
+_CONSENTING = re.compile(r"^\W*(yes\b|i (consent|agree|accept|acknowledge)\b)", re.I)
+_EEO = re.compile(
+    r"\bgender\b|\brace\b|\bethnicit|\bveteran\b|\bdisabilit|\bpronoun|sexual\s*orientation|\bhispanic|\blatino",
+    re.I,
+)
+_DECLINE = re.compile(r"decline|prefer not|don't wish|do not wish|not to (answer|say|disclose)|rather not|not specified", re.I)
+_RESUME = re.compile(r"\bresume\b|\bcv\b|curriculum", re.I)
+_COVER = re.compile(r"cover[\s_-]*letter", re.I)
+_CONSENT = re.compile(r"\bagree\b|\bconsent\b|\backnowledge\b|\bprivacy\b|\bterms\b|\bgdpr\b", re.I)
+_ACCOUNT = re.compile(r"password|captcha|verification\s*code|\botp\b", re.I)
+# Workday's forms carry a box labelled "This input is for robots only, do not
+# enter"; filling it marks the applicant as a bot.
+# Captchas and "type the text in the image" checks are for a person; a form
+# showing one is never submitted.
+_CHALLENGE = re.compile(
+    r"captcha|image text|text (in|from|shown in) the image|characters (you see|shown)|security code"
+    r"|i.m not a robot|verify (that )?you are (a )?human",
+    re.I,
+)
+_CHALLENGE_CSS = (
+    "iframe[src*='recaptcha'], iframe[src*='hcaptcha'], iframe[src*='turnstile'], "
+    ".g-recaptcha, .h-captcha, .cf-turnstile"
+)
+HONEYPOT = re.compile(r"robots? only|do not (enter|fill)|leave (this )?(field )?(blank|empty)|if you are (a )?human", re.I)
+_OPTIONAL_NOISE = re.compile(r"subscribe|newsletter|job\s*alert|keep me (updated|informed)|marketing", re.I)
+_PLACEHOLDER_OPTION = re.compile(r"^(select|choose|please|pick|--|-|\.\.\.|none)\b|^\W*$", re.I)
+_REVEAL_TEXT = re.compile(
+    r"^(apply( now| for this job| to this job| for this position| to position| here| today| manually)?"
+    r"|i'?m interested|start (your )?application|apply for this role)$",
+    re.I,
+)
+_SUBMIT_TEXT = re.compile(
+    r"^(submit( application| your application| my application)?|apply( now| for this job)?"
+    r"|send( application| my application)?|finish|complete application|review and submit)$",
+    re.I,
+)
+_NEXT_TEXT = re.compile(
+    r"^(next|continue|save (and|&) continue|save and next|proceed|next step|continue to next step)$", re.I
+)
+_SIGN_IN = re.compile(r"\bsign in\b|\blog in\b|\blogin\b|\bcreate (an )?account\b|\bregister\b", re.I)
+_CONFIRMED = (
+    "thank you for applying",
+    "thanks for applying",
+    "application has been submitted",
+    "application submitted",
+    "application was submitted",
+    "we have received your application",
+    "we've received your application",
+    "application received",
+    "successfully submitted",
+    "your application has been received",
+    "application complete",
+    "thank you for your application",
+    "thanks for your interest",
+    "you have applied",
+)
+_CONFIRM_URL_WORDS = ("confirmation", "thank", "success", "submitted", "applied")
+
+_LOWER = "translate(normalize-space(.),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')"
+_CLICKABLE_XPATH = "//*[self::button or self::a or @role='button' or @type='submit']"
+_GOOGLE_BUTTON_XPATH = "%s[contains(%s,'google')]" % (_CLICKABLE_XPATH, _LOWER)
+
+# One round trip returns every usable control with the text a person would read
+# as its label, so the Python side never has to walk the DOM element by element.
+_FIELDS_SCRIPT = r"""
+const controls = Array.from(document.querySelectorAll('input, select, textarea'));
+function visible(el) {
+  const r = el.getBoundingClientRect(); const s = getComputedStyle(el);
+  return s.display !== 'none' && s.visibility !== 'hidden' && (r.width > 0 || r.height > 0);
+}
+function text(el) { return el ? (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim() : ''; }
+const GENERIC = /^(attach|upload|browse|choose( a)? files?|select( a)? files?|enter manually|or|add|drop (your )?files? here.*|type (your )?(response|answer)( here)?|type here|your (answer|response)|start typing.*|select\.*)$/i;
+function textBefore(el, levels) {
+  // The nearest text before the element, a few containers up: where a label sits.
+  let node = el;
+  for (let i = 0; i < levels && node.parentElement; i++) {
+    node = node.parentElement;
+    const candidates = Array.from(node.querySelectorAll('label, legend, span, div, p, h1, h2, h3, h4, h5, strong, b'));
+    for (let k = candidates.length - 1; k >= 0; k--) {
+      const c = candidates[k];
+      if (c.contains(el) || c.querySelector('input, select, textarea, button')) continue;
+      if (!(c.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING)) continue;
+      const ct = text(c);
+      if (ct && ct.length < 300 && /[a-z]/i.test(ct) && !GENERIC.test(ct)) return ct;
+    }
+  }
+  return '';
+}
+function labelFor(el) {
+  let t = '';
+  if (el.id) { try { t = text(document.querySelector('label[for="' + CSS.escape(el.id) + '"]')); } catch (e) {} }
+  const by = el.getAttribute('aria-labelledby');
+  if (!t && by) { t = by.split(/\s+/).map(id => text(document.getElementById(id))).filter(Boolean).join(' '); }
+  if (!t) t = (el.getAttribute('aria-label') || '').trim();
+  if (!t) { const l = el.closest('label'); if (l) t = text(l); }
+  // "Attach" or "Upload" says what the button does, not what the field is for.
+  if (GENERIC.test(t)) t = '';
+  if (!t) { t = (el.getAttribute('placeholder') || '').trim(); if (GENERIC.test(t)) t = ''; }
+  if (!t) t = textBefore(el, 6);
+  if (!t) t = (el.name || '').replace(/[\[\]_\-.]+/g, ' ').trim();
+  return t;
+}
+function requiredOf(el, label) {
+  if (el.required || el.getAttribute('aria-required') === 'true') return true;
+  if (/^\*|\*\s*$/.test(label)) return true;
+  let node = el;
+  for (let i = 0; i < 3 && node.parentElement; i++) {
+    node = node.parentElement;
+    if (/\brequired\b/i.test(node.className || '')) return true;
+  }
+  return false;
+}
+function groupOf(el) {
+  const fs = el.closest('fieldset');
+  if (fs) { const lg = fs.querySelector('legend'); if (lg) return text(lg); }
+  const g = el.closest('[role="group"],[role="radiogroup"]');
+  if (g) {
+    const by = g.getAttribute('aria-labelledby');
+    const t = g.getAttribute('aria-label') || (by ? text(document.getElementById(by)) : '');
+    if (t) return t.trim();
+  }
+  // No fieldset: the question is the text before the box that holds every option.
+  const type = (el.type || '').toLowerCase();
+  if ((type === 'radio' || type === 'checkbox') && el.name) {
+    const siblings = document.querySelectorAll('input[name="' + CSS.escape(el.name) + '"]').length;
+    let box = el;
+    for (let i = 0; i < 6 && box.parentElement; i++) {
+      box = box.parentElement;
+      if (box.querySelectorAll('input[name="' + CSS.escape(el.name) + '"]').length >= siblings) break;
+    }
+    if (siblings > 1) return textBefore(box, 3);
+  }
+  return '';
+}
+return controls.filter(el => {
+  const type = (el.type || '').toLowerCase();
+  if (['hidden', 'submit', 'button', 'image', 'reset'].includes(type) || el.disabled) return false;
+  if (type === 'file') return true;
+  // Custom dropdowns keep an invisible required twin while empty; it is not a question.
+  return el.getAttribute('aria-hidden') !== 'true' && visible(el);
+}).map(el => {
+  const tag = el.tagName.toLowerCase();
+  const kind = tag === 'input' ? (el.type || 'text').toLowerCase() : tag;
+  const label = labelFor(el);
+  return {
+    el: el, kind: kind, name: el.name || '', label: label, required: requiredOf(el, label),
+    group: groupOf(el), value: tag === 'select' ? '' : (el.value || ''),
+    options: tag === 'select' ? Array.from(el.options).map(o => o.text.trim()) : [],
+    role: el.getAttribute('role') || '', autocomplete: el.getAttribute('aria-autocomplete') || '',
+    checked: !!el.checked, accept: el.getAttribute('accept') || '', ident: el.id || ''
+  };
+});
+"""
+_SET_VALUE_SCRIPT = (
+    "const el = arguments[0], value = arguments[1];"
+    "const proto = el.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;"
+    "const setter = Object.getOwnPropertyDescriptor(proto, 'value').set;"
+    "setter.call(el, value);"
+    "el.dispatchEvent(new Event('input', {bubbles: true}));"
+    "el.dispatchEvent(new Event('change', {bubbles: true}));"
+)
+_SELECT_SCRIPT = (
+    "const el = arguments[0], wanted = arguments[1];"
+    "const opt = Array.from(el.options).find(o => o.text.trim() === wanted);"
+    "if (!opt) return '';"
+    "el.value = opt.value;"
+    "el.dispatchEvent(new Event('input', {bubbles: true}));"
+    "el.dispatchEvent(new Event('change', {bubbles: true}));"
+    "return el.options[el.selectedIndex] ? el.options[el.selectedIndex].text.trim() : '';"
+)
+_UNHIDE_SCRIPT = (
+    "const el = arguments[0];"
+    "el.style.display = 'block'; el.style.visibility = 'visible'; el.style.opacity = '1';"
+    "el.style.width = '1px'; el.style.height = '1px'; el.style.position = 'static';"
+)
+_SCROLL_SCRIPT = "arguments[0].scrollIntoView({block: 'center'})"
+_CLICK_SCRIPT = "arguments[0].click()"
+_BLUR_SCRIPT = "arguments[0].blur()"
+# The options of whichever dropdown menu is open, as [element, text] pairs.
+_OPTIONS_SCRIPT = r"""
+const out = [];
+for (const o of document.querySelectorAll("[role='option'], [id*='-option-'], .dropdown-location")) {
+  const r = o.getBoundingClientRect(); const s = getComputedStyle(o);
+  if (s.display === 'none' || s.visibility === 'hidden' || (r.width === 0 && r.height === 0)) continue;
+  const t = (o.innerText || o.textContent || '').replace(/\s+/g, ' ').trim();
+  if (t) out.push([o, t]);
+}
+return out;
+"""
+# What a custom dropdown displays: its control box, a few levels above the search input.
+_CONTROL_TEXT_SCRIPT = (
+    "let node = arguments[0];"
+    "for (let i = 0; i < 3 && node.parentElement; i++) node = node.parentElement;"
+    "return (node.innerText || '').replace(/\\s+/g, ' ').trim();"
+)
+
+
+class ExternalError(RuntimeError):
+    """The company site could not be worked with at all."""
+
+
+@dataclass
+class Field:
+    element: Any
+    kind: str
+    label: str
+    required: bool
+    group: str = ""
+    name: str = ""
+    options: List[str] = field(default_factory=list)
+    value: str = ""
+    role: str = ""
+    autocomplete: str = ""
+    checked: bool = False
+    accept: str = ""
+    ident: str = ""
+
+    @property
+    def question(self) -> str:
+        if self.kind in ("radio", "checkbox") and self.group:
+            return self.group
+        return self.label
+
+    @property
+    def is_combobox(self) -> bool:
+        return self.kind == "text" and (self.role == "combobox" or bool(self.autocomplete))
+
+
+@dataclass
+class FormOutcome:
+    filled: List[str] = field(default_factory=list)
+    missing: List[str] = field(default_factory=list)
+    skipped: List[str] = field(default_factory=list)
+    resume_attached: bool = False
+
+    @property
+    def complete(self) -> bool:
+        return not self.missing
+
+
+@dataclass
+class ExternalResult:
+    status: str
+    url: str = ""
+    ats: str = ""
+    detail: str = ""
+    filled: List[str] = field(default_factory=list)
+    missing: List[str] = field(default_factory=list)
+    resume: str = ""
+
+    def to_apply_result(self, job: JobPosting) -> ApplyResult:
+        if self.status in (ApplyStatus.APPLIED_EXTERNAL, ApplyStatus.EXTERNAL_MANUAL):
+            status = self.status
+        elif self.status == DRY_RUN:
+            status = ApplyStatus.EXTERNAL_SKIPPED
+        else:
+            status = ApplyStatus.ERROR
+        detail = "%s | %s" % (self.url or self.ats or "company site", self.detail)
+        return ApplyResult(
+            job_id=job.job_id,
+            url=job.url,
+            status=status,
+            detail=detail[:500],
+            quota_consumed=False,
+            questions_answered=len(self.filled),
+            questions_abstained=len(self.missing),
+        )
+
+
+# ---------------------------------------------------------------------------
+# Pure helpers
+# ---------------------------------------------------------------------------
+
+
+def _clean(value: Any) -> str:
+    return " ".join(str(value or "").split())
+
+
+def _norm(value: str) -> str:
+    return " ".join(value.casefold().split())
+
+
+def detect_ats(url: str) -> str:
+    host = (urlparse(url).netloc or "").lower()
+    for needle, name in ATS_HOSTS:
+        if needle in host:
+            return name
+    return "website"
+
+
+def known_values(profile: Profile) -> Dict[str, str]:
+    """Identity, contact and link fields that need no judgement to fill."""
+    extra = profile.extra_facts or {}
+    full_name = _clean(profile.full_name)
+    first = _clean(profile.first_name) or (full_name.split()[0] if full_name else "")
+    last = _clean(profile.last_name) or (" ".join(full_name.split()[1:]) if len(full_name.split()) > 1 else "")
+    values = {
+        "first_name": first,
+        "last_name": last,
+        "full_name": full_name or " ".join(part for part in (first, last) if part),
+        "email": _clean(profile.email),
+        "phone": _clean(profile.phone),
+        "linkedin_url": _clean(extra.get("linkedin_url")),
+        "github_url": _clean(extra.get("github_url")),
+        "portfolio_url": _clean(extra.get("portfolio_url") or extra.get("website_url") or extra.get("website")),
+        "current_company": _clean(extra.get("current_company")),
+        "current_designation": _clean(extra.get("current_designation")),
+        "current_location": _clean(profile.current_location),
+        "country": _clean(extra.get("country")),
+    }
+    return {key: value for key, value in values.items() if value}
+
+
+def classify_label(question: str) -> Optional[str]:
+    """Which known value a label asks for, or None when it needs judgement."""
+    text = _clean(question)
+    if not text or _YES_NO_QUESTION.match(text):
+        # "Will you need sponsorship to stay in your current location?" names a
+        # location but wants Yes or No.
+        return None
+    for pattern, key in _FIELD_RULES:
+        if pattern.search(text):
+            if key == "portfolio_url" and re.search(r"linkedin|github", text, re.I):
+                continue
+            if key == "current_location" and re.search(r"preferred|relocat|willing", text, re.I):
+                return None
+            return key
+    return None
+
+
+def pick_place(value: str, options: List[str], country: str = "") -> Optional[str]:
+    """The suggestion for a city typed by name: 'Indore' -> 'Indore, Madhya Pradesh, IND', not 'Indore, WV, USA'."""
+    exact = match_option(value, options)
+    if exact is not None:
+        return exact
+    wanted = _norm(value)
+    starts = [option for option in options if wanted and _norm(option).startswith(wanted)]
+    if len(starts) <= 1:
+        return starts[0] if starts else None
+    codes = {_norm(country)} if country else set()
+    if _norm(country) == "india":
+        codes |= {"ind", "in"}
+    local = [option for option in starts if codes & set(re.findall(r"[a-z]+", _norm(option)))]
+    return min(local or starts, key=len)
+
+
+def real_options(options: List[str]) -> List[str]:
+    return [option for option in options if option and not _PLACEHOLDER_OPTION.match(option)]
+
+
+def decline_option(options: List[str]) -> Optional[str]:
+    for option in options:
+        if _DECLINE.search(option):
+            return option
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Browser helpers
+# ---------------------------------------------------------------------------
+
+
+def discover_fields(driver: Any) -> List[Field]:
+    try:
+        raw = driver.execute_script(_FIELDS_SCRIPT) or []
+    except WebDriverException as exc:
+        logger.warning("Could not read the form (%s): %s", type(exc).__name__, exc)
+        return []
+    fields = []  # type: List[Field]
+    for item in raw:
+        if not isinstance(item, dict) or item.get("el") is None:
+            continue
+        fields.append(
+            Field(
+                element=item["el"],
+                kind=str(item.get("kind") or "text"),
+                label=_clean(item.get("label")),
+                required=bool(item.get("required")),
+                group=_clean(item.get("group")),
+                name=str(item.get("name") or ""),
+                options=[_clean(option) for option in (item.get("options") or []) if _clean(option)],
+                value=str(item.get("value") or ""),
+                role=str(item.get("role") or ""),
+                autocomplete=str(item.get("autocomplete") or ""),
+                checked=bool(item.get("checked")),
+                accept=str(item.get("accept") or ""),
+                ident=str(item.get("ident") or ""),
+            )
+        )
+    return fields
+
+
+def _page_text(driver: Any) -> str:
+    try:
+        return _clean(driver.find_element(By.TAG_NAME, "body").text)
+    except WebDriverException:
+        return ""
+
+
+def _current_url(driver: Any) -> str:
+    try:
+        return driver.current_url or ""
+    except WebDriverException:
+        return ""
+
+
+def _visible_controls(driver: Any) -> List[Any]:
+    try:
+        return [
+            element
+            for element in driver.find_elements(By.XPATH, _CLICKABLE_XPATH)
+            if element.is_displayed() and element.is_enabled()
+        ]
+    except WebDriverException:
+        return []
+
+
+def _control_text(element: Any) -> str:
+    try:
+        return _clean(element.text or element.get_attribute("value") or element.get_attribute("aria-label") or "")
+    except WebDriverException:
+        return ""
+
+
+def _click(driver: Any, element: Any) -> None:
+    try:
+        driver.execute_script(_SCROLL_SCRIPT, element)
+    except WebDriverException:
+        pass
+    try:
+        element.click()
+    except (ElementClickInterceptedException, WebDriverException) as exc:
+        logger.debug("Click fell back to the DOM (%s)", type(exc).__name__)
+        driver.execute_script(_CLICK_SCRIPT, element)
+
+
+def _clear(element: Any) -> None:
+    for modifier in (Keys.COMMAND, Keys.CONTROL):
+        try:
+            element.send_keys(modifier + "a")
+            element.send_keys(Keys.DELETE)
+        except WebDriverException:
+            continue
+
+
+def set_text(driver: Any, element: Any, value: str) -> bool:
+    """Type `value` into a text control and confirm the control holds it."""
+    try:
+        _click(driver, element)
+        _clear(element)
+        if len(value) <= 120:
+            human_type(element, value)
+        else:
+            driver.execute_script(_SET_VALUE_SCRIPT, element, value)
+        if _norm(element.get_attribute("value") or "") == _norm(value):
+            return True
+        driver.execute_script(_SET_VALUE_SCRIPT, element, value)
+        return _norm(element.get_attribute("value") or "") == _norm(value)
+    except WebDriverException as exc:
+        logger.debug("Could not write %r (%s): %s", value, type(exc).__name__, exc)
+        return False
+
+
+def select_option(driver: Any, element: Any, wanted: str) -> bool:
+    try:
+        chosen = driver.execute_script(_SELECT_SCRIPT, element, wanted)
+    except WebDriverException as exc:
+        logger.debug("Could not select %r (%s): %s", wanted, type(exc).__name__, exc)
+        return False
+    return _norm(str(chosen or "")) == _norm(wanted)
+
+
+def _shown_options(driver: Any, timeout_s: float) -> List[Tuple[Any, str]]:
+    deadline = time.monotonic() + timeout_s
+    while True:
+        try:
+            shown = [(pair[0], _clean(pair[1])) for pair in (driver.execute_script(_OPTIONS_SCRIPT) or []) if len(pair) == 2]
+        except WebDriverException:
+            shown = []
+        if shown or time.monotonic() >= deadline:
+            return shown
+        time.sleep(POLL_S)
+
+
+def _word_in(needle: str, haystack: str) -> bool:
+    return bool(needle) and bool(re.search(r"(?<!\w)%s(?!\w)" % re.escape(needle), haystack))
+
+
+def _control_shows(driver: Any, element: Any) -> str:
+    try:
+        return _norm(str(driver.execute_script(_CONTROL_TEXT_SCRIPT, element) or ""))
+    except WebDriverException:
+        return ""
+
+
+def _combobox_shows(driver: Any, element: Any, wanted: str, before: Optional[str] = None) -> bool:
+    """True when the dropdown, closed again, displays `wanted` as its value.
+
+    Some pickers display only part of a clicked option ("+91" for "India +91");
+    pass the display from `before` the click and that counts once it changed.
+    """
+    target = _norm(wanted)
+    if not target:
+        return False
+    try:
+        typed = _norm(element.get_attribute("value") or "")
+    except WebDriverException:
+        return False
+    shown = _control_shows(driver, element)
+    if typed == target or _word_in(target, shown):
+        return True
+    return before is not None and shown != before and _word_in(shown, target)
+
+
+def combobox_options(driver: Any, element: Any) -> List[str]:
+    """Open a custom dropdown, read what it offers, close it again; [] for type-to-search ones."""
+    try:
+        _click(driver, element)
+        shown = _shown_options(driver, OPTION_WAIT_S / 3)
+        if not shown:
+            element.send_keys(Keys.ARROW_DOWN)
+            shown = _shown_options(driver, OPTION_WAIT_S / 3)
+        element.send_keys(Keys.ESCAPE)
+        driver.execute_script(_BLUR_SCRIPT, element)
+    except WebDriverException as exc:
+        logger.debug("Could not open a dropdown (%s): %s", type(exc).__name__, exc)
+        return []
+    return [text for _, text in shown]
+
+
+def pick_from_combobox(driver: Any, element: Any, value: str) -> bool:
+    """Type into a custom dropdown, click the option that names `value`, and confirm it shows.
+
+    The search box keeps whatever was typed until focus leaves, so its text is
+    no evidence of a choice; only the closed control displaying the option is.
+    """
+    before = _control_shows(driver, element)
+    try:
+        _click(driver, element)
+        _clear(element)
+        human_type(element, value)
+        shown = _shown_options(driver, OPTION_WAIT_S)
+        texts = [text for _, text in shown]
+        chosen = match_option(value, texts) if texts else None
+        if chosen is not None:
+            _click(driver, shown[texts.index(chosen)][0])
+        elif texts:
+            # Leaving with the menu open would let Tab pick whichever option is highlighted.
+            element.send_keys(Keys.ESCAPE)
+        human_pause(0.3, 0.8)
+        driver.execute_script(_BLUR_SCRIPT, element)
+        human_pause(0.2, 0.5)
+        if chosen is None:
+            return _combobox_shows(driver, element, value)
+        return _combobox_shows(driver, element, chosen, before)
+    except WebDriverException as exc:
+        logger.debug("Combobox %r failed (%s): %s", value, type(exc).__name__, exc)
+        return False
+
+
+def attach_file(driver: Any, element: Any, path: Path) -> bool:
+    try:
+        if not element.is_displayed():
+            driver.execute_script(_UNHIDE_SCRIPT, element)
+        element.send_keys(str(Path(path).resolve()))
+    except WebDriverException as exc:
+        logger.warning("Could not attach %s (%s): %s", path.name, type(exc).__name__, exc)
+        return False
+    deadline = time.monotonic() + FILE_WAIT_S
+    while True:
+        try:
+            if path.name.lower() in (element.get_attribute("value") or "").lower():
+                return True
+        except WebDriverException:
+            pass
+        if path.name.lower() in _page_text(driver).lower():
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(POLL_S)
+
+
+def _set_checked(driver: Any, element: Any, checked: bool) -> bool:
+    try:
+        if bool(element.is_selected()) != checked:
+            _click(driver, element)
+        return bool(element.is_selected()) == checked
+    except WebDriverException:
+        return False
+
+
+# ---------------------------------------------------------------------------
+# Getting to the form
+# ---------------------------------------------------------------------------
+
+
+def open_company_site(driver: Any, button: Any) -> str:
+    """Click Naukri's company-site button and land on the employer's page, in whatever tab it opens."""
+    before = set(driver.window_handles)
+    start = _current_url(driver)
+    _click(driver, button)
+    deadline = time.monotonic() + OPEN_WAIT_S
+    while True:
+        new = [handle for handle in driver.window_handles if handle not in before]
+        if new:
+            driver.switch_to.window(new[-1])
+        url = _current_url(driver)
+        if url and url != start and "naukri.com" not in (urlparse(url).netloc or "").lower():
+            if "about:blank" not in url:
+                return url
+        if time.monotonic() >= deadline:
+            return ""
+        time.sleep(POLL_S)
+
+
+def return_to(driver: Any, handle: str, keep: List[str]) -> None:
+    try:
+        for other in list(driver.window_handles):
+            if other not in keep:
+                driver.switch_to.window(other)
+                driver.close()
+        driver.switch_to.window(handle)
+    except WebDriverException as exc:
+        logger.warning("Could not get back to the Naukri tab (%s): %s", type(exc).__name__, exc)
+
+
+def reveal_form(driver: Any) -> List[Field]:
+    """The form's fields, clicking through an 'Apply' button or two when the page starts with the posting."""
+    fields = discover_fields(driver)
+    if len(fields) >= 2:
+        return fields
+    for _ in range(2):
+        before = set(driver.window_handles)
+        candidates = []
+        for control in _visible_controls(driver):
+            text = _control_text(control)
+            if _REVEAL_TEXT.match(text) and not re.search(r"linkedin|indeed|autofill|with", text, re.I):
+                # Workday's "Apply" opens a choice; "Apply Manually" is the way on.
+                candidates.append((0 if re.search(r"manual", text, re.I) else 1, len(candidates), control))
+        if not candidates:
+            break
+        _click(driver, min(candidates)[2])
+        deadline = time.monotonic() + FORM_WAIT_S
+        while time.monotonic() < deadline:
+            new = [handle for handle in driver.window_handles if handle not in before]
+            if new:
+                driver.switch_to.window(new[-1])
+            fields = discover_fields(driver)
+            if len(fields) >= 2:
+                return fields
+            time.sleep(POLL_S)
+    return discover_fields(driver)
+
+
+def wants_account(driver: Any, fields: List[Field]) -> bool:
+    if len(fields) >= 2:
+        return False
+    texts = " | ".join(_control_text(control) for control in _visible_controls(driver))
+    return bool(_SIGN_IN.search(texts))
+
+
+def google_sign_in(driver: Any, settings: Settings, timeout_s: float = MANUAL_LOGIN_TIMEOUT_S) -> Tuple[bool, str]:
+    """Use the Google session already in the browser profile; never type a Google password."""
+    buttons = [element for element in driver.find_elements(By.XPATH, _GOOGLE_BUTTON_XPATH) if element.is_displayed()]
+    if not buttons:
+        return False, "no Google sign-in button"
+    if not settings.google_email:
+        return False, "GOOGLE_EMAIL is not set, so the account to pick is unknown"
+    main = driver.current_window_handle
+    before = set(driver.window_handles)
+    _click(driver, buttons[0])
+
+    deadline = time.monotonic() + GOOGLE_WAIT_S
+    popup = None  # type: Optional[str]
+    while time.monotonic() < deadline:
+        new = [handle for handle in driver.window_handles if handle not in before]
+        if new:
+            popup = new[-1]
+            driver.switch_to.window(popup)
+        if "accounts.google.com" in _current_url(driver) or (popup is None and _current_url(driver) != ""):
+            break
+        time.sleep(POLL_S)
+
+    wanted = settings.google_email.casefold()
+    chooser_deadline = time.monotonic() + GOOGLE_WAIT_S
+    asked_person = False
+    while True:
+        url = _current_url(driver)
+        if "accounts.google.com" not in url:
+            break
+        try:
+            accounts = [
+                element
+                for element in driver.find_elements(By.XPATH, "//*[@data-identifier or @data-email or contains(%s,'%s')]" % (_LOWER, wanted))
+                if element.is_displayed()
+            ]
+        except WebDriverException:
+            accounts = []
+        match = next(
+            (
+                element
+                for element in accounts
+                if wanted in _norm((element.get_attribute("data-identifier") or element.get_attribute("data-email") or element.text or ""))
+            ),
+            None,
+        )
+        if match is not None:
+            _click(driver, match)
+            human_pause(1.0, 2.0)
+            chooser_deadline = time.monotonic() + GOOGLE_WAIT_S
+            continue
+        try:
+            needs_typing = any(element.is_displayed() for element in driver.find_elements(By.CSS_SELECTOR, "input[type='email'], input[type='password']"))
+        except WebDriverException:
+            needs_typing = False
+        if needs_typing:
+            if settings.headless:
+                _leave_popup(driver, popup, main)
+                return False, "Google wants a fresh sign-in; run once without --headless and sign in by hand"
+            if not asked_person:
+                logger.warning(
+                    "Google is asking for the account sign-in. Finish it in the browser window; waiting up to %d minutes.",
+                    int(timeout_s // 60),
+                )
+                asked_person = True
+                chooser_deadline = time.monotonic() + timeout_s
+        if time.monotonic() >= chooser_deadline:
+            _leave_popup(driver, popup, main)
+            return False, "Google sign-in did not finish in time"
+        time.sleep(1.0)
+
+    _leave_popup(driver, popup, main)
+    return True, "google"
+
+
+def _leave_popup(driver: Any, popup: Optional[str], main: str) -> None:
+    try:
+        if popup is not None and popup in driver.window_handles and popup != main:
+            driver.switch_to.window(popup)
+            driver.close()
+        driver.switch_to.window(main)
+    except WebDriverException as exc:
+        logger.debug("Could not tidy the sign-in window (%s): %s", type(exc).__name__, exc)
+
+
+# ---------------------------------------------------------------------------
+# Filling
+# ---------------------------------------------------------------------------
+
+
+def _resolve(answer_engine: Any, question: str, options: Optional[List[str]]) -> Optional[str]:
+    resolution = answer_engine.resolve(question, options=options, field_type="text" if options is None else "select")
+    if resolution.abstained or resolution.answer is None or not resolution.answer.text:
+        return None
+    return resolution.answer.text
+
+
+def _choose(driver: Any, item: Field, option: str) -> bool:
+    if not item.is_combobox:
+        return select_option(driver, item.element, option)
+    # A Greenhouse dropdown once dropped a "No" that the same page took on every
+    # later try; one more attempt costs seconds, a missed one costs the application.
+    return pick_from_combobox(driver, item.element, option) or pick_from_combobox(driver, item.element, option)
+
+
+def _note_mismatch(answer_engine: Any, question: str, value: str, options: List[str]) -> None:
+    """An answer that fits none of the options goes to answers.txt like an unanswered question."""
+    note = getattr(answer_engine, "record_option_mismatch", None)
+    if callable(note):
+        note(question, value, options)
+
+
+def _own_words(answer_engine: Any, question: str, required: bool) -> Optional[str]:
+    """Long answers come only from answers.txt: a paragraph a model wrote reads like one.
+
+    A required one that is not there yet is added to the file for you to write.
+    """
+    book = getattr(answer_engine, "book", None)
+    if book is None:
+        return None
+    answer = book.answer_for(question)
+    if answer is None and required:
+        book.add_blank(question, "long answers are yours to write", None, getattr(answer_engine, "job_context", None))
+    return answer
+
+
+def _fill_choice(
+    driver: Any, item: Field, value: str, options: List[str], answer_engine: Any, outcome: FormOutcome
+) -> None:
+    label = item.question or item.name
+    chosen = match_option(value, options)
+    if chosen is None:
+        _note_mismatch(answer_engine, label, value, options)
+    if chosen is not None and _choose(driver, item, chosen):
+        outcome.filled.append(label)
+    elif item.required:
+        outcome.missing.append(label)
+    else:
+        outcome.skipped.append(label)
+
+
+def type_place(driver: Any, element: Any, value: str, country: str) -> bool:
+    """Type a city and click the matching suggestion; free text stands only where no list appears."""
+    try:
+        _click(driver, element)
+        _clear(element)
+        human_type(element, value)
+        shown = _shown_options(driver, OPTION_WAIT_S)
+        texts = [text for _, text in shown]
+        chosen = pick_place(value, texts, country) if texts else None
+        if chosen is not None:
+            _click(driver, shown[texts.index(chosen)][0])
+        elif texts:
+            element.send_keys(Keys.ESCAPE)
+        human_pause(0.3, 0.8)
+        driver.execute_script(_BLUR_SCRIPT, element)
+        human_pause(0.2, 0.5)
+        return _combobox_shows(driver, element, chosen or value)
+    except WebDriverException as exc:
+        logger.debug("Place %r failed (%s): %s", value, type(exc).__name__, exc)
+        return False
+
+
+def _fill_place(driver: Any, item: Field, value: str, country: str, outcome: FormOutcome) -> None:
+    label = item.question or item.name
+    if type_place(driver, item.element, value, country):
+        outcome.filled.append(label)
+    elif item.required:
+        outcome.missing.append(label)
+    else:
+        outcome.skipped.append(label)
+
+
+def _recheck(fields: List[Field], outcome: FormOutcome) -> None:
+    """Some sites clear a field once focus moves on; a value that vanished was never filled."""
+    for item in fields:
+        label = item.question or item.name
+        if item.kind not in _TEXT_KINDS or item.is_combobox or label not in outcome.filled:
+            continue
+        try:
+            value = item.element.get_attribute("value") or ""
+        except WebDriverException:
+            continue
+        if not value.strip():
+            outcome.filled.remove(label)
+            (outcome.missing if item.required else outcome.skipped).append(label)
+
+
+def _fill_text(driver: Any, item: Field, value: str, outcome: FormOutcome) -> None:
+    label = item.question or item.name
+    done = pick_from_combobox(driver, item.element, value) if item.is_combobox else set_text(driver, item.element, value)
+    if done:
+        outcome.filled.append(label)
+    elif item.required:
+        outcome.missing.append(label)
+    else:
+        outcome.skipped.append(label)
+
+
+def _fill_radio_group(driver: Any, group: List[Field], answer_engine: Any, outcome: FormOutcome) -> None:
+    question = group[0].group or _clean(group[0].name.replace("_", " ").replace("-", " "))
+    options = [item.label for item in group if item.label]
+    required = any(item.required for item in group)
+    if any(item.checked for item in group):
+        outcome.skipped.append(question)
+        return
+    chosen = None  # type: Optional[str]
+    if _EEO.search(question) or any(_EEO.search(option) for option in options):
+        chosen = decline_option(options)
+    elif _CONSENT.search(question) or any(_CONSENT.search(option) for option in options):
+        chosen = next(
+            (option for option in options if _CONSENTING.match(option) and not re.search(r"\bnot\b|\bdon'?t\b", option, re.I)),
+            None,
+        )
+    if chosen is None and options:
+        chosen = _resolve(answer_engine, question, options)
+    if chosen is not None:
+        target = next((item for item in group if item.label == chosen), None)
+        if target is None:
+            fitted = match_option(chosen, options)
+            target = next((item for item in group if item.label == fitted), None)
+            if target is None:
+                _note_mismatch(answer_engine, question, chosen, options)
+        if target is not None and _set_checked(driver, target.element, True):
+            outcome.filled.append(question)
+            return
+    (outcome.missing if required else outcome.skipped).append(question)
+
+
+def _fill_checkbox_group(driver: Any, group: List[Field], answer_engine: Any, outcome: FormOutcome) -> None:
+    question = group[0].group or _clean(group[0].name.replace("_", " ").replace("-", " "))
+    options = [item.label for item in group if item.label]
+    required = any(item.required for item in group)
+    selections, _ = answer_engine.resolve_many(question, options)
+    if selections:
+        ok = all(
+            _set_checked(driver, item.element, item.label in selections)
+            for item in group
+            if item.label
+        )
+        if ok:
+            outcome.filled.append(question)
+            return
+    (outcome.missing if required else outcome.skipped).append(question)
+
+
+def _fill_single_checkbox(driver: Any, item: Field, answer_engine: Any, outcome: FormOutcome) -> None:
+    label = item.question or item.name
+    if _CONSENT.search(label):
+        if _set_checked(driver, item.element, True):
+            outcome.filled.append(label)
+        elif item.required:
+            outcome.missing.append(label)
+        return
+    if _OPTIONAL_NOISE.search(label) and not item.required:
+        outcome.skipped.append(label)
+        return
+    answer = _resolve(answer_engine, label, ["Yes", "No"])
+    if answer is not None and _set_checked(driver, item.element, answer == "Yes"):
+        outcome.filled.append(label)
+    elif item.required:
+        outcome.missing.append(label)
+    else:
+        outcome.skipped.append(label)
+
+
+def fill_form(
+    driver: Any,
+    fields: List[Field],
+    profile: Profile,
+    answer_engine: Any,
+    resume_pdf: Optional[Path],
+) -> FormOutcome:
+    """Fill every control the bot can answer for; name the required ones it cannot."""
+    outcome = FormOutcome()
+    values = known_values(profile)
+    radios = {}  # type: Dict[str, List[Field]]
+    checkboxes = {}  # type: Dict[str, List[Field]]
+    for item in fields:
+        if item.kind == "radio":
+            radios.setdefault(item.name or item.group or item.label, []).append(item)
+        elif item.kind == "checkbox":
+            checkboxes.setdefault(item.name or item.group or item.label, []).append(item)
+
+    for item in fields:
+        label = item.question or item.name
+        if item.kind in ("radio", "checkbox"):
+            continue
+        if item.kind == "file":
+            # The id often says what a generic "Attach" label does not (resume, cover_letter).
+            hint = " ".join((label, item.name, item.ident))
+            for_resume = bool(_RESUME.search(label)) or (not _COVER.search(label) and bool(_RESUME.search(hint)))
+            if _COVER.search(hint) and not for_resume:
+                (outcome.missing if item.required else outcome.skipped).append(label or "Cover letter")
+            elif resume_pdf is not None and resume_pdf.is_file() and (for_resume or not label or "pdf" in item.accept.lower()):
+                if attach_file(driver, item.element, resume_pdf):
+                    outcome.filled.append(label or "Resume")
+                    outcome.resume_attached = True
+                else:
+                    outcome.missing.append(label or "Resume")
+            else:
+                (outcome.missing if item.required else outcome.skipped).append(label or "File")
+            continue
+        if HONEYPOT.search(label):
+            continue
+        if _CHALLENGE.search(label):
+            outcome.missing.append("%s (a check only a person may answer)" % label)
+            continue
+        if _ACCOUNT.search(label) or item.kind == "password":
+            outcome.missing.append(label or item.kind)
+            continue
+        if item.value and item.kind != "select":
+            outcome.skipped.append(label)
+            continue
+        if _COVER.search(label):
+            (outcome.missing if item.required else outcome.skipped).append(label)
+            continue
+        options = real_options(combobox_options(driver, item.element) if item.is_combobox else item.options)
+        if _EEO.search(label):
+            chosen = decline_option(options) if options else None
+            if chosen is not None and _choose(driver, item, chosen):
+                outcome.filled.append(label)
+            else:
+                (outcome.missing if item.required else outcome.skipped).append(label)
+            continue
+        key = classify_label(label)
+        value = values.get(key or "", "")
+        if not value and item.kind == "textarea":
+            value = _own_words(answer_engine, label, item.required) or ""
+        elif not value and item.required:
+            value = _resolve(answer_engine, label, options or None) or ""
+        elif not value:
+            # Optional boxes (social links, "Street", search widgets) take only your own
+            # answers: asking the model filled answers.txt with "Loading" and "Facebook".
+            own = getattr(answer_engine, "own_answer", None)
+            value = (own(label, options or None) if callable(own) else None) or ""
+        if not value:
+            (outcome.missing if item.required else outcome.skipped).append(label)
+            continue
+        if item.kind == "select" or (item.is_combobox and options):
+            _fill_choice(driver, item, value, options, answer_engine, outcome)
+        elif item.kind in _TEXT_KINDS and item.kind != "textarea" and _PLACE.search(" ".join((label, item.name))):
+            _fill_place(driver, item, value, values.get("country", ""), outcome)
+        else:
+            _fill_text(driver, item, value, outcome)
+
+    _recheck(fields, outcome)
+    for group in radios.values():
+        _fill_radio_group(driver, group, answer_engine, outcome)
+    for group in checkboxes.values():
+        if len(group) == 1:
+            _fill_single_checkbox(driver, group[0], answer_engine, outcome)
+        else:
+            _fill_checkbox_group(driver, group, answer_engine, outcome)
+    return outcome
+
+
+# ---------------------------------------------------------------------------
+# Submitting
+# ---------------------------------------------------------------------------
+
+
+def challenge_shown(driver: Any) -> bool:
+    """A reCAPTCHA, hCaptcha or Turnstile widget on the page."""
+    try:
+        return any(element.is_displayed() for element in driver.find_elements(By.CSS_SELECTOR, _CHALLENGE_CSS))
+    except WebDriverException:
+        return False
+
+
+def find_submit(driver: Any) -> Optional[Any]:
+    """The form's submit control; a page-top 'Apply' link only when nothing better exists."""
+    best = None  # type: Optional[Any]
+    best_rank = 3
+    for control in _visible_controls(driver):
+        text = _control_text(control)
+        if re.search(r"linkedin|indeed|autofill|google|with ", text, re.I):
+            continue
+        try:
+            is_submit = (control.get_attribute("type") or "").lower() == "submit"
+        except WebDriverException:
+            is_submit = False
+        if not (_SUBMIT_TEXT.match(text) or (is_submit and re.search(r"submit|apply|send", text, re.I))):
+            continue
+        rank = (0 if is_submit else 1) + (1 if text.lower().startswith("apply") else 0)
+        if rank < best_rank:
+            best, best_rank = control, rank
+    return best
+
+
+def find_next(driver: Any) -> Optional[Any]:
+    """A multi-page form's Next / Save and Continue button, if this page has one."""
+    for control in _visible_controls(driver):
+        text = _control_text(control)
+        if _NEXT_TEXT.match(text) and not re.search(r"with ", text, re.I):
+            return control
+    return None
+
+
+def _form_signature(driver: Any) -> Tuple[str, Tuple[str, ...]]:
+    return _current_url(driver), tuple(sorted(item.question or item.name for item in discover_fields(driver)))
+
+
+def next_page(driver: Any, step: Any) -> Tuple[bool, str]:
+    """Click Next and wait for a different set of fields; (moved, what the site said if not)."""
+    before = _form_signature(driver)
+    _click(driver, step)
+    deadline = time.monotonic() + FORM_WAIT_S
+    while True:
+        try:
+            errors = [
+                _clean(element.text)
+                for element in driver.find_elements(By.CSS_SELECTOR, "[aria-invalid='true'], [class*='error'], [role='alert']")
+                if element.is_displayed() and _clean(element.text)
+            ]
+        except WebDriverException:
+            errors = []
+        if errors:
+            return False, "the site reported: %s" % "; ".join(errors)[:300]
+        if _form_signature(driver) != before:
+            human_pause(0.8, 1.6)
+            return True, ""
+        if time.monotonic() >= deadline:
+            return False, "nothing changed within %d seconds of clicking %s" % (int(FORM_WAIT_S), _control_text(step) or "Next")
+        time.sleep(POLL_S)
+
+
+def wait_for_confirmation(driver: Any, timeout_s: float = CONFIRM_WAIT_S) -> Tuple[bool, str]:
+    deadline = time.monotonic() + timeout_s
+    while True:
+        body = _page_text(driver).lower()
+        for marker in _CONFIRMED:
+            if marker in body:
+                return True, "the site says: %s" % marker
+        try:
+            errors = [
+                _clean(element.text)
+                for element in driver.find_elements(By.CSS_SELECTOR, "[aria-invalid='true'], [class*='error'], [role='alert']")
+                if element.is_displayed() and _clean(element.text)
+            ]
+        except WebDriverException:
+            errors = []
+        if errors:
+            return False, "the site reported: %s" % "; ".join(errors)[:300]
+        url = _current_url(driver).lower()
+        if any(word in url for word in _CONFIRM_URL_WORDS) and not discover_fields(driver):
+            return True, "confirmation page %s" % url
+        if time.monotonic() >= deadline:
+            return False, "no confirmation within %d seconds" % int(timeout_s)
+        time.sleep(POLL_S)
+
+
+# ---------------------------------------------------------------------------
+# The whole thing
+# ---------------------------------------------------------------------------
+
+
+def apply_here(
+    driver: Any,
+    job: JobPosting,
+    profile: Profile,
+    answer_engine: Any,
+    settings: Settings,
+    resume_pdf: Optional[Path],
+    dry_run: bool,
+) -> ExternalResult:
+    """Apply on the page the browser is showing; never submit a half-filled form."""
+    from .accounts import sign_in
+
+    url = _current_url(driver)
+    ats = detect_ats(url)
+    result = ExternalResult(status=ApplyStatus.EXTERNAL_MANUAL, url=url, ats=ats, resume=str(resume_pdf or ""))
+    if ats in NOT_A_CAREER_SITE:
+        result.detail = "%s applications need a %s session; finish this one by hand" % (ats, ats)
+        return result
+
+    fields = reveal_form(driver)
+    if wants_account(driver, fields):
+        ok, how = sign_in(driver, settings, profile, dry_run)
+        if not ok:
+            result.detail = "the site asks for an account: %s" % how
+            return result
+        logger.info("      company site: %s", how)
+        human_pause(1.5, 3.0)
+        fields = reveal_form(driver)
+    if len(fields) < 2:
+        labels = [_control_text(control) for control in _visible_controls(driver)]
+        result.detail = "no application form found on %s (controls: %s)" % (
+            url,
+            ", ".join([label for label in labels if label][:8]) or "none",
+        )
+        return result
+
+    saw_file_input = False
+    for page in range(1, MAX_PAGES + 1):
+        outcome = fill_form(driver, fields, profile, answer_engine, resume_pdf)
+        result.filled += outcome.filled
+        result.missing = outcome.missing
+        saw_file_input = saw_file_input or any(item.kind == "file" for item in fields)
+        if outcome.resume_attached:
+            resume_pdf = None
+        if challenge_shown(driver):
+            result.missing.append("captcha (a check only a person may answer)")
+        if result.missing:
+            result.detail = "needs you for: %s" % "; ".join(result.missing)
+            return result
+
+        step = find_next(driver)
+        if step is None:
+            break
+        if dry_run:
+            result.status = DRY_RUN
+            result.detail = "dry run: page %d filled (%d fields), the next page was not opened" % (page, len(result.filled))
+            return result
+        moved, problem = next_page(driver, step)
+        if not moved:
+            result.detail = "page %d did not move on: %s" % (page, problem)
+            return result
+        fields = discover_fields(driver)
+    else:
+        result.detail = "the form still had more pages after %d; finish it by hand" % MAX_PAGES
+        return result
+
+    if resume_pdf is not None and not saw_file_input:
+        result.missing.append("Resume (the form has no file upload)")
+        result.detail = "needs you for: %s" % "; ".join(result.missing)
+        return result
+    submit = find_submit(driver)
+    if submit is None:
+        result.detail = "every field is filled but no Submit button was found"
+        return result
+    if dry_run:
+        result.status = DRY_RUN
+        result.detail = "dry run: %d fields filled, Submit found, nothing sent" % len(result.filled)
+        return result
+
+    _click(driver, submit)
+    confirmed, detail = wait_for_confirmation(driver, CONFIRM_WAIT_S)
+    if confirmed:
+        result.status = ApplyStatus.APPLIED_EXTERNAL
+        result.detail = detail
+        return result
+    result.status = ApplyStatus.ERROR
+    result.detail = "Submit was clicked but %s" % detail
+    return result
+
+
+def apply_on_company_site(
+    driver: Any,
+    job: JobPosting,
+    profile: Profile,
+    answer_engine: Any,
+    settings: Settings,
+    resume_pdf: Optional[Path] = None,
+) -> ExternalResult:
+    """From the Naukri job page: follow 'Apply on company site', apply there, come back."""
+    from .apply import classify_apply_button
+
+    naukri_handle = driver.current_window_handle
+    keep = list(driver.window_handles)
+    set_context = getattr(answer_engine, "set_job_context", None)
+    if callable(set_context):
+        set_context(job)
+    try:
+        button, kind = classify_apply_button(driver)
+        if button is None or kind != "external":
+            return ExternalResult(status=ApplyStatus.ERROR, url=job.url, detail="no company-site button on the job page")
+        site = open_company_site(driver, button)
+        if not site:
+            return ExternalResult(status=ApplyStatus.ERROR, url=job.url, detail="the company-site link did not leave Naukri")
+        logger.info("      company site: %s (%s)", site, detect_ats(site))
+        result = apply_here(driver, job, profile, answer_engine, settings, resume_pdf, settings.dry_run)
+    except (StaleElementReferenceException, WebDriverException) as exc:
+        result = ExternalResult(status=ApplyStatus.ERROR, url=_current_url(driver), detail="%s: %s" % (type(exc).__name__, exc))
+    finally:
+        return_to(driver, naukri_handle, keep)
+    if result.status == ApplyStatus.APPLIED_EXTERNAL:
+        forget_company_site(settings, job)
+    elif result.status != DRY_RUN:
+        record_company_site(settings, job, result)
+    return result
+
+
+def record_company_site(settings: Settings, job: JobPosting, result: ExternalResult) -> Path:
+    """Append the half-done application to data/company_sites.md for a person."""
+    path = Path(settings.data_dir or "data") / "company_sites.md"
+    header = (
+        "# Applications on company websites that need you\n\n"
+        "The bot opened these from Naukri's \"Apply on company site\" button, filled\n"
+        "what it could and stopped short of submitting. Finish each one by hand, or\n"
+        "answer the open questions in answers.txt and run\n"
+        "`python3 -m naukri_bot.external --url <site link> --title \"...\" --company \"...\"`.\n"
+        "Delete an entry once you have applied; the bot drops it itself when it\n"
+        "finishes one, and replaces it when it tries the same job again.\n"
+    )
+    entry = [
+        "",
+        "## %s | %s | %s" % (datetime.now().strftime("%Y-%m-%d %H:%M"), job.company or "Unknown company", job.title or "Role"),
+        "- Status: %s" % ("needs you" if result.status == ApplyStatus.EXTERNAL_MANUAL else result.status),
+        "- Why: %s" % (result.detail or "-"),
+        "- Site: %s" % (result.url or "-"),
+        "- Naukri: %s" % (job.url or "-"),
+    ]
+    if result.resume:
+        entry.append("- Resume to send: %s" % result.resume)
+    if result.filled:
+        entry.append("- Already filled: %s" % ", ".join(result.filled))
+    if result.missing:
+        entry.append("- Left for you: %s" % "; ".join(result.missing))
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        head, blocks = _read_company_sites(path)
+        blocks = [block for block in blocks if not _same_job(block, job)]
+        blocks.append("\n".join(entry[1:]) + "\n")
+        _write_company_sites(path, head or header, blocks)
+    except OSError as exc:
+        logger.warning("Could not write %s: %s", path, exc)
+    return path
+
+
+def forget_company_site(settings: Settings, job: JobPosting) -> None:
+    """Drop the job's entry once the bot has finished that application itself."""
+    path = Path(settings.data_dir or "data") / "company_sites.md"
+    try:
+        head, blocks = _read_company_sites(path)
+    except OSError:
+        return
+    kept = [block for block in blocks if not _same_job(block, job)]
+    if len(kept) != len(blocks):
+        try:
+            _write_company_sites(path, head, kept)
+        except OSError as exc:
+            logger.warning("Could not update %s: %s", path, exc)
+
+
+def _read_company_sites(path: Path) -> Tuple[str, List[str]]:
+    text = path.read_text(encoding="utf-8") if path.exists() else ""
+    parts = re.split(r"\n(?=## )", text)
+    head = parts[0] if parts and not parts[0].startswith("## ") else ""
+    blocks = [part.strip("\n") + "\n" for part in parts if part.startswith("## ")]
+    return head, blocks
+
+
+def _write_company_sites(path: Path, head: str, blocks: List[str]) -> None:
+    body = head.rstrip("\n") + "\n" + "".join("\n" + block for block in blocks)
+    path.write_text(body, encoding="utf-8")
+
+
+def _same_job(block: str, job: JobPosting) -> bool:
+    return bool(job.url) and ("\n- Naukri: %s\n" % job.url) in block + "\n"
+
+
+def pending_company_sites(settings: Settings) -> List[Dict[str, str]]:
+    """Entries still listed in data/company_sites.md, newest last."""
+    path = Path(settings.data_dir or "data") / "company_sites.md"
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return []
+    entries = []  # type: List[Dict[str, str]]
+    for block in re.split(r"\n(?=## )", text):
+        if not block.startswith("## "):
+            continue
+        lines = block.splitlines()
+        head = [part.strip() for part in lines[0][3:].split("|")]
+        entry = {
+            "when": head[0] if head else "",
+            "company": head[1] if len(head) > 1 else "",
+            "title": head[2] if len(head) > 2 else "",
+        }
+        for line in lines[1:]:
+            if line.startswith("- ") and ":" in line:
+                key, value = line[2:].split(":", 1)
+                entry[key.strip().lower()] = value.strip()
+        entries.append(entry)
+    return entries
+
+
+# ---------------------------------------------------------------------------
+# Command line
+# ---------------------------------------------------------------------------
+
+
+def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        prog="python3 -m naukri_bot.external",
+        description=(
+            "Apply on an employer's own career page: fill the form from your facts and "
+            "answers, attach the resume, submit only when complete and confirmed."
+        ),
+    )
+    parser.add_argument("--url", help="the application page to work on (a company_sites.md Site link)")
+    parser.add_argument("--title", default="", help="job title, for the tailored resume and the records")
+    parser.add_argument("--company", default="", help="company name, for the tailored resume and the records")
+    parser.add_argument("--dry-run", action="store_true", help="fill the form and find Submit, but never click it")
+    parser.add_argument("--no-tailor", action="store_true", help="attach the base resume instead of a tailored one")
+    parser.add_argument(
+        "--google-login",
+        action="store_true",
+        help="sign the bot's browser in to GOOGLE_EMAIL (types GOOGLE_PASSWORD when set; waits 10 minutes "
+        "for a passkey, phone prompt or code); nothing else happens",
+    )
+    parser.add_argument("--headless", action="store_true", help="run the browser without a window")
+    parser.add_argument("--env", metavar="PATH", help="path to a .env file")
+    parser.add_argument("-v", "--verbose", action="store_true")
+    return parser.parse_args(argv)
+
+
+def main(argv: Optional[List[str]] = None) -> int:
+    from .cli import EXIT_CONFIG, EXIT_FAILED, EXIT_OK, configure_logging, keep_log
+    from . import browser, config, ledger as ledger_module, llm, profile as profile_module, resume as resume_module
+    from .answers import AnswerEngine
+
+    args = parse_args(argv)
+    configure_logging(args.verbose)
+    overrides = {"dry_run": True} if args.dry_run else {}  # type: Dict[str, Any]
+    if args.headless:
+        overrides["headless"] = True
+    try:
+        settings = config.load_settings(args.env, overrides)
+    except Exception as exc:
+        logger.error("Could not load settings: %s", exc)
+        return EXIT_CONFIG
+    if not args.url and not args.google_login:
+        logger.error("Give --url (an application page) or --google-login.")
+        return EXIT_CONFIG
+    keep_log(settings, "company-site")
+
+    if args.google_login:
+        from .accounts import google_login
+
+        driver = browser.create_driver(settings)
+        try:
+            ok, how = google_login(driver, settings, timeout_s=600.0)
+            (logger.info if ok else logger.error)("Google: %s", how)
+            return EXIT_OK if ok else EXIT_FAILED
+        finally:
+            driver.quit()
+
+    try:
+        profile = profile_module.load_profile(settings)
+    except profile_module.ProfileError as exc:
+        logger.error("Could not load your profile: %s", exc)
+        return EXIT_CONFIG
+    job = JobPosting(
+        job_id="manual-%s" % datetime.now().strftime("%Y%m%d-%H%M%S"),
+        url=args.url,
+        title=args.title,
+        company=args.company,
+    )
+    ledger = ledger_module.open_ledger(settings)
+    client = llm.build_client(settings)
+    engine = AnswerEngine(ledger, client, profile, settings)
+    engine.set_job_context(job)
+    resume_pdf = None  # type: Optional[Path]
+    try:
+        if args.no_tailor or not args.title:
+            resume_pdf = resume_module.build_base_pdf(settings)
+        else:
+            resume_pdf, notes = resume_module.build_tailored_pdf(settings, client, job)
+            for note in notes:
+                logger.info("  resume: %s", note)
+    except resume_module.ResumeError as exc:
+        logger.warning("No resume PDF to attach (%s)", exc)
+
+    driver = browser.create_driver(settings)
+    try:
+        if not safe_get(driver, args.url):
+            logger.error("Could not open %s", args.url)
+            return EXIT_FAILED
+        human_pause(1.5, 3.0)
+        result = apply_here(driver, job, profile, engine, settings, resume_pdf, args.dry_run)
+    finally:
+        driver.quit()
+        ledger.close()
+
+    logger.info("Site: %s (%s)", result.url, result.ats)
+    logger.info("Filled: %s", ", ".join(result.filled) or "nothing")
+    if result.missing:
+        logger.info("Left for you: %s", "; ".join(result.missing))
+    logger.info("Outcome: %s - %s", result.status, result.detail)
+    if result.status == ApplyStatus.EXTERNAL_MANUAL:
+        path = record_company_site(settings, job, result)
+        logger.info("Recorded in %s", path)
+        return EXIT_FAILED
+    if result.status == ApplyStatus.ERROR:
+        return EXIT_FAILED
+    return EXIT_OK
+
+
+if __name__ == "__main__":
+    sys.exit(main())
