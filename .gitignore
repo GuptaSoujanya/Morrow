@@ -55,3 +55,19 @@ unanswered_questions.md
 # Company-site worklist state
 external_archive.md
 external_opened.tsv
+
+# Profile updater: scheduled-run logs, slot memory, failure screenshots
+logs/
+screenshots/
+
+# Your resume source and compiled PDFs: they carry your phone number and email
+resume/
+# LinkedIn drafts, cards, state, and the LinkedIn browser session
+linkedin/
+.browser-profile-linkedin/
+# Your data (facts, answers, career-site accounts, backups) and daily reports with run logs
+data/
+reports/
+
+# Agent session continuation state (local tooling, not project code)
+.omo/
