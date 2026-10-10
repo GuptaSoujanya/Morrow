@@ -173,3 +173,47 @@ def test_a_missing_resume_is_reported_as_a_missing_file(tmp_path):
         profile_module.extract_resume_text(str(tmp_path / "nope.tex"))
 
     assert "not text" not in str(caught.value)
+
+
+class _RankingClient:
+    """Scores every job 70 and records how many calls ran at once."""
+
+    def __init__(self, workers):
+        import threading
+        self.settings = Settings(llm_rank_batch_size=2, llm_rank_workers=workers)
+        self.lock = threading.Lock()
+        self.running = 0
+        self.most = 0
+        self.calls = 0
+
+    def available(self):
+        return True
+
+    def complete_json(self, prompt, schema_hint):
+        import json
+        import time
+        with self.lock:
+            self.calls += 1
+            self.running += 1
+            self.most = max(self.most, self.running)
+        time.sleep(0.05)
+        jobs = json.loads(prompt.split("Jobs: ", 1)[1])
+        with self.lock:
+            self.running -= 1
+        return {"jobs": [{"job_id": job["job_id"], "score": 70, "verdict": "possible",
+                          "reasons": ["fits"]} for job in jobs]}
+
+
+@pytest.mark.parametrize("workers", [1, 3])
+def test_every_job_is_scored_whether_batches_run_one_at_a_time_or_together(workers):
+    from naukri_bot import llm
+
+    jobs = [JobPosting(job_id="j%d" % index, url="u", title="AI Engineer", company="C%d" % index,
+                       description=DESC) for index in range(7)]
+    client = _RankingClient(workers)
+
+    scores = llm.score_jobs(client, _profile(), jobs)
+
+    assert sorted(scores) == sorted(job.job_id for job in jobs)
+    assert client.calls == 4
+    assert client.most == (1 if workers == 1 else 3)
