@@ -25,6 +25,8 @@ def _reset_unanswered_dedup_cache():
 
     answers._seen_unanswered.clear()
     answers._unanswered_loaded = False
+    answers._book = None
     yield
     answers._seen_unanswered.clear()
     answers._unanswered_loaded = False
+    answers._book = None

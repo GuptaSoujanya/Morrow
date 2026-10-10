@@ -6,6 +6,7 @@ import math
 import os
 import shutil
 import subprocess
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List, Optional, Tuple
 
 from .models import (
@@ -264,64 +265,80 @@ def score_jobs(
         '"verdict": "strong|possible|weak", "reasons": ["..."]}]}'
     )
     # score_jobs takes no settings; the client carries them.
-    batch_size = max(
-        1, getattr(getattr(client, "settings", None), "llm_rank_batch_size", 20)
-    )
-    for start in range(0, len(jobs), batch_size):
-        batch = jobs[start : start + batch_size]
-        allowed_ids = {job.job_id for job in batch}
-        payload = [
-            {
-                "job_id": job.job_id,
-                "title": job.title,
-                "company": job.company,
-                "location": job.location,
-                "experience": job.experience,
-                "salary": job.salary,
-                "description": job.description[:400],
-                "tags": job.tags,
-            }
-            for job in batch
-        ]
-        prompt = (
-            "Score each job from 0 to 100 for this candidate. Penalise experience "
-            "mismatch (especially jobs wanting 8+ years for a roughly 2.5-year "
-            "candidate), wrong domain, and non-preferred locations. Reward LLM, "
-            "AI, ML, agent, evaluation, and RAG roles. Return one entry per job.\n"
-            "Candidate: %s\nJobs: %s"
-        ) % (json.dumps(candidate, ensure_ascii=True), json.dumps(payload, ensure_ascii=True))
-        response = client.complete_json(prompt, schema)
-        if response is None:
-            continue
-        entries = response.get("jobs")
-        if not isinstance(entries, list):
-            continue
-        for entry in entries:
-            if not isinstance(entry, dict):
-                continue
-            job_id = entry.get("job_id")
-            if not isinstance(job_id, str) or job_id not in allowed_ids:
-                continue
-            try:
-                score = float(entry.get("score"))
-            except (TypeError, ValueError):
-                continue
-            if not math.isfinite(score):
-                continue
-            verdict = entry.get("verdict")
-            if verdict not in ("strong", "possible", "weak"):
-                verdict = "weak"
-            reasons_value = entry.get("reasons")
-            reasons = (
-                [reason for reason in reasons_value if isinstance(reason, str)]
-                if isinstance(reasons_value, list)
-                else []
+    client_settings = getattr(client, "settings", None)
+    batch_size = max(1, getattr(client_settings, "llm_rank_batch_size", 20))
+    workers = max(1, getattr(client_settings, "llm_rank_workers", 1))
+    batches = [jobs[start : start + batch_size] for start in range(0, len(jobs), batch_size)]
+    candidate_json = json.dumps(candidate, ensure_ascii=True)
+    if workers == 1 or len(batches) < 2:
+        scored = [_score_batch(client, candidate_json, batch, schema) for batch in batches]
+    else:
+        with ThreadPoolExecutor(max_workers=min(workers, len(batches))) as pool:
+            scored = list(
+                pool.map(lambda batch: _score_batch(client, candidate_json, batch, schema), batches)
             )
-            results[job_id] = {
-                "score": max(0.0, min(100.0, score)),
-                "verdict": verdict,
-                "reasons": reasons,
-            }
+    for batch_results in scored:
+        results.update(batch_results)
+    return results
+
+
+def _score_batch(
+    client: LLMClient, candidate_json: str, batch: List[JobPosting], schema: str
+) -> Dict[str, Dict[str, Any]]:
+    results: Dict[str, Dict[str, Any]] = {}
+    allowed_ids = {job.job_id for job in batch}
+    payload = [
+        {
+            "job_id": job.job_id,
+            "title": job.title,
+            "company": job.company,
+            "location": job.location,
+            "experience": job.experience,
+            "salary": job.salary,
+            "description": job.description[:400],
+            "tags": job.tags,
+        }
+        for job in batch
+    ]
+    prompt = (
+        "Score each job from 0 to 100 for this candidate. Penalise experience "
+        "mismatch (especially jobs wanting 8+ years for a roughly 2.5-year "
+        "candidate), wrong domain, and non-preferred locations. Reward LLM, "
+        "AI, ML, agent, evaluation, and RAG roles. Return one entry per job.\n"
+        "Candidate: %s\nJobs: %s"
+    ) % (candidate_json, json.dumps(payload, ensure_ascii=True))
+    response = client.complete_json(prompt, schema)
+    if response is None:
+        return results
+    entries = response.get("jobs")
+    if not isinstance(entries, list):
+        return results
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        job_id = entry.get("job_id")
+        if not isinstance(job_id, str) or job_id not in allowed_ids:
+            continue
+        try:
+            score = float(entry.get("score"))
+        except (TypeError, ValueError):
+            continue
+        if not math.isfinite(score):
+            continue
+        verdict = entry.get("verdict")
+        if verdict not in ("strong", "possible", "weak"):
+            verdict = "weak"
+        reasons_value = entry.get("reasons")
+        reasons = (
+            [reason for reason in reasons_value if isinstance(reason, str)]
+            if isinstance(reasons_value, list)
+            else []
+        )
+        results[job_id] = {
+            "score": max(0.0, min(100.0, score)),
+            "verdict": verdict,
+            "reasons": reasons,
+        }
     return results
 
 

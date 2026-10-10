@@ -3,8 +3,9 @@
 import hashlib
 import json
 import logging
-import re
+import difflib
 import os
+import re
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
 
@@ -40,13 +41,208 @@ _UNANSWERED_FILE = "unanswered_questions.md"
 _seen_unanswered = set()
 _unanswered_loaded = False
 
+_ANSWERS_FILE_NAME = "answers.txt"
+_FUZZY_MATCH_RATIO = 0.9
+_LISTED_OPTIONS = 12
+_book = None  # type: Optional[AnswerBook]
 
-def _record_unanswered(question: str, reason: str, options=None) -> None:
+
+def answers_file_path(settings: Any) -> str:
+    return os.path.join(getattr(settings, "data_dir", "") or "data", _ANSWERS_FILE_NAME)
+
+
+def _question_key(text: str) -> str:
+    return " ".join(re.sub(r"[^a-z0-9]+", " ", text.casefold()).split())
+
+
+def parse_answers(text: str) -> List[Tuple[List[str], str]]:
+    """(questions, answer) blocks of a Q:/A: file; an answer left blank stays ""."""
+    entries = []  # type: List[Tuple[List[str], str]]
+    questions = []  # type: List[str]
+    answer_parts = None  # type: Optional[List[str]]
+
+    def flush() -> None:
+        if questions:
+            answer = " ".join(part for part in (answer_parts or []) if part)
+            entries.append((list(questions), answer.strip()))
+        del questions[:]
+
+    for raw in text.splitlines():
+        line = raw.strip()
+        if line.startswith("#"):
+            continue
+        if not line:
+            flush()
+            answer_parts = None
+            continue
+        tag = line[:2].upper()
+        if tag == "Q:":
+            if answer_parts is not None:
+                flush()
+                answer_parts = None
+            questions.append(line[2:].strip())
+        elif tag == "A:":
+            if answer_parts is None:
+                answer_parts = []
+            answer_parts.append(line[2:].strip())
+        elif answer_parts is not None:
+            answer_parts.append(line)
+    flush()
+    return entries
+
+
+def _word_contains(text: str, part: str) -> bool:
+    return (" %s " % part) in (" %s " % text)
+
+
+def match_option(answer: str, options: List[str]) -> Optional[str]:
+    """The rendered option the user's answer names, or None when none or several do."""
+    wanted = _question_key(answer)
+    if not wanted:
+        return None
+    keyed = [(option, _question_key(option)) for option in options]
+    for option, key in keyed:
+        if key and key == wanted:
+            return option
+    first = wanted.split()[0]
+    if first in ("yes", "no"):
+        for option, key in keyed:
+            if key == first:
+                return option
+    containing = [
+        option
+        for option, key in keyed
+        if key and (_word_contains(wanted, key) or _word_contains(key, wanted))
+    ]
+    return containing[0] if len(containing) == 1 else None
+
+
+def match_options(answer: str, options: List[str]) -> Optional[List[str]]:
+    """Every option named in a comma-separated answer, in rendered order, or None."""
+    parts = [part for part in re.split(r"[,;/]| and ", answer) if part.strip()]
+    chosen = []  # type: List[str]
+    for part in parts:
+        option = match_option(part, options)
+        if option is None:
+            return None
+        if option not in chosen:
+            chosen.append(option)
+    return [option for option in options if option in chosen] or None
+
+
+class AnswerBook:
+    """The user's own answers in data/answers.txt, and the questions left for them."""
+
+    def __init__(self, path: str):
+        self.path = path
+        self.entries = []  # type: List[Tuple[List[str], str]]
+        self._by_key = {}  # type: Dict[str, str]
+        self._loaded_mtime = None  # type: Optional[float]
+        self.reload()
+
+    def reload(self) -> None:
+        try:
+            with open(self.path, "r", encoding="utf-8") as handle:
+                text = handle.read()
+            mtime = os.path.getmtime(self.path)  # type: Optional[float]
+        except OSError:
+            text, mtime = "", None
+        self.entries = parse_answers(text)
+        self._loaded_mtime = mtime
+        self._by_key = {}
+        for questions, answer in self.entries:
+            for question in questions:
+                self._by_key.setdefault(_question_key(question), answer)
+
+    def _refresh_if_changed(self) -> None:
+        try:
+            mtime = os.path.getmtime(self.path)  # type: Optional[float]
+        except OSError:
+            mtime = None
+        if mtime != self._loaded_mtime:
+            self.reload()
+
+    def answer_for(self, question: str) -> Optional[str]:
+        """The user's answer, or None when the question is unknown or still blank."""
+        self._refresh_if_changed()
+        key = _question_key(question)
+        if not key:
+            return None
+        answer = self._by_key.get(key)
+        if answer is None:
+            best, best_ratio = "", 0.0
+            for candidate, candidate_answer in self._by_key.items():
+                ratio = difflib.SequenceMatcher(None, key, candidate).ratio()
+                if ratio > best_ratio:
+                    best, best_ratio = candidate_answer, ratio
+            if best_ratio >= _FUZZY_MATCH_RATIO:
+                answer = best
+        return answer or None
+
+    def blank_questions(self) -> List[str]:
+        return [questions[0] for questions, answer in self.entries if not answer]
+
+    def add_blank(
+        self,
+        question: str,
+        reason: str,
+        options: Optional[List[str]] = None,
+        context: Optional[Dict[str, str]] = None,
+    ) -> bool:
+        """Append the question with an empty A: unless the file already lists it."""
+        self._refresh_if_changed()
+        key = _question_key(question)
+        if not key or key in self._by_key:
+            return False
+        where = ""
+        if context and (context.get("title") or context.get("company")):
+            where = " | while applying to %s at %s" % (
+                context.get("title") or "a role",
+                context.get("company") or "an employer",
+            )
+        shown = ""
+        if options:
+            # A university or country list runs to thousands; a sample says what kind of answer fits.
+            shown = " | options: %s" % (list(options[:_LISTED_OPTIONS]),)
+            if len(options) > _LISTED_OPTIONS:
+                shown += " and %d more" % (len(options) - _LISTED_OPTIONS)
+        block = "\n# %s%s | %s%s\nQ: %s\nA:\n" % (
+            datetime.now().strftime("%Y-%m-%d %H:%M"),
+            where,
+            reason,
+            shown,
+            " ".join(question.split()),
+        )
+        try:
+            os.makedirs(os.path.dirname(self.path) or ".", exist_ok=True)
+            with open(self.path, "a", encoding="utf-8") as handle:
+                handle.write(block)
+            self._loaded_mtime = os.path.getmtime(self.path)
+        except OSError as exc:
+            logger.warning("Could not add the question to %s: %s", self.path, exc)
+            return False
+        self.entries.append(([question], ""))
+        self._by_key[key] = ""
+        return True
+
+
+def install_answer_book(settings: Any) -> AnswerBook:
+    global _book
+    _book = AnswerBook(answers_file_path(settings))
+    return _book
+
+
+def _record_unanswered(
+    question: str, reason: str, options=None, context: Optional[Dict[str, str]] = None
+) -> None:
     global _unanswered_loaded
 
     key = " ".join(question.split()).casefold()
     if not key or key == "unidentified chatbot question":
         return
+
+    if _book is not None:
+        _book.add_blank(question, reason, options, context)
 
     if not _unanswered_loaded:
         _unanswered_loaded = True
@@ -95,6 +291,14 @@ def _profile_fingerprint(profile: Profile) -> str:
     return hashlib.sha1(payload.encode("utf-8")).hexdigest()[:16]
 
 
+def facts_fingerprint(profile: Profile, settings: Any) -> str:
+    """Changes when you fill a fact or an answer, not when the bot adds a blank question."""
+    book = AnswerBook(answers_file_path(settings))
+    answered = sorted([sorted(questions), answer] for questions, answer in book.entries if answer)
+    payload = _profile_fingerprint(profile) + json.dumps(answered)
+    return hashlib.sha1(payload.encode("utf-8")).hexdigest()[:16]
+
+
 _SKILL_YEARS_RE = re.compile(
     r"(how many years|years of (experience|exp)\b|relevant experience"
     r"|experience in years|yrs of (experience|exp)\b)"
@@ -117,6 +321,7 @@ class AnswerEngine:
         self.abstained = 0
         self.profile_fingerprint = _profile_fingerprint(profile)
         self.job_context: Dict[str, str] = {}
+        self.book = install_answer_book(settings)
 
     def set_job_context(self, job: Any) -> None:
         """Note which posting the next questions belong to.
@@ -142,6 +347,9 @@ class AnswerEngine:
         field_type: str = "text",
     ) -> AnswerResolution:
         self._current_options = options
+        own = self._own_answer(question, options)
+        if own is not None:
+            return self._accept(question, own, field_type, persist=False)
         cached = self.ledger.get_answer(question, self.profile_fingerprint)
         cached_answer = self._cached_answer(cached)
         if cached_answer is not None:
@@ -187,6 +395,41 @@ class AnswerEngine:
             )
         return self._accept(question, llm_resolution, field_type, persist=persist)
 
+    def own_answer(self, question: str, options: Optional[List[str]] = None) -> Optional[str]:
+        """The answer from data/answers.txt alone: no cache, no model, nothing recorded."""
+        resolution = self._own_answer(question, options)
+        if resolution is None or resolution.answer is None:
+            return None
+        return resolution.answer.text
+
+    def _own_answer(
+        self, question: str, options: Optional[List[str]]
+    ) -> Optional[AnswerResolution]:
+        """What the user wrote in data/answers.txt, when it fits the rendered options."""
+        text = self.book.answer_for(question)
+        if text is None:
+            return None
+        if options is not None:
+            matched = match_option(text, options)
+            if matched is None:
+                logger.info(
+                    "Your answer %r to %r names none of the options %s; trying the "
+                    "other sources",
+                    text,
+                    question,
+                    options,
+                )
+                return None
+            text = matched
+        return AnswerResolution.resolved(
+            Answer(
+                text=text,
+                grounded_in="data/answers.txt",
+                source=AnswerSource.DATA,
+                confidence=1.0,
+            )
+        )
+
     def _accept(
         self,
         question: str,
@@ -225,13 +468,27 @@ class AnswerEngine:
             self._record_abstain(question, "no_options_rendered", options)
             return None, "no_options_rendered"
 
+        own = self.book.answer_for(question)
+        if own is not None:
+            chosen = match_options(own, options)
+            if chosen:
+                self.answered += 1
+                logger.info("[multi] %s -> %s (data/answers.txt)", question, chosen)
+                return chosen, ""
+            logger.info(
+                "Your answer %r to %r names none of the options %s; asking the model",
+                own,
+                question,
+                options,
+            )
+
         selections, reason = llm.resolve_selection(
             self.client, self.profile, question, options
         )
         if selections is None:
             self.abstained += 1
             logger.info("Abstaining from question %r: %s", question, reason)
-            _record_unanswered(question, reason, options)
+            _record_unanswered(question, reason, options, self.job_context)
             return None, reason
         self.answered += 1
         logger.info("[multi] %s -> %s", question, selections)
@@ -252,7 +509,10 @@ class AnswerEngine:
             options,
         )
         _record_unanswered(
-            question, "answer_%r_not_among_rendered_options" % answer_text, options
+            question,
+            "answer_%r_not_among_rendered_options" % answer_text,
+            options,
+            self.job_context,
         )
 
     def _record_abstain(
@@ -260,7 +520,7 @@ class AnswerEngine:
     ) -> None:
         self.abstained += 1
         logger.info("Abstaining from question %r: %s", question, reason)
-        _record_unanswered(question, reason, options)
+        _record_unanswered(question, reason, options, self.job_context)
 
     def _finish(
         self, question: str, resolution: AnswerResolution, already_logged: bool
@@ -272,7 +532,10 @@ class AnswerEngine:
                     "Abstaining from question %r: %s", question, resolution.reason
                 )
             _record_unanswered(
-                question, resolution.reason, getattr(self, "_current_options", None)
+                question,
+                resolution.reason,
+                getattr(self, "_current_options", None),
+                self.job_context,
             )
         else:
             self.answered += 1
