@@ -314,3 +314,36 @@ def ensure_logged_in(driver: WebDriver, settings: Settings) -> LoginResult:
     logger.info("No saved session to reuse; logging in")
 
     return login(driver, settings)
+
+
+def wait_for_manual_login(
+    driver: WebDriver, timeout_s: float = 300.0, poll_s: float = 2.0
+) -> bool:
+    """Hold the window open while a person finishes a captcha or OTP challenge.
+
+    login() returns the moment Naukri asks for a challenge, and the first
+    profile-update run quit the browser right after, so the person was told to
+    "sign in manually when the window opens" while the window was already gone.
+    Only a verified signed-in marker ends the wait: that is what the persistent
+    browser profile must hold for later runs to skip the login form.
+    """
+    deadline = time.monotonic() + timeout_s
+    while True:
+        try:
+            if not driver.window_handles:
+                logger.warning("The browser window was closed before the sign-in finished")
+                return False
+        except WebDriverException as exc:
+            logger.warning(
+                "The browser went away before the sign-in finished (%s): %s",
+                type(exc).__name__,
+                exc,
+            )
+            return False
+        if is_logged_in(driver):
+            logger.info("Manual sign-in verified; the session is saved in the browser profile")
+            return True
+        if time.monotonic() >= deadline:
+            logger.warning("Nobody finished the sign-in within %.0f seconds", timeout_s)
+            return False
+        time.sleep(poll_s)

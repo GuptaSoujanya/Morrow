@@ -176,3 +176,40 @@ def test_a_signed_in_dashboard_is_still_recognised():
     )
 
     assert auth.is_logged_in(driver, trust_url=False) is True
+
+
+# --- waiting for a person to answer a captcha or OTP ------------------------------
+
+
+def test_the_wait_ends_once_the_person_has_signed_in(monkeypatch):
+    """The 10 October failure: the updater quit the browser the instant Naukri
+    asked for an OTP, while telling the person to sign in through that window."""
+    driver = _FakeDriver(LOGIN_URL, present=[AMBIGUOUS])
+    driver.window_handles = ["main"]
+    pauses = []
+
+    def _the_person_types_the_otp(seconds):
+        pauses.append(seconds)
+        if len(pauses) == 2:
+            driver.current_url = "https://www.naukri.com/mnjuser/homepage"
+            driver._present = {SIGNED_IN}
+
+    monkeypatch.setattr(auth.time, "sleep", _the_person_types_the_otp)
+
+    assert auth.wait_for_manual_login(driver, timeout_s=60, poll_s=2) is True
+    assert pauses == [2, 2]
+
+
+def test_the_wait_gives_up_when_nobody_signs_in(monkeypatch):
+    driver = _FakeDriver(LOGIN_URL, present=[AMBIGUOUS])
+    driver.window_handles = ["main"]
+    monkeypatch.setattr(auth.time, "sleep", lambda seconds: None)
+
+    assert auth.wait_for_manual_login(driver, timeout_s=0, poll_s=0) is False
+
+
+def test_a_closed_window_ends_the_wait_early():
+    driver = _FakeDriver(LOGIN_URL)
+    driver.window_handles = []
+
+    assert auth.wait_for_manual_login(driver, timeout_s=60, poll_s=0) is False
