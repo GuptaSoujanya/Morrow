@@ -286,7 +286,8 @@ def learning_for(settings: Settings, day: date) -> List[str]:
     lines = [
         "%s: **%s** (day %d of %d)" % ("Revise" if revising else "Today", title, index % len(modules) + 1, len(modules)),
         "Read it: [%s](%s)" % (path, (course_dir / path).as_uri()),
-        "On the site: `scripts/serve_course.sh`, then http://localhost:%d/#/%s" % (COURSE_PORT, route),
+        'On the site: `python3 "%s"`, then http://localhost:%d/#/%s'
+        % (course_dir.resolve() / "serve.py", COURSE_PORT, route),
     ]
     following = modules[(index + 1) % len(modules)][0]
     lines.append("Tomorrow: %s" % following)

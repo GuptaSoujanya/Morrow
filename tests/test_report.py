@@ -243,7 +243,10 @@ def test_the_study_plan_runs_dsa_first_one_module_a_day(tmp_path):
 
     first = report.learning_for(settings, DAY)
     assert first[0] == "Today: **2.1 Arrays, Strings & Hashing** (day 1 of 5)"
-    assert first[2] == "On the site: `scripts/serve_course.sh`, then http://localhost:8000/#/02-dsa/01-arrays-strings-hashing"
+    assert first[2] == (
+        'On the site: `python3 "%s"`, then http://localhost:8000/#/02-dsa/01-arrays-strings-hashing'
+        % ((tmp_path / "course").resolve() / "serve.py")
+    )
     assert first[3] == "Tomorrow: 2.2 Two Pointers & Sliding Window"
     assert report.learning_for(settings, DAY + timedelta(days=3))[0] == "Today: **1.2 Storage & Databases** (day 4 of 5)"
     assert report.learning_for(settings, DAY + timedelta(days=5))[0].startswith("Revise: **2.1 Arrays")

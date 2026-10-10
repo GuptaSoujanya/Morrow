@@ -389,7 +389,7 @@ Every Naukri run, profile update and LinkedIn post rewrites `reports/<YYYY-MM-DD
 ```bash
 python3 -m naukri_bot.report --print          # rebuild today's report and show it
 python3 -m naukri_bot.report --date 2026-10-09
-scripts/serve_course.sh                       # the course site at http://localhost:8000
+python3 "../system degine/course/serve.py"    # the course site at http://localhost:8000
 ```
 
 Everything in the report comes from the records: the database, `data/`, `logs/`, `linkedin/`.
@@ -518,7 +518,7 @@ Naukri-autoapply-bot/
 │                         #   accounts.md (career-site accounts), backups/ (before each AI edit)
 ├── resume/               # base.tex (your resume) + out/base and out/tailored/<Company - Role>/
 ├── reports/              # one folder per day: report.md + logs/ of every run; ai_changes.jsonl (auto-generated)
-├── scripts/              # launchd install/run/status, google_login.sh, serve_course.sh
+├── scripts/              # launchd install/run/status, google_login.sh
 ├── linkedin/             # drafts, cards and posted-URL state (auto-generated)
 ├── logs/                 # profile updater + LinkedIn logs and slot memory (auto-generated)
 ├── screenshots/          # page captures of failed runs (auto-generated)
