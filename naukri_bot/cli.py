@@ -24,8 +24,10 @@ import logging
 import random
 import sys
 import time
+from contextlib import contextmanager
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from pathlib import Path
+from typing import Any, Dict, Iterator, List, Optional
 
 from .models import (
     ApplyResult,
@@ -40,6 +42,10 @@ from .models import (
 logger = logging.getLogger(__name__)
 
 _EXTERNAL_JOBS_FILE = "external_jobs.md"
+
+# How long a run waits at the start for a person to finish a Google sign-in
+# (passkey, phone prompt) before going on without it.
+GOOGLE_LOGIN_WAIT_S = 120.0
 
 EXIT_OK = 0
 EXIT_CONFIG = 1
@@ -167,16 +173,48 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
+_LOG_FORMAT = "%(asctime)s  %(levelname)-7s %(name)s  %(message)s"
+
+
 def configure_logging(verbose: bool) -> None:
     logging.basicConfig(
         level=logging.DEBUG if verbose else logging.INFO,
-        format="%(asctime)s  %(levelname)-7s %(name)s  %(message)s",
+        format=_LOG_FORMAT,
         datefmt="%H:%M:%S",
     )
     # Selenium and urllib3 are noisy at DEBUG and tell us nothing useful.
     logging.getLogger("selenium").setLevel(logging.WARNING)
     logging.getLogger("urllib3").setLevel(logging.WARNING)
     logging.getLogger("WDM").setLevel(logging.WARNING)
+
+
+class _KeptLog(logging.FileHandler):
+    pass
+
+
+def keep_log(settings: Settings, tool: str, now: Optional[datetime] = None) -> Optional[Path]:
+    """Also write this run's log to reports/<date>/logs/, next to the day's report."""
+    now = now or datetime.now()
+    path = (
+        Path(settings.report_dir or "reports")
+        / now.strftime("%Y-%m-%d")
+        / "logs"
+        / ("%s-%s.log" % (tool, now.strftime("%H%M%S")))
+    )
+    root = logging.getLogger()
+    for old in [h for h in root.handlers if isinstance(h, _KeptLog)]:
+        root.removeHandler(old)
+        old.close()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        handler = _KeptLog(str(path), encoding="utf-8")
+    except OSError as exc:
+        logger.warning("Could not save this run's log to %s: %s", path, exc)
+        return None
+    handler.setFormatter(logging.Formatter(_LOG_FORMAT, datefmt="%H:%M:%S"))
+    root.addHandler(handler)
+    logger.info("This run's log: %s", path)
+    return path
 
 
 def build_overrides(args: argparse.Namespace) -> Dict[str, Any]:
@@ -521,8 +559,15 @@ def _log_summary(summary: RunSummary, settings: Settings) -> None:
         logger.info("DRY RUN -- nothing was submitted and no quota was used.")
     logger.info("collected            : %d", summary.collected)
     logger.info("ranked               : %d", summary.ranked)
+    from .report import funnel_text
+
+    funnel = funnel_text(_summary_record(summary, settings))
+    if funnel:
+        logger.info("funnel               : %s", funnel)
     logger.info("attempted            : %d", summary.attempted)
     logger.info("applied (verified)   : %d", summary.applied)
+    logger.info("applied, company site: %d", summary.applied_external)
+    logger.info("company site, for you: %d", summary.external_manual)
     logger.info("skipped, already done: %d", summary.skipped_already_applied)
     logger.info("skipped, external    : %d", summary.skipped_external)
     logger.info("skipped, unanswerable: %d", summary.skipped_abstained)
@@ -541,6 +586,14 @@ def _log_summary(summary: RunSummary, settings: Settings) -> None:
             summary.skipped_abstained,
             settings.profile_path,
         )
+    if summary.external_manual:
+        logger.info(
+            "%d company-site application(s) stopped short of submitting. They are "
+            "listed in %s/company_sites.md, and the open questions wait in %s/answers.txt.",
+            summary.external_manual,
+            settings.data_dir,
+            settings.data_dir,
+        )
     logger.info("=" * 70)
 
 
@@ -549,6 +602,10 @@ def _tally(summary: RunSummary, result: ApplyResult) -> None:
     summary.attempted += 1
     if result.status == ApplyStatus.APPLIED:
         summary.applied += 1
+    elif result.status == ApplyStatus.APPLIED_EXTERNAL:
+        summary.applied_external += 1
+    elif result.status == ApplyStatus.EXTERNAL_MANUAL:
+        summary.external_manual += 1
     elif result.status == ApplyStatus.ALREADY_APPLIED:
         summary.skipped_already_applied += 1
     elif result.status == ApplyStatus.EXTERNAL_SKIPPED:
@@ -573,14 +630,19 @@ def run(
     from . import auth
     from . import browser
     from . import early_access as early_access_module
+    from . import external as external_module
     from . import ledger as ledger_module
     from . import llm
     from . import ranking
+    from . import resume as resume_module
     from . import sources
 
     summary = RunSummary()
     ledger = ledger_module.open_ledger(settings)
+    run_id = ledger.start_run()
     driver = None
+    profile_resume_changed = False
+    resume_tab = None  # type: Optional[_ResumeTab]
 
     try:
         summary.quota_before = ledger.quota_used()
@@ -666,6 +728,7 @@ def run(
         # Age is a hard gate, so applying it before ranking rather than after
         # keeps the LLM budget on jobs that can actually be applied to.
         candidates, dropped_stale = ranking.drop_stale_candidates(candidates, settings)
+        summary.too_old = dropped_stale
         if not candidates:
             logger.warning(
                 "Every one of the %d collected postings is older than %d days. "
@@ -678,6 +741,13 @@ def run(
 
         ranked = ranking.rank(profile, candidates, client, settings)
         summary.ranked = len(ranked)
+        summary.not_ranked = len(candidates) - len(ranked)
+        for scored in ranked:
+            ledger.record_seen(scored.job, scored.score)
+            if ledger.has_applied(scored.job.job_id):
+                summary.already_applied += 1
+            elif scored.score < settings.min_score:
+                summary.below_score += 1
 
         rated = sum(1 for scored in ranked if scored.llm_score is not None)
         coverage = (rated / len(ranked)) if ranked else 0.0
@@ -711,6 +781,20 @@ def run(
         selected = ranking.select_for_application(
             ranked, settings, ledger.has_applied
         )
+        facts = answers_module.facts_fingerprint(profile, settings)
+        waiting = ledger.waiting_on_you(facts)
+        held = [scored for scored in selected if scored.job.job_id in waiting]
+        summary.held_back = len(held)
+        if held:
+            selected = [scored for scored in selected if scored.job.job_id not in waiting]
+            logger.info(
+                "Held back %d job(s) that stopped at a question you have not answered "
+                "since; fill it in %s or %s and they are tried again.",
+                len(held),
+                answers_module.answers_file_path(settings),
+                settings.profile_path,
+            )
+        summary.eligible = len(selected)
         if not selected:
             logger.warning(
                 "Nothing cleared the bar (min score %.0f, max age %d days). "
@@ -735,6 +819,18 @@ def run(
         external_jobs: List[ScoredJob] = []
         external_history = ledger.external_history()
         per_company: Dict[str, int] = {}
+        tailoring = settings.tailor_resume and not settings.dry_run
+        if tailoring:
+            resume_tab = _ResumeTab(driver)
+        from .accounts import google_login, google_refused_today
+
+        if settings.external_apply and settings.google_email and not settings.dry_run and not google_refused_today(settings):
+            signed_in, how = google_login(driver, settings, timeout_s=GOOGLE_LOGIN_WAIT_S)
+            (logger.info if signed_in else logger.warning)(
+                "Google: %s%s", how, "" if signed_in else "; company sites will use email sign-in"
+            )
+        company_site_tries = 0
+        base_pdf = None  # type: Optional[Path]
 
         for scored in selected:
             if summary.applied >= settings.target_applications:
@@ -770,24 +866,44 @@ def run(
                 scored.job.title,
                 scored.job.company,
             )
+            tailored_pdf = None  # type: Optional[Path]
+            if tailoring:
+                tailored_pdf = _upload_tailored_resume(
+                    driver, settings, client, scored.job, resume_module, resume_tab
+                )
+                profile_resume_changed = profile_resume_changed or tailored_pdf is not None
             result = apply_module.apply_to_job(
                 driver, scored.job, profile, answer_engine, settings
             )
+            if (
+                result.status == ApplyStatus.EXTERNAL_SKIPPED
+                and settings.external_apply
+                and company_site_tries < settings.external_apply_limit
+            ):
+                company_site_tries += 1
+                if tailored_pdf is None and base_pdf is None:
+                    base_pdf = _base_pdf(settings, resume_module)
+                result = external_module.apply_on_company_site(
+                    driver, scored.job, profile, answer_engine, settings,
+                    tailored_pdf or base_pdf,
+                ).to_apply_result(scored.job)
             ledger.record_attempt(
-                result, title=scored.job.title or "", company=scored.job.company or ""
+                result, title=scored.job.title or "", company=scored.job.company or "",
+                facts=facts,
             )
             _tally(summary, result)
-            if result.status == ApplyStatus.APPLIED and company_key:
+            logger.info("      -> %s (%s)", result.status, result.detail or "-")
+            sent = result.status in (ApplyStatus.APPLIED, ApplyStatus.APPLIED_EXTERNAL)
+            if sent and company_key:
                 per_company[company_key] = per_company.get(company_key, 0) + 1
             if (
-                result.status == ApplyStatus.APPLIED
+                sent
                 and not settings.dry_run
                 and summary.applied < settings.target_applications
             ):
                 _pause_between_applications(settings)
-            logger.info("      -> %s (%s)", result.status, result.detail or "-")
 
-            if result.status == ApplyStatus.EXTERNAL_SKIPPED:
+            if result.status in (ApplyStatus.EXTERNAL_SKIPPED, ApplyStatus.EXTERNAL_MANUAL):
                 external_jobs.append(scored)
                 _write_external_jobs(
                     [scored], external_history, announce=False
@@ -805,12 +921,144 @@ def run(
         return summary
 
     finally:
+        if driver is not None and profile_resume_changed:
+            # Also on a crash mid-loop: one employer's tailored resume must not
+            # stay on the profile for every other recruiter to download.
+            try:
+                _restore_base_resume(driver, settings, resume_module, resume_tab)
+            except Exception as exc:  # must not mask the error that ended the run
+                logger.warning(
+                    "Could not put the base resume back on the profile (%s). "
+                    "Run `python3 -m naukri_bot.resume --upload`.",
+                    exc,
+                )
         if driver is not None:
             try:
                 driver.quit()
             except Exception as exc:  # driver teardown must never mask a real error
                 logger.debug("Ignoring driver teardown error: %s", exc)
-        ledger.close()
+        try:
+            ledger.finish_run(run_id, _summary_record(summary, settings))
+        finally:
+            ledger.close()
+
+
+class _ResumeTab:
+    """A second tab that stays on the Naukri profile for resume uploads.
+
+    The job page stays loaded in the first tab, so an upload never navigates
+    away from it, and each tab can be watched doing its own job.
+    """
+
+    def __init__(self, driver: Any) -> None:
+        self.driver = driver
+        self.handle = None  # type: Optional[str]
+
+    @contextmanager
+    def active(self) -> Iterator[None]:
+        from selenium.common.exceptions import WebDriverException
+
+        driver = self.driver
+        back = driver.current_window_handle
+        try:
+            if self.handle in driver.window_handles:
+                driver.switch_to.window(self.handle)
+            else:
+                driver.switch_to.new_window("tab")
+                self.handle = driver.current_window_handle
+                logger.info("      resume: opened a separate tab for the Naukri profile")
+        except WebDriverException as exc:
+            logger.warning("      resume: no separate tab (%s); uploading from this one", exc)
+            self.handle = None
+            driver.switch_to.window(back)
+        try:
+            yield
+        finally:
+            driver.switch_to.window(back)
+
+
+def _upload_tailored_resume(
+    driver: Any,
+    settings: Settings,
+    client: Any,
+    job: JobPosting,
+    resume_module: Any,
+    tab: Optional[_ResumeTab] = None,
+) -> Optional[Path]:
+    """Put a resume tailored to `job` on the profile; its PDF when the profile changed."""
+    try:
+        pdf, notes = resume_module.build_tailored_pdf(settings, client, job)
+        for note in notes:
+            logger.info("      resume: %s", note)
+        if tab is None:
+            resume_module.upload_resume(driver, pdf)
+        else:
+            with tab.active():
+                resume_module.upload_resume(driver, pdf)
+    except resume_module.ResumeError as exc:
+        logger.warning(
+            "      resume: %s; applying with the resume already on the profile", exc
+        )
+        return None
+    logger.info("      resume: uploaded %s", pdf)
+    return pdf
+
+
+def _base_pdf(settings: Settings, resume_module: Any) -> Optional[Path]:
+    """The untailored resume to attach on company sites, or None without one."""
+    try:
+        return resume_module.build_base_pdf(settings)
+    except resume_module.ResumeError as exc:
+        logger.warning("      resume: %s; company sites will get no attachment", exc)
+        return None
+
+
+def _summary_record(summary: RunSummary, settings: Settings) -> Dict[str, Any]:
+    """What the runs table keeps for the daily report."""
+    return {
+        "dry_run": settings.dry_run,
+        "collected": summary.collected,
+        "ranked": summary.ranked,
+        "attempted": summary.attempted,
+        "applied": summary.applied,
+        "applied_external": summary.applied_external,
+        "external_manual": summary.external_manual,
+        "skipped_already_applied": summary.skipped_already_applied,
+        "skipped_external": summary.skipped_external,
+        "skipped_abstained": summary.skipped_abstained,
+        "errors": summary.errors,
+        "too_old": summary.too_old,
+        "not_ranked": summary.not_ranked,
+        "below_score": summary.below_score,
+        "already_applied": summary.already_applied,
+        "held_back": summary.held_back,
+        "eligible": summary.eligible,
+        "min_score": settings.min_score,
+        "target": settings.target_applications,
+        "quota_before": summary.quota_before,
+        "quota_after": summary.quota_after,
+    }
+
+
+def _restore_base_resume(
+    driver: Any, settings: Settings, resume_module: Any, tab: Optional[_ResumeTab] = None
+) -> None:
+    """Leave the untailored resume on the profile once the run is over."""
+    try:
+        pdf = resume_module.build_base_pdf(settings)
+        if tab is None:
+            resume_module.upload_resume(driver, pdf)
+        else:
+            with tab.active():
+                resume_module.upload_resume(driver, pdf)
+    except resume_module.ResumeError as exc:
+        logger.warning(
+            "Could not put the base resume back on the profile (%s); the last "
+            "tailored one is still there. Run `python3 -m naukri_bot.resume --upload`.",
+            exc,
+        )
+        return
+    logger.info("Base resume restored on the profile: %s", pdf.name)
 
 
 class _NeedsHuman(Exception):
@@ -836,6 +1084,10 @@ def main(argv: Optional[List[str]] = None) -> int:
             logger.error("Config: %s", problem)
         logger.error("Fix the above in your .env file (see .env.example).")
         return EXIT_CONFIG
+    keep_log(settings, "naukri")
+    from . import assist
+
+    assist.run_pass(settings, write=not settings.dry_run)
 
     try:
         profile = profile_module.load_profile(settings)
@@ -888,6 +1140,10 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     summary.finished_at = datetime.now().isoformat(timespec="seconds")
     _log_summary(summary, settings)
+    assist.run_pass(settings, write=not settings.dry_run)
+    from . import report
+
+    report.update_quietly(settings)
     return EXIT_OK
 
 
