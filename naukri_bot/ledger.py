@@ -11,7 +11,7 @@ import string
 import threading
 from datetime import datetime, timedelta, timezone
 from types import TracebackType
-from typing import Any, Dict, List, Optional, Type
+from typing import Any, Dict, List, Optional, Set, Type
 
 from .models import Answer, AnswerSource, ApplyResult, ApplyStatus, JobPosting, Settings
 
@@ -52,6 +52,7 @@ class Ledger:
             self._connection.execute("PRAGMA journal_mode=WAL")
             self._migrate()
             self._ensure_fingerprint_column()
+            self._ensure_facts_column()
         except sqlite3.Error:
             logger.exception("failed to open ledger database at %s", db_path)
             raise
@@ -65,6 +66,17 @@ class Ledger:
             if "profile_fingerprint" not in columns:
                 self._connection.execute(
                     "ALTER TABLE answers ADD COLUMN profile_fingerprint TEXT"
+                )
+
+    def _ensure_facts_column(self) -> None:
+        with self._lock, self._connection:
+            columns = {
+                row[1]
+                for row in self._connection.execute("PRAGMA table_info(applications)")
+            }
+            if "facts_fingerprint" not in columns:
+                self._connection.execute(
+                    "ALTER TABLE applications ADD COLUMN facts_fingerprint TEXT"
                 )
 
     def _migrate(self) -> None:
@@ -116,8 +128,8 @@ class Ledger:
         try:
             with self._lock:
                 row = self._connection.execute(
-                    "SELECT 1 FROM applications WHERE job_id = ? AND status = ? LIMIT 1",
-                    (job_id, ApplyStatus.APPLIED),
+                    "SELECT 1 FROM applications WHERE job_id = ? AND status IN (?, ?) LIMIT 1",
+                    (job_id, ApplyStatus.APPLIED, ApplyStatus.APPLIED_EXTERNAL),
                 ).fetchone()
             return row is not None
         except sqlite3.Error:
@@ -207,7 +219,7 @@ class Ledger:
             raise
 
     def record_attempt(
-        self, result: ApplyResult, title: str = "", company: str = ""
+        self, result: ApplyResult, title: str = "", company: str = "", facts: str = ""
     ) -> None:
         if (result.status == ApplyStatus.APPLIED) != result.quota_consumed:
             logger.warning(
@@ -222,16 +234,38 @@ class Ledger:
                     """INSERT INTO applications(
                            job_id, url, title, company, status, detail,
                            quota_consumed, questions_answered,
-                           questions_abstained, at
-                       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                           questions_abstained, at, facts_fingerprint
+                       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
                         result.job_id, result.url, title, company, result.status,
                         result.detail, int(result.quota_consumed),
                         result.questions_answered, result.questions_abstained, _now(),
+                        facts or None,
                     ),
                 )
         except sqlite3.Error:
             logger.exception("failed to record attempt for job %s", result.job_id)
+            raise
+
+    def waiting_on_you(self, facts: str) -> Set[str]:
+        """Jobs whose latest attempt stopped for you while `facts` was what it is now.
+
+        `facts` fingerprints the answers and facts the user edits; until it
+        changes, the same question stops the same application again.
+        """
+        if not facts:
+            return set()
+        try:
+            with self._lock:
+                rows = self._connection.execute(
+                    """SELECT a.job_id FROM applications a
+                       WHERE a.id = (SELECT MAX(b.id) FROM applications b WHERE b.job_id = a.job_id)
+                         AND a.status IN (?, ?) AND a.facts_fingerprint = ?""",
+                    (ApplyStatus.ABSTAINED, ApplyStatus.EXTERNAL_MANUAL, facts),
+                ).fetchall()
+            return {row[0] for row in rows}
+        except sqlite3.Error:
+            logger.exception("failed to list applications waiting on the user")
             raise
 
     def external_history(self) -> Dict[str, Dict[str, Any]]:
@@ -293,6 +327,40 @@ class Ledger:
         except sqlite3.Error:
             logger.exception("failed to list recent applications")
             raise
+
+    def applications_between(self, start: str, end: str) -> List[Dict[str, Any]]:
+        """Every attempt with start <= at < end (UTC ISO strings), oldest first."""
+        try:
+            with self._lock:
+                rows = self._connection.execute(
+                    "SELECT * FROM applications WHERE at >= ? AND at < ? ORDER BY at, id",
+                    (start, end),
+                ).fetchall()
+            return [dict(row) for row in rows]
+        except sqlite3.Error:
+            logger.exception("failed to list applications between %s and %s", start, end)
+            raise
+
+    def runs_between(self, start: str, end: str) -> List[Dict[str, Any]]:
+        """Runs that started in [start, end), with summary_json decoded as `summary`."""
+        try:
+            with self._lock:
+                rows = self._connection.execute(
+                    "SELECT * FROM runs WHERE started_at >= ? AND started_at < ? ORDER BY started_at, id",
+                    (start, end),
+                ).fetchall()
+        except sqlite3.Error:
+            logger.exception("failed to list runs between %s and %s", start, end)
+            raise
+        runs = []
+        for row in rows:
+            record = dict(row)
+            try:
+                record["summary"] = json.loads(record.get("summary_json") or "{}")
+            except ValueError:
+                record["summary"] = {}
+            runs.append(record)
+        return runs
 
     def get_answer(
         self, question_text: str, profile_fingerprint: Optional[str] = None

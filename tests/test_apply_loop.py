@@ -274,3 +274,34 @@ def test_company_site_roles_are_recorded_for_manual_application(fake_naukri, tmp
     written = (tmp_path / "external_jobs.md").read_text()
     for i in range(5):
         assert "job-listings-j%02d" % i in written, "external role was lost"
+
+
+def test_a_job_that_stopped_for_you_waits_until_you_answer(fake_naukri, tmp_path):
+    install, attempted = fake_naukri
+    install([_scored(80.0, 1, "a"), _scored(75.0, 1, "b")], {"a": ApplyStatus.ABSTAINED})
+
+    _run(tmp_path, _settings(target_applications=5))
+    _run(tmp_path, _settings(target_applications=5))
+    assert attempted == ["a", "b"]
+
+    (tmp_path / "data").mkdir(exist_ok=True)
+    (tmp_path / "data" / "answers.txt").write_text("Q: What is your notice period?\nA: 30 days\n")
+    _run(tmp_path, _settings(target_applications=5))
+    assert attempted == ["a", "b", "a"]
+
+
+def test_only_the_latest_attempt_under_the_same_facts_keeps_a_job_waiting(tmp_path):
+    from naukri_bot.ledger import Ledger
+
+    ledger = Ledger(str(tmp_path / "w.db"))
+    job = _scored(80.0, 1, "a").job
+    other = _scored(80.0, 1, "b").job
+    ledger.record_attempt(_result(job, ApplyStatus.ABSTAINED), facts="f1")
+    ledger.record_attempt(_result(other, ApplyStatus.EXTERNAL_MANUAL), facts="f1")
+    assert ledger.waiting_on_you("f1") == {"a", "b"}
+    assert ledger.waiting_on_you("f2") == set()
+
+    ledger.record_attempt(_result(job, ApplyStatus.ERROR), facts="f1")
+    assert ledger.waiting_on_you("f1") == {"b"}
+    assert ledger.waiting_on_you("") == set()
+    ledger.close()
