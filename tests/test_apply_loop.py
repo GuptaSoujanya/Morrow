@@ -305,3 +305,15 @@ def test_only_the_latest_attempt_under_the_same_facts_keeps_a_job_waiting(tmp_pa
     assert ledger.waiting_on_you("f1") == {"b"}
     assert ledger.waiting_on_you("") == set()
     ledger.close()
+
+
+def test_the_summary_says_where_every_collected_job_went(fake_naukri, tmp_path):
+    install, attempted = fake_naukri
+    queue = [_scored(80, 1, "good"), _scored(30, 1, "weak"), _scored(60, 1, "fine")]
+    install(queue, {})
+
+    summary = _run(tmp_path, _settings(target_applications=5))
+
+    assert (summary.collected, summary.below_score, summary.eligible) == (3, 1, 2)
+    assert (summary.too_old, summary.not_ranked, summary.held_back) == (0, 0, 0)
+    assert sorted(attempted) == ["fine", "good"]
