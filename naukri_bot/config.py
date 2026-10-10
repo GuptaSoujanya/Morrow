@@ -129,6 +129,7 @@ def load_settings(
         "llm_rank_batch_size": _env_int(
             "LLM_RANK_BATCH_SIZE", defaults.llm_rank_batch_size
         ),
+        "llm_rank_workers": _env_int("LLM_RANK_WORKERS", defaults.llm_rank_workers),
         "keywords": _env_list("KEYWORDS", defaults.keywords),
         "location": os.getenv("LOCATION", defaults.location),
         "pages_per_keyword": _env_int(
@@ -140,14 +141,71 @@ def load_settings(
         "llm_model": os.getenv("LLM_MODEL", defaults.llm_model),
         "llm_timeout_s": _env_int("LLM_TIMEOUT_S", defaults.llm_timeout_s),
         "answer_mode": os.getenv("ANSWER_MODE", defaults.answer_mode),
+        "profile_update_state_path": os.getenv(
+            "PROFILE_UPDATE_STATE_PATH", defaults.profile_update_state_path
+        ),
+        "screenshot_dir": os.getenv("SCREENSHOT_DIR", defaults.screenshot_dir),
+        "max_start_delay_s": _env_int(
+            "MAX_START_DELAY_SECONDS", defaults.max_start_delay_s
+        ),
+        "telegram_bot_token": os.getenv(
+            "TELEGRAM_BOT_TOKEN", defaults.telegram_bot_token
+        ),
+        "telegram_chat_id": os.getenv("TELEGRAM_CHAT_ID", defaults.telegram_chat_id),
+        "resume_out_dir": os.getenv("RESUME_OUT_DIR", defaults.resume_out_dir),
+        "resume_file_name": os.getenv("RESUME_FILE_NAME", defaults.resume_file_name),
+        "tex_compiler": os.getenv("TEX_COMPILER", defaults.tex_compiler),
+        "tailor_resume": _env_bool("TAILOR_RESUME", defaults.tailor_resume),
+        "upload_resume_daily": _env_bool(
+            "UPLOAD_RESUME_DAILY", defaults.upload_resume_daily
+        ),
+        "data_dir": os.getenv("DATA_DIR", defaults.data_dir),
+        "external_apply": _env_bool("EXTERNAL_APPLY", defaults.external_apply),
+        "external_apply_limit": _env_int(
+            "EXTERNAL_APPLY_LIMIT", defaults.external_apply_limit
+        ),
+        "google_email": os.getenv("GOOGLE_EMAIL", defaults.google_email),
+        "google_password": os.getenv("GOOGLE_PASSWORD", defaults.google_password),
+        "company_site_email": os.getenv("COMPANY_SITE_EMAIL", defaults.company_site_email),
+        "company_site_password": os.getenv("COMPANY_SITE_PASSWORD", defaults.company_site_password),
+        "env_file": env_path or defaults.env_file,
+        "report_dir": os.getenv("REPORT_DIR", defaults.report_dir),
+        "course_dir": os.getenv("COURSE_DIR", defaults.course_dir),
+        "course_start_date": os.getenv("COURSE_START_DATE", defaults.course_start_date),
     }
     if overrides:
         values.update(overrides)
 
     repo_root = Path(__file__).resolve().parent.parent
-    for path_key in ("profile_path", "resume_path", "db_path"):
+    for path_key in (
+        "env_file",
+        "profile_path",
+        "resume_path",
+        "db_path",
+        "profile_update_state_path",
+        "screenshot_dir",
+        "resume_out_dir",
+        "data_dir",
+        "report_dir",
+        "course_dir",
+    ):
         path_value = values[path_key]
         if not isinstance(path_value, str):
             raise TypeError("%s override must be a string" % path_key)
         values[path_key] = _absolute_path(path_value, repo_root)
     return Settings(**values)
+
+
+def write_env_value(env_file: str, key: str, value: str) -> None:
+    """Set KEY=value in the .env file, replacing an existing line or adding one."""
+    path = Path(env_file)
+    lines = path.read_text(encoding="utf-8").splitlines() if path.is_file() else []
+    entry = "%s=%s" % (key, value)
+    for index, line in enumerate(lines):
+        if line.split("=", 1)[0].strip() == key:
+            lines[index] = entry
+            break
+    else:
+        lines.append(entry)
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    os.environ[key] = value

@@ -16,6 +16,9 @@ webdriver-manager>=4.0.0,<5.0.0
 # Facts file (profile.yaml) parsing - naukri_bot only
 PyYAML>=6.0,<7.0
 
+# Image cards for the LinkedIn poster (linkedin_bot)
+Pillow>=10.0,<12.0
+
 # --- Required by the legacy scripts only ---
 # Naukri-Edge.py parses with html5lib and writes results with pandas.
 # naukri_bot uses lxml and sqlite3 (stdlib) instead.

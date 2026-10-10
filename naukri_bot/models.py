@@ -85,6 +85,13 @@ class ApplyStatus:
     APPLIED = "applied"
     ALREADY_APPLIED = "already_applied"
     EXTERNAL_SKIPPED = "external_skipped"
+    #: Submitted on the employer's own site and confirmed there. Uses no
+    #: Naukri quota, so it is kept apart from APPLIED on purpose.
+    APPLIED_EXTERNAL = "applied_external"
+    #: The employer's site needed something the bot does not have (an account,
+    #: an unanswered question, a required cover letter); it is listed in
+    #: data/company_sites.md for the user to finish.
+    EXTERNAL_MANUAL = "external_manual"
     ABSTAINED = "abstained"
     NO_APPLY_BUTTON = "no_apply_button"
     QUOTA_EXPIRED = "quota_expired"
@@ -124,6 +131,7 @@ class AnswerSource:
     CACHE = "cache"      # previously resolved and stored in the ledger
     LLM = "llm"          # produced this run by the LLM, grounded in the profile
     PROFILE = "profile"  # read straight off a Profile field, no model involved
+    DATA = "data"        # the user's own words, from data/answers.txt
 
 
 @dataclass
@@ -263,7 +271,7 @@ class Settings:
     email: str = ""
     password: str = ""
 
-    profile_path: str = "profile.yaml"
+    profile_path: str = "data/profile.yaml"
     resume_path: str = ""
     db_path: str = "naukri_bot.db"
 
@@ -322,6 +330,9 @@ class Settings:
     # Jobs per LLM ranking call. Larger batches mean fewer sequential calls
     # and a much shorter run, at the cost of a bigger prompt per call.
     llm_rank_batch_size: int = 20
+    # Ranking calls run side by side. One at a time, 150 jobs took six minutes,
+    # which is why most collected jobs were never ranked at all.
+    llm_rank_workers: int = 3
 
     keywords: List[str] = field(default_factory=list)
     location: str = ""
@@ -334,6 +345,57 @@ class Settings:
     llm_model: str = ""
     llm_timeout_s: int = 90
     answer_mode: str = AnswerMode.AUTO
+
+    # Profile updater (python3 -m naukri_bot.update_profile): memory of which
+    # daily slots already ran, where a failure screenshot goes, a random wait
+    # before a scheduled run starts, and an optional Telegram bot for failure
+    # alerts. Both Telegram values empty disables alerts.
+    profile_update_state_path: str = "logs/profile_update.json"
+    screenshot_dir: str = "screenshots"
+    max_start_delay_s: int = 0
+    telegram_bot_token: str = ""
+    telegram_chat_id: str = ""
+    # Resume tailoring and upload. resume_path (above) must point at the
+    # LaTeX source for these to work; the PDFs are compiled from it.
+    resume_out_dir: str = "resume/out"
+    # Recruiter-visible file name. Empty derives "First_Last_Resume.pdf" from
+    # the name in the resume header.
+    resume_file_name: str = ""
+    tex_compiler: str = ""
+    tailor_resume: bool = False
+    upload_resume_daily: bool = False
+    # Everything the user types for the bot lives under data_dir: profile.yaml
+    # (facts), answers.txt (their own answers to screening questions, plus the
+    # ones the bot could not answer, left there to be filled in) and
+    # company_sites.md (employer-site applications waiting for a person).
+    data_dir: str = "data"
+    # Apply on the employer's own site when Naukri's button leaves Naukri: fill
+    # the form from the facts and answers, attach the resume, and submit only
+    # when every required field is answered. Off, such roles only reach the
+    # worklist file, as before.
+    external_apply: bool = False
+    # Employer-site applications attempted per run. Each takes a few minutes
+    # and opens a site the bot has never seen, so the number stays small.
+    external_apply_limit: int = 5
+    # The Google account to pick when a career site offers "Continue with
+    # Google". Each run with EXTERNAL_APPLY first makes sure the bot's browser
+    # is signed in to it: the email is typed, then the password when one is
+    # set, and a passkey, phone prompt or code is left to a person.
+    google_email: str = ""
+    google_password: str = ""
+    # Career sites that want an account of their own (Workday, iCIMS, ...) get
+    # this email and password. The email falls back to GOOGLE_EMAIL, then
+    # NAUKRI_EMAIL; an empty password is generated once and written to env_file.
+    company_site_email: str = ""
+    company_site_password: str = ""
+    # The .env these settings came from, so generated values can be saved back.
+    env_file: str = ".env"
+    # One Markdown report per day: what ran, what was applied to, what is left.
+    report_dir: str = "reports"
+    # The study site next door; the report names one module of its plan a day.
+    course_dir: str = "../system degine/course"
+    # YYYY-MM-DD the plan began; empty means the day the first report was written.
+    course_start_date: str = ""
 
     def validate(self) -> List[str]:
         """Return a list of human-readable problems; empty means usable."""
@@ -380,7 +442,16 @@ class RunSummary:
     skipped_already_applied: int = 0
     skipped_external: int = 0
     skipped_abstained: int = 0
+    applied_external: int = 0
+    external_manual: int = 0
     errors: int = 0
+    # Where the collected jobs went before any was tried, for the daily report.
+    too_old: int = 0
+    not_ranked: int = 0
+    below_score: int = 0
+    already_applied: int = 0
+    held_back: int = 0
+    eligible: int = 0
     quota_before: int = 0
     quota_after: int = 0
     results: List[ApplyResult] = field(default_factory=list)
