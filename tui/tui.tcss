@@ -1,4 +1,4 @@
-/* Sandy: one screen for the job bots and the study site. */
+/* tui: one screen for the job bots and the study site. */
 
 #pills {
     height: 3;

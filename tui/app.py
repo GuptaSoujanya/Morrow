@@ -1,4 +1,4 @@
-"""The Sandy screen: pick a task on the left, set its options, run it, watch it work."""
+"""The terminal screen: pick a task on the left, set its options, run it, watch it work."""
 from __future__ import annotations
 
 import asyncio
@@ -352,10 +352,10 @@ class ConfirmScreen(ModalScreen[bool]):
         self.dismiss(False)
 
 
-class SandyApp(App):
-    TITLE = "Sandy"
-    SUB_TITLE = "job hunt + study, one screen"
-    CSS_PATH = "sandy.tcss"
+class JobHuntApp(App):
+    TITLE = "Job hunt"
+    SUB_TITLE = "apply + study, one screen"
+    CSS_PATH = "tui.tcss"
 
     BINDINGS = [
         Binding("q", "quit", "Quit"),
@@ -562,7 +562,7 @@ class SandyApp(App):
             yield Static("Study site in your browser", classes="section")
             yield Static(
                 "Served on this computer only (your bot files are never served); it keeps running "
-                "after you close Sandy.",
+                "after you close this screen.",
                 classes="hint",
             )
             yield field("Port", Input(value=str(state.DEFAULT_PORT), type="integer", id="ss-port"))
@@ -1161,5 +1161,5 @@ class SandyApp(App):
 
 
 def main() -> int:
-    SandyApp().run()
+    JobHuntApp().run()
     return 0

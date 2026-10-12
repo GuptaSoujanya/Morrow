@@ -19,7 +19,7 @@ PyYAML>=6.0,<7.0
 # Image cards for the LinkedIn poster (linkedin_bot)
 Pillow>=10.0,<12.0
 
-# The terminal screen that runs everything (scripts/sandy, or python -m sandy)
+# The terminal screen that runs everything (scripts/tui, or python -m tui)
 textual>=0.80,<9.0
 
 # --- Required by the legacy scripts only ---

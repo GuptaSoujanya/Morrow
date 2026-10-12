@@ -1,11 +1,15 @@
-"""The Sandy screen: the commands it builds and the to-dos it reads."""
+"""The terminal screen: the commands it builds and the to-dos it reads."""
 import asyncio
 import datetime as dt
+import os
+import sys
 
 import pytest
 
-from sandy import state
-from sandy.app import CourseViewer, SandyApp, StudyScreen
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+
+from tui import state
+from tui.app import CourseViewer, JobHuntApp, StudyScreen
 
 
 def test_naukri_command_passes_only_the_options_you_set():
@@ -75,7 +79,7 @@ def test_reads_what_is_waiting_for_you(tmp_path):
 
 def test_screen_starts_and_moves_between_sections():
     async def drive():
-        app = SandyApp()
+        app = JobHuntApp()
         async with app.run_test(size=(140, 45)) as pilot:
             await pilot.pause()
             assert app.query_one("#panels").current == "p-today"
@@ -145,7 +149,7 @@ def test_study_reads_modules_and_follows_links(tmp_path, monkeypatch):
     monkeypatch.setattr(state, "STUDIED", tmp_path / "studied.json")
 
     async def drive():
-        app = SandyApp()
+        app = JobHuntApp()
         async with app.run_test(size=(140, 45)) as pilot:
             await pilot.press("8")
             await pilot.pause()

@@ -1,6 +1,6 @@
-"""What the Sandy screen reads and runs, kept apart from the widgets so it can be tested.
+"""What the terminal screen reads and runs, kept apart from the widgets so it can be tested.
 
-Every command is the same one you would type in apply/ by hand; Sandy only
+Every command is the same one you would type in apply/ by hand; the screen only
 collects the options, shows the command, and streams its output.
 """
 from __future__ import annotations
@@ -409,7 +409,7 @@ def site_pids(port: int) -> List[int]:
 
 
 def start_site(port: int) -> Tuple[bool, str]:
-    """Start the study site in the background; it keeps running after Sandy closes."""
+    """Start the study site in the background; it keeps running after the screen closes."""
     url = site_url(port)
     if port_open(port):
         if site_pids(port):
