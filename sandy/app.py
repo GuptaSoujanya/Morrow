@@ -958,8 +958,8 @@ class SandyApp(App):
         self.attempt(lambda: self.resume(save=True))
 
     def do_open_resumes(self) -> None:
-        folder = state.APPLY / "resume" / "out"
-        self.open_path(folder if folder.exists() else state.APPLY / "resume")
+        folder = state.RESUMES / "out"
+        self.open_path(folder if folder.exists() else state.RESUMES)
 
     def do_read_report(self) -> None:
         try:

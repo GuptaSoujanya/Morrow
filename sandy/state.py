@@ -27,6 +27,7 @@ PYTHON = sys.executable
 ANSWERS = APPLY / "data" / "inputs" / "answers.txt"
 PROFILE = APPLY / "data" / "inputs" / "profile.yaml"
 COMPANY_SITES = APPLY / "data" / "inputs" / "company_sites.md"
+RESUMES = APPLY / "data" / "resume"
 REPORTS = APPLY / "data" / "reports"
 LOGS = APPLY / "data" / "logs"
 SERVE = COURSE / "serve.py"
