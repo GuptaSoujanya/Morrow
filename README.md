@@ -462,7 +462,7 @@ login, as a browser agent:
   quotes is on the page when the bot reads it afterwards; otherwise the job is recorded as "Submit
   was clicked ..." and never tried again automatically, so nothing is sent twice.
 - Each task gets a folder `reports/<date>/agent/<time> <Company - Role>/` with the task it was given
-  (`task.md`), its reply (`transcript.json`), page snapshots and `report.json`; the day's report
+  (`task.md`), every step it took (`steps.txt`, `transcript.jsonl`), page snapshots and `report.json`; the day's report
   lists them. Long answers it wrote go to the job's `answers.md`, accounts it made to
   `data/accounts.md`.
 

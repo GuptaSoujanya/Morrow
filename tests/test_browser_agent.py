@@ -90,7 +90,10 @@ class _Claude:
         if _Claude.report is None:
             return json.dumps({"result": "I could not finish.", "total_cost_usd": 0.4, "num_turns": 3}), ""
         reply = "```json\n%s\n```" % json.dumps(_Claude.report)
-        return json.dumps({"result": reply, "total_cost_usd": 1.25, "num_turns": 30, "is_error": False}), ""
+        step = {"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "name": "mcp__browser__browser_click", "input": {"element": "Submit"}}]}}
+        result = {"type": "result", "result": reply, "total_cost_usd": 1.25, "num_turns": 30, "is_error": False}
+        return "\n".join([json.dumps({"type": "system", "subtype": "init"}), json.dumps(step), json.dumps(result)]), ""
 
     def wait(self, timeout=None):
         return 0
@@ -244,9 +247,12 @@ def test_claude_gets_only_the_browser_tools_and_the_password_as_a_secret(claude,
     assert command[:2] == ["claude", "-p"]
     assert command[command.index("--tools") + 1] == ""
     assert command[command.index("--allowedTools") + 1] == "mcp__browser"
+    assert command[command.index("--disallowedTools") + 1] == (
+        "mcp__browser__browser_close,mcp__browser__browser_run_code_unsafe")
     assert command[command.index("--permission-mode") + 1] == "dontAsk"
     assert "--strict-mcp-config" in command
     assert command[command.index("--max-budget-usd") + 1] == "5"
+    assert command[command.index("--output-format") + 1] == "stream-json" and "--verbose" in command
     assert PASSWORD not in " ".join(command)
     assert call.kwargs["start_new_session"] is True
     workdir = call.kwargs["cwd"]
@@ -265,6 +271,8 @@ def test_claude_gets_only_the_browser_tools_and_the_password_as_a_secret(claude,
     assert result.filled == ["First name", "Email", "Phone"]
     record = json.load(open(os.path.join(workdir, "report.json")))
     assert record["status"] == ApplyStatus.APPLIED_EXTERNAL and record["cost_usd"] == 1.25
+    assert open(os.path.join(workdir, "steps.txt")).read() == '1. browser_click {"element": "Submit"}\n'
+    assert len(open(os.path.join(workdir, "transcript.jsonl")).read().splitlines()) == 3
     assert agent.records_for(settings, os.path.basename(os.path.dirname(os.path.dirname(workdir))))[0]["site"] == SITE
 
 
@@ -403,3 +411,13 @@ def test_the_daily_report_lists_the_agent_tasks(claude, settings, profile, job):
     text = report.build_report(settings, date.today())
     assert "## Browser agent (Claude Code on the company sites)" in text
     assert "| Acme Labs | AI Engineer | external_manual: needs you for: Address Line 1*" in text
+
+
+def test_a_single_json_reply_from_an_older_claude_still_reads():
+    events = agent._events(json.dumps({"result": "ok", "total_cost_usd": 0.1}))
+    assert events == [{"result": "ok", "total_cost_usd": 0.1, "type": "result"}]
+    assert agent._events("not json\n") == []
+
+
+def test_the_prompt_says_how_to_pick_a_bucket_for_a_notice_period():
+    assert '15 days -> "1 Month"' in agent._RULES and 'never "Immediately"' in agent._RULES

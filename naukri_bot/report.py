@@ -535,7 +535,7 @@ def build_report(settings: Settings, day: Optional[date] = None, now: Optional[d
                 _cell("%s: %s" % (task.get("status"), task.get("detail")), 160), (task.get("seconds") or 0) / 60.0,
                 folder.name, folder.name.replace(" ", "%20")))
         out.append("")
-        out.append("Each folder keeps the task it was given (task.md), its reply (transcript.json) and report.json.")
+        out.append("Each folder keeps the task it was given (task.md), every step it took (steps.txt, transcript.jsonl) and report.json.")
 
     out += ["", "## Logs", ""]
     logs = sorted((report_path(settings, day).parent / "logs").glob("*.log"))

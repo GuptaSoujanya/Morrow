@@ -148,6 +148,10 @@ _RULES = """Rules, in order of importance:
    When a required question is not answered by them, do not guess and do not pick
    any option just to move on: leave it, finish what you can, and list the
    question in "missing". Leave optional questions the facts do not answer empty.
+   When a choice list has no exact match for a known number, pick the option whose
+   range holds it; for a notice period or joining time pick the shortest option
+   that is not shorter than the fact (15 days -> "1 Month"), never "Immediately",
+   and say which option you picked in "filled".
 4. Voluntary questions about gender, race, ethnicity, disability or veteran
    status: choose the decline / prefer-not-to-say option when there is one.
 5. Some fields may already be filled by the bot. Check them against the facts and
@@ -227,13 +231,19 @@ def job_owner(facts: str) -> str:
     return ""
 
 
-def task_prompt(instruction: str, url: str, facts: str, email: str) -> str:
+def task_prompt(instruction: str, url: str, facts: str, email: str, files: Tuple[Path, ...] = ()) -> str:
     host = urlparse(url).netloc or url
+    uploads = (
+        "Files you may upload when the task needs them (click the upload control so the file "
+        "chooser opens, then use the file upload tool with the path): %s" % ", ".join(str(path) for path in files)
+        if files else "There are no files to upload for this task."
+    )
     return "\n\n".join([
         "You are helping a job seeker in a Chrome window her job bot already has open. You control "
         "the browser only through the browser tools.",
         "First list the browser tabs and select the tab whose address is on %s." % host,
         "Task: " + instruction,
+        uploads,
         "Never submit an application, send a message or accept terms unless the task says so. If a "
         "sign-in is needed, use the email %s and type exactly the word %s as the password (the "
         "browser substitutes the real one)." % (email or "(none given)", SECRET_NAME),
@@ -283,8 +293,13 @@ def claude_command(settings: Settings, prompt: str, config_path: Path) -> List[s
         # The browser tools are all it gets: no shell, no file edits, no web fetch.
         "--tools", "",
         "--allowedTools", "mcp__%s" % SERVER,
+        # Closing the only tab ends the bot's browser session; Chrome quits with it.
+        # run_code_unsafe runs code in the MCP server on her Mac, not in the page:
+        # a posting could talk the agent into using it.
+        "--disallowedTools", "mcp__%s__browser_close,mcp__%s__browser_run_code_unsafe" % (SERVER, SERVER),
         "--permission-mode", "dontAsk",
-        "--output-format", "json",
+        # One JSON event per line, so every browser step lands in transcript.jsonl.
+        "--output-format", "stream-json", "--verbose",
         "--no-session-persistence",
         "--max-budget-usd", "%g" % settings.browser_agent_budget_usd,
     ]
@@ -305,6 +320,37 @@ def _stop(process: subprocess.Popen) -> None:
             return
         except subprocess.TimeoutExpired:
             continue
+
+
+def _events(out: str) -> List[Dict[str, Any]]:
+    """The JSON events claude printed: one per line, or a single object from older runs."""
+    try:
+        whole = json.loads(out)
+    except json.JSONDecodeError:
+        whole = None
+    if isinstance(whole, dict):
+        return [dict(whole, type=whole.get("type") or "result")]
+    events = []
+    for line in out.splitlines():
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(event, dict):
+            events.append(event)
+    return events
+
+
+def _steps(events: List[Dict[str, Any]]) -> List[str]:
+    """One readable line per browser action the agent took."""
+    steps = []
+    for event in events:
+        message = event.get("message") if event.get("type") == "assistant" else None
+        for part in (message or {}).get("content") or []:
+            if isinstance(part, dict) and part.get("type") == "tool_use":
+                name = str(part.get("name") or "").replace("mcp__%s__" % SERVER, "")
+                steps.append("%d. %s %s" % (len(steps) + 1, name, json.dumps(part.get("input") or {})[:200]))
+    return steps
 
 
 def run_agent(
@@ -360,13 +406,14 @@ def run_agent(
         if secrets is not None and secrets.exists():
             secrets.unlink()
     run.seconds = round(time.monotonic() - started, 1)
-    (workdir / "transcript.json").write_text(out or "", encoding="utf-8")
+    (workdir / "transcript.jsonl").write_text(out or "", encoding="utf-8")
     if err:
         (workdir / "claude.err").write_text(err, encoding="utf-8")
-    try:
-        outer = json.loads(out) if out else {}
-    except json.JSONDecodeError:
-        outer = {}
+    events = _events(out or "")
+    steps = _steps(events)
+    if steps:
+        (workdir / "steps.txt").write_text("\n".join(steps) + "\n", encoding="utf-8")
+    outer = next((event for event in reversed(events) if event.get("type") == "result"), {})
     if isinstance(outer, dict):
         run.cost_usd = outer.get("total_cost_usd")
         run.turns = outer.get("num_turns")
@@ -625,7 +672,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         url=args.url, title=args.title, company=args.company,
     )
     resume_pdf = None  # type: Optional[Path]
-    if not args.no_resume and not args.task:
+    if not args.no_resume:
         try:
             resume_pdf = resume_module.build_base_pdf(settings)
         except resume_module.ResumeError as exc:
@@ -639,8 +686,10 @@ def main(argv: Optional[List[str]] = None) -> int:
         human_pause(1.5, 3.0)
         if args.task:
             workdir = workdir_for(settings, args.task[:60])
-            run = run_agent(driver, settings, task_prompt(args.task, args.url, facts_text(profile, settings),
-                                                          account_email(settings)), workdir)
+            files = (resume_pdf,) if resume_pdf is not None else ()
+            prompt = task_prompt(args.task, args.url, facts_text(profile, settings), account_email(settings),
+                                 tuple((workdir / path.name).resolve() for path in files))
+            run = run_agent(driver, settings, prompt, workdir, files)
             print(json.dumps(run.report or {"status": "failed", "why": run.problem}, indent=1, ensure_ascii=False))
             logger.info("Agent folder: %s (%.0fs)", workdir, run.seconds)
             return EXIT_OK if run.report and run.report.get("status") == "done" else EXIT_FAILED
