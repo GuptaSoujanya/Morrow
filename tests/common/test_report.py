@@ -7,7 +7,7 @@ from datetime import date, datetime, timedelta, timezone
 
 import pytest
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from sites_bot import external as ext
 from common import ledger as ledger_module

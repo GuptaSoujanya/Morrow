@@ -6,7 +6,7 @@ import sys
 
 import yaml
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from common import assist
 from common.answers import AnswerBook

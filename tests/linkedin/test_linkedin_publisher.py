@@ -6,7 +6,7 @@ import sys
 import pytest
 from selenium.webdriver.common.keys import Keys
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from linkedin_bot import publisher
 from linkedin_bot.config import LinkedInSettings

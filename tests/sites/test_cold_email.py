@@ -8,7 +8,7 @@ from datetime import date, datetime, timedelta
 
 import pytest
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from sites_bot import cold_email as ce
 from common.models import Profile, Settings

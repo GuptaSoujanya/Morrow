@@ -15,7 +15,7 @@ from selenium.common.exceptions import NoSuchWindowException, StaleElementRefere
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from sites_bot import accounts as acc
 from naukri_bot import apply as apply_module

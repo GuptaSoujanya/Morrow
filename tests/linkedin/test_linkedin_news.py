@@ -4,7 +4,7 @@ import os
 import sys
 from datetime import datetime, timedelta, timezone
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from linkedin_bot import news
 from linkedin_bot.config import LinkedInSettings

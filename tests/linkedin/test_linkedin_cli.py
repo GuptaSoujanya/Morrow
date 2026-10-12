@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from linkedin_bot import cli
 from linkedin_bot.config import LinkedInSettings
