@@ -24,11 +24,11 @@ from common.report import course_modules as plan_order
 APPLY = Path(__file__).resolve().parent.parent
 COURSE = APPLY / "course"
 PYTHON = sys.executable
-ANSWERS = APPLY / "data" / "answers.txt"
-PROFILE = APPLY / "data" / "profile.yaml"
-COMPANY_SITES = APPLY / "data" / "company_sites.md"
-REPORTS = APPLY / "reports"
-LOGS = APPLY / "logs"
+ANSWERS = APPLY / "data" / "inputs" / "answers.txt"
+PROFILE = APPLY / "data" / "inputs" / "profile.yaml"
+COMPANY_SITES = APPLY / "data" / "inputs" / "company_sites.md"
+REPORTS = APPLY / "data" / "reports"
+LOGS = APPLY / "data" / "logs"
 SERVE = COURSE / "serve.py"
 STUDIED = REPORTS / "studied.json"
 DEFAULT_PORT = 8000
@@ -425,7 +425,7 @@ def start_site(port: int) -> Tuple[bool, str]:
         if port_open(port):
             return True, f"Study site running at {url}"
         time.sleep(0.1)
-    return False, "The study site did not start; see logs/study_site.log"
+    return False, "The study site did not start; see data/logs/study_site.log"
 
 
 def stop_site(port: int) -> Tuple[bool, str]:

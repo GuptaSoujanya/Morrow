@@ -131,7 +131,7 @@ the output stream underneath. Each page shows the exact command it will run, so 
 | LinkedIn post | `linkedin_bot --dry-run / --propose / --post / --if-due` (publishing asks first) |
 | Tailor resume | `common.resume --tailor`: paste the job description straight into the screen |
 | Reports | Build a day's report and read it right there |
-| Study | Read the course right in the terminal: today's module from the 8-week plan, every module by track with ✓ for the ones you marked read (kept in `reports/studied.json`). Also starts / stops the course site at http://localhost:8000, which keeps running after you quit |
+| Study | Read the course right in the terminal: today's module from the 8-week plan, every module by track with ✓ for the ones you marked read (kept in `data/reports/studied.json`). Also starts / stops the course site at http://localhost:8000, which keeps running after you quit |
 | Your to-dos | The unanswered questions, blank facts and waiting company sites, with a built-in editor |
 | Setup | Google sign-in for company sites, edit `.env`, install requirements, run the tests |
 
@@ -184,10 +184,10 @@ ones until the daily quota is spent.
 ```bash
 pip install -r requirements.txt
 cp .env.example .env                          # credentials + tuning
-mkdir -p data && cp naukri_bot/profile.example.yaml data/profile.yaml
+mkdir -p data && cp naukri_bot/profile.example.yaml data/inputs/profile.yaml
 ```
 
-Then fill in `data/profile.yaml`. Fields you leave blank are facts the bot **does not know** — it
+Then fill in `data/inputs/profile.yaml`. Fields you leave blank are facts the bot **does not know** — it
 will skip a job rather than invent a notice period or a salary expectation for you. The fields
 that matter most are the ones a resume cannot supply: current CTC, expected CTC, notice period,
 relocation willingness.
@@ -211,7 +211,7 @@ question that is not already in the answer cache will cause the bot to skip that
 | `--answer-mode propose` | Log what it *would* answer, then skip — good for a first run |
 | `--headless` | Run without a visible window (more likely to be challenged) |
 
-`naukri_bot.db` holds your applied-history and quota memory. Deleting it makes the bot forget
+`data/db/naukri_bot.db` holds your applied-history and quota memory. Deleting it makes the bot forget
 what it already applied to and how much quota it has spent today — back it up, don't clear it.
 
 ### Keep your profile "recently updated"
@@ -228,14 +228,14 @@ python3 -m naukri_bot.update_profile             # toggle the dot once, right no
 
 The first run from a fresh browser profile is the only one that needs you at the keyboard:
 Naukri sends an OTP to your registered mobile or email, and the run keeps the Chrome window open
-for up to 5 minutes while you type it in. The session is then saved in `.browser-profile/` and
+for up to 5 minutes while you type it in. The session is then saved in `data/browser/naukri/` and
 every later run, scheduled ones included, skips the login form. A headless run cannot wait for
 you, so it exits with code 2 (and a Telegram alert, if configured) instead: do the first run
 with a visible window.
 
 The new headline is read back from the editor before Save is clicked and from the profile page
 after it; nothing is reported as updated unless both checks pass. A failed run leaves a
-screenshot in `screenshots/` and, if `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` are set in `.env`,
+screenshot in `data/screenshots/` and, if `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` are set in `.env`,
 sends you a Telegram message after the third failed attempt. `DRY_RUN` in `.env` only concerns
 applications; the updater listens to its own `--dry-run` flag.
 
@@ -248,7 +248,7 @@ To run it three times a day (09:00, 13:30, 18:30 local time) on macOS:
 
 The agent runs `update_profile --if-due`, which only acts when a slot is due and not yet done,
 so a laptop that was asleep at 09:00 and 13:30 catches up once when it wakes, not twice. Slot
-memory lives in `logs/profile_update.json` and output in `logs/profile_update.log`. Uninstall
+memory lives in `data/logs/profile_update.json` and output in `data/logs/profile_update.log`. Uninstall
 with `launchctl bootout gui/$(id -u)/com.naukri-bot.profile-update`.
 
 Two things to know before scheduling it:
@@ -257,21 +257,21 @@ Two things to know before scheduling it:
   Python binary that `venv/bin/python` points at access to the folder under System Settings →
   Privacy & Security → Files and Folders. macOS blocks background launchd jobs from reading
   those folders, and the failure is a silent "Operation not permitted" in
-  `logs/launchd-profile-update.err`. The install script warns when this applies.
+  `data/logs/launchd-profile-update.err`. The install script warns when this applies.
 - A scheduled run that overlaps your morning apply run cannot share the browser profile, so it
   falls back to a fresh session and logs in with `NAUKRI_EMAIL` / `NAUKRI_PASSWORD`. Start
   `python3 -m naukri_bot` well before 09:00 or after that slot has run.
 
 ### Your resume: edit the LaTeX, the bot does the rest
 
-Keep your resume as LaTeX in `resume/base.tex` (the folder is gitignored because the file
+Keep your resume as LaTeX in `data/resume/base.tex` (the folder is gitignored because the file
 carries your phone number and email) and point `RESUME_PATH` at it. The bot compiles it with
 [tectonic](https://tectonic-typesetting.github.io/) (`brew install tectonic`; `pdflatex` and
 `xelatex` also work, see `TEX_COMPILER`) and names the PDF after the name in the header, for
 example `Soujanya_Gupta_Resume.pdf`, or whatever `RESUME_FILE_NAME` says.
 
 ```bash
-python3 -m common.resume            # compile resume/base.tex -> resume/out/base/<name>.pdf
+python3 -m common.resume            # compile data/resume/base.tex -> data/resume/out/base/<name>.pdf
 python3 -m common.resume --upload   # compile, then put the PDF on your Naukri profile
 ```
 
@@ -299,8 +299,8 @@ is restored (and failing that, the base resume is used). The tailored PDF is upl
 profile, the application is made with it, and the base PDF is put back at the end of the run,
 even when the run stops with an error. The uploads happen in a second browser tab that stays on
 your Naukri profile, while the first tab keeps the job pages, so you can watch each one.
-Each job gets its own folder named after it, `resume/out/tailored/<Company - Role>/`
-(for example `resume/out/tailored/Acme - AI Engineer/`), holding the PDF that was sent,
+Each job gets its own folder named after it, `data/resume/out/tailored/<Company - Role>/`
+(for example `data/resume/out/tailored/Acme - AI Engineer/`), holding the PDF that was sent,
 `posting.txt` (the job ad as it read that day), `tailored.tex` and a `tailoring.json` that
 lists what changed and what was refused, so you can always read back what a recruiter received. Try it on a pasted posting first:
 
@@ -314,10 +314,10 @@ Everything the bot needs from you, and everything it could not do alone, lives i
 
 | File | What it holds | What you do |
 |---|---|---|
-| `data/profile.yaml` | Your facts: contact details, experience, CTC, notice period, education, links. | Fill the fields left `null`; the daily report lists them. |
-| `data/answers.txt` | Your own answers to application questions, as `Q:` / `A:` blocks. | Write the answer after `A:` for every question the bot added. |
-| `data/company_sites.md` | Company-site applications that stopped short of submitting, with the link, the resume to send and what is missing. | Finish them by hand, or answer the missing questions and let the next run retry. |
-| `data/accounts.md` | Career sites the bot signed in to or made an account on, and with which email. | Nothing; read it to know where you have accounts. |
+| `data/inputs/profile.yaml` | Your facts: contact details, experience, CTC, notice period, education, links. | Fill the fields left `null`; the daily report lists them. |
+| `data/inputs/answers.txt` | Your own answers to application questions, as `Q:` / `A:` blocks. | Write the answer after `A:` for every question the bot added. |
+| `data/inputs/company_sites.md` | Company-site applications that stopped short of submitting, with the link, the resume to send and what is missing. | Finish them by hand, or answer the missing questions and let the next run retry. |
+| `data/inputs/accounts.md` | Career sites the bot signed in to or made an account on, and with which email. | Nothing; read it to know where you have accounts. |
 
 `answers.txt` is read before anything else, so your own words always win over the cache, the
 profile and the model. Several `Q:` lines can share one `A:`; a question matches when it is the
@@ -333,7 +333,7 @@ It must quote, word for word, the line that supports the answer, and the quote i
 the files; a number in the answer must appear in the quote. It never answers "why do you want to
 join us", never claims years in a tool none of your files name, and never copies identity numbers.
 Each filled line gets a `# AI filled this on <date> from your <file>: "<quote>"` comment above
-it, the old file is kept in `data/backups/` (last 10), and the day's report lists every change.
+it, the old file is kept in `data/inputs/backups/` (last 10), and the day's report lists every change.
 A blank it could not answer is not asked again until one of your files changes.
 
 It also compares the two files: when `answers.txt` and `profile.yaml` give different expected
@@ -377,7 +377,7 @@ With `EXTERNAL_APPLY=true` the bot follows Naukri's company-site button for up t
    A job-search box ("Keyword", "Location") is not taken for an application form. A removed posting
    ("this page was moved", "no longer available", a 404) is recorded as gone and kept off your list.
    When the page shows no form and no sign-in, the **page brain** takes a screenshot (kept in
-   `screenshots/`), shows it with the page's text and a numbered list of its buttons and links to the
+   `data/screenshots/`), shows it with the page's text and a numbered list of its buttons and links to the
    local `claude` CLI, and acts on the answer: click one control that leads to this job's form (up
    to twice), call the posting gone, or stop. The model may only read that screenshot; the page's
    words are passed as data, never as instructions. A page with a captcha or "verify you are human"
@@ -394,14 +394,14 @@ With `EXTERNAL_APPLY=true` the bot follows Naukri's company-site button for up t
    fails or no password exists yet, it creates the account: email, the password twice, your name,
    the terms box. The first time a password is needed, a strong one is generated and written to
    `.env` as `COMPANY_SITE_PASSWORD`, so every site shares it. Every site it signs in to or
-   registers on is listed in `data/accounts.md` (never the password). A dry run signs in with a
+   registers on is listed in `data/inputs/accounts.md` (never the password). A dry run signs in with a
    saved password but never creates an account. A site that wants its email verified first, shows
    a captcha, or already has an account under your email with another password stops here and
    says which of those it was.
 3. Fills the form page by page (Next, Continue, Save and Continue; up to 8 pages), skipping the
    hidden "robots only" boxes some sites plant. Name, email, phone, links, location and current
-   role come from `data/profile.yaml`; every other
-   question from `data/answers.txt`, then the profile, then the model, exactly as on Naukri;
+   role come from `data/inputs/profile.yaml`; every other
+   question from `data/inputs/answers.txt`, then the profile, then the model, exactly as on Naukri;
    attaches the resume tailored for that job (or the base one); declines optional diversity
    questions; ticks the privacy consent and leaves other optional boxes ("Remember me", job alerts)
    alone. A **required** long-answer box ("Why this role?", a cover-letter text box) takes your
@@ -409,13 +409,13 @@ With `EXTERNAL_APPLY=true` the bot follows Naukri's company-site button for up t
    for that job from your resume and the posting only: first person, 2 to 4 sentences, checked so it
    names nothing the resume or posting does not and uses none of the usual filler words, and sent
    back once to be fixed if it does. Each one is kept in
-   `resume/out/tailored/<Company - Role>/answers.md` and listed in the day's report.
+   `data/resume/out/tailored/<Company - Role>/answers.md` and listed in the day's report.
 4. Clicks Submit **only** when every required field is filled, and counts the application only when
    the site confirms it ("Thank you for applying", a confirmation page). A site that answers with an
    error is recorded as an error, never as applied.
 5. Anything short of that, such as a question it cannot answer, a cover letter, a captcha, an
-   email to verify, or a page the site will not let it leave, goes to `data/company_sites.md`,
-   and the questions go to `data/answers.txt`. The tab is closed and the run carries on.
+   email to verify, or a page the site will not let it leave, goes to `data/inputs/company_sites.md`,
+   and the questions go to `data/inputs/answers.txt`. The tab is closed and the run carries on.
    LinkedIn and Indeed postings always go to the file: they need those networks' own logins.
 
 Sign in to Google once, while no bot is running (either works):
@@ -452,7 +452,7 @@ login, as a browser agent:
   invent an answer (an unanswered required question comes back to you as "needs you for: ..."),
   decline optional diversity questions, write a required "Why us?" in 2-3 sentences from the resume
   and posting only, click Submit at most once.
-- It stops, and the job goes to `data/company_sites.md`, at any captcha or "I am not a robot"
+- It stops, and the job goes to `data/inputs/company_sites.md`, at any captcha or "I am not a robot"
   check (it never tries to solve one), a code or link sent to your email or phone, two-factor,
   payment, or an identity number you have not given.
 - For the career-site password it types the word `COMPANY_SITE_PASSWORD`; the Playwright server
@@ -461,10 +461,10 @@ login, as a browser agent:
 - It answers with a JSON report. "Submitted" counts as applied only when the confirmation it
   quotes is on the page when the bot reads it afterwards; otherwise the job is recorded as "Submit
   was clicked ..." and never tried again automatically, so nothing is sent twice.
-- Each task gets a folder `reports/<date>/agent/<time> <Company - Role>/` with the task it was given
+- Each task gets a folder `data/reports/<date>/agent/<time> <Company - Role>/` with the task it was given
   (`task.md`), every step it took (`steps.txt`, `transcript.jsonl`), page snapshots and `report.json`; the day's report
   lists them. Long answers it wrote go to the job's `answers.md`, accounts it made to
-  `data/accounts.md`.
+  `data/inputs/accounts.md`.
 
 It is used at most `BROWSER_AGENT_LIMIT` times a run, for up to `BROWSER_AGENT_TIMEOUT_S` seconds
 and `BROWSER_AGENT_BUDGET_USD` each, and never on a page that stopped at a captcha, an emailed
@@ -491,7 +491,7 @@ own question form (answered from `data/` like a company site), counts as applied
 page shows **Applied** after a reload; such applications use no Naukri quota and are marked with the
 board's name in the daily report. A board that sends the job to the employer's site hands it to the
 company-site flow (`EXTERNAL_APPLY`); a form the script cannot finish goes to the browser agent when
-`BROWSER_AGENT=true`, otherwise to `data/company_sites.md`. A job where Apply was clicked but the
+`BROWSER_AGENT=true`, otherwise to `data/inputs/company_sites.md`. A job where Apply was clicked but the
 board never showed Applied is never clicked again automatically.
 
 Sign in to each board once in the bot's browser (the run stops with this hint when a board is
@@ -522,15 +522,15 @@ python3 -m sites_bot.cold_email --to hr@acme.in --company "Acme" --title "AI Eng
   words, first person, checked like the tailored summary (no tool, employer or number your resume
   does not name, no filler words, no em dashes), then signed with your name, phone, LinkedIn and
   portfolio. The resume tailored for that job is attached, or the base one.
-- **Never sent:** each email is saved as `reports/<date>/emails/<Company - Role> (<address>).eml`;
+- **Never sent:** each email is saved as `data/reports/<date>/emails/<Company - Role> (<address>).eml`;
   double-click to open it in Mail as a draft, check it, send. With `GMAIL_APP_PASSWORD` set for
   `COLD_EMAIL_FROM` (default `GOOGLE_EMAIL`), it is also put in that Gmail account's **Drafts**.
-- **Once per address:** `data/cold_emails.jsonl` records every draft; the same address is not written
+- **Once per address:** `data/inputs/cold_emails.jsonl` records every draft; the same address is not written
   to again for 30 days. At most `COLD_EMAIL_LIMIT` drafts a run. The day's report lists them.
 
 ### Daily report
 
-Every Naukri run, profile update and LinkedIn post rewrites `reports/<YYYY-MM-DD>/report.md`:
+Every Naukri run, profile update and LinkedIn post rewrites `data/reports/<YYYY-MM-DD>/report.md`:
 
 - jobs applied to today, on Naukri and on company sites, with links;
 - jobs tried but not applied, with the reason (company site needs you, unanswered question, error);
@@ -540,7 +540,7 @@ Every Naukri run, profile update and LinkedIn post rewrites `reports/<YYYY-MM-DD
 - the three profile-refresh slots, the resume on the profile, resumes tailored today;
 - LinkedIn: the post made today, or the draft waiting for you;
 - where `answers.txt` and `profile.yaml` disagree, and what the AI filled in today, with its quotes;
-- **logs**: every run also saves its full log to `reports/<YYYY-MM-DD>/logs/<tool>-<HHMMSS>.log`
+- **logs**: every run also saves its full log to `data/reports/<YYYY-MM-DD>/logs/<tool>-<HHMMSS>.log`
   (naukri, company-site, resume, assist, profile-update, linkedin), linked from the report;
 - **learning**: today's module from the PrepForge course in `course/` (`COURSE_DIR`), following its
   8-week plan (DSA, then system design, full stack, ML/GenAI, behavioral), one module a day from
@@ -552,7 +552,7 @@ python3 -m common.report --date 2026-10-09
 python3 course/serve.py                       # the course site at http://localhost:8000
 ```
 
-Everything in the report comes from the records: the database, `data/`, `logs/`, `linkedin/`.
+Everything in the report comes from the records: the database, `data/`, `data/logs/`, `data/linkedin/`.
 The report itself is not written by a model; the AI's file edits it lists carry their quotes.
 
 ## 💼 LinkedIn: one post a day
@@ -563,7 +563,7 @@ a logged-in Chrome session. One post a day, never two.
 
 ```bash
 python3 -m linkedin_bot --dry-run      # article + post + card printed, no browser
-python3 -m linkedin_bot --propose      # also saves linkedin/drafts/<date>.md and sends it on Telegram
+python3 -m linkedin_bot --propose      # also saves data/linkedin/drafts/<date>.md and sends it on Telegram
 python3 -m linkedin_bot --post         # publish today's draft (or a given file: --post path.md)
 python3 -m linkedin_bot --if-due       # what the launchd agent runs
 ```
@@ -585,7 +585,7 @@ How the writing stays yours:
 First login: run `python3 -m linkedin_bot --post` once with `LINKEDIN_EMAIL` and
 `LINKEDIN_PASSWORD` in `.env`. LinkedIn usually asks for a verification code
 the first time; finish it in the Chrome window (the bot waits up to five
-minutes). The session is kept in `.browser-profile-linkedin/`, separate from
+minutes). The session is kept in `data/browser/linkedin/`, separate from
 the Naukri profile, so later runs do not ask again. Headless runs cannot answer
 a check and exit 2.
 
@@ -604,14 +604,14 @@ Run it on a schedule:
 ```
 
 Start with `LINKEDIN_AUTO_POST=false`: for a few days the daily run only saves
-`linkedin/drafts/<date>.md` with its card next to it and sends the text on
+`data/linkedin/drafts/<date>.md` with its card next to it and sends the text on
 Telegram. Read them. When you are happy with the voice, set
 `LINKEDIN_AUTO_POST=true` and it posts on its own. A draft you edited by hand
-goes out with `python3 -m linkedin_bot --post linkedin/drafts/<date>.md`.
+goes out with `python3 -m linkedin_bot --post data/linkedin/drafts/<date>.md`.
 
-Files: drafts and cards in `linkedin/drafts/`, the posted-URL list and per-day
-record in `linkedin/state.json`, logs in `logs/linkedin.log`, failure
-screenshots in `screenshots/linkedin-*.png`. All gitignored. The same
+Files: drafts and cards in `data/linkedin/drafts/`, the posted-URL list and per-day
+record in `data/linkedin/state.json`, logs in `data/logs/linkedin.log`, failure
+screenshots in `data/screenshots/linkedin-*.png`. All gitignored. The same
 Desktop/Documents/Downloads warning as the profile updater applies to launchd.
 
 Two honest notes. LinkedIn's User Agreement forbids automated access, and an
@@ -641,7 +641,7 @@ Naukri-autoapply-bot/
 ├── .gitignore            # Files to exclude from git
 ├── requirements.txt      # Python dependencies
 ├── README.md             # This file
-├── profile.example.yaml  # (in naukri_bot/) copy to data/profile.yaml and fill in your facts
+├── profile.example.yaml  # (in naukri_bot/) copy to data/inputs/profile.yaml and fill in your facts
 │
 ├── sandy/                # the terminal screen that runs everything (../sandy)
 ├── course/               # the PrepForge study site Sandy reads (python3 course/serve.py)
@@ -669,7 +669,7 @@ Naukri-autoapply-bot/
 │   ├── early_access.py   #   share interest on Early Access roles (no apply quota)
 │   ├── ledger.py         #   SQLite applied-history + rolling 24h quota ledger
 │   ├── resume.py         #   LaTeX resume -> PDF, per-job tailoring, upload (python3 -m common.resume)
-│   ├── report.py         #   reports/<date>/report.md (python3 -m common.report)
+│   ├── report.py         #   data/reports/<date>/report.md (python3 -m common.report)
 │   └── update_profile.py #   keep the profile "recently updated" (python3 -m naukri_bot.update_profile)
 │
 ├── linkedin_bot/         # one LinkedIn post a day (python3 -m linkedin_bot)
@@ -682,13 +682,13 @@ Naukri-autoapply-bot/
 │
 ├── data/                 # YOUR files: profile.yaml (facts), answers.txt (answers), company_sites.md (to finish),
 │                         #   accounts.md (career-site accounts), backups/ (before each AI edit)
-├── resume/               # base.tex (your resume) + out/base and out/tailored/<Company - Role>/
-├── reports/              # one folder per day: report.md + logs/ of every run; ai_changes.jsonl (auto-generated)
+├── data/resume/               # base.tex (your resume) + out/base and out/tailored/<Company - Role>/
+├── data/reports/              # one folder per day: report.md + data/logs/ of every run; ai_changes.jsonl (auto-generated)
 ├── scripts/              # launchd install/run/status, google_login.sh
-├── linkedin/             # drafts, cards and posted-URL state (auto-generated)
-├── logs/                 # profile updater + LinkedIn logs and slot memory (auto-generated)
-├── screenshots/          # page captures of failed runs (auto-generated)
-├── naukri_bot.db         # v2 state: applied history + quota memory (auto-generated)
+├── data/linkedin/             # drafts, cards and posted-URL state (auto-generated)
+├── data/logs/                 # profile updater + LinkedIn logs and slot memory (auto-generated)
+├── data/screenshots/          # page captures of failed runs (auto-generated)
+├── data/db/naukri_bot.db         # v2 state: applied history + quota memory (auto-generated)
 ├── Naukri-Edge.py        # Legacy bot script for Microsoft Edge browser
 ├── Naukri-Recommended.py # Legacy bot for the recommended-jobs feed
 ├── Naukri autoapply jobs.ipynb  # Jupyter Notebook version (legacy)

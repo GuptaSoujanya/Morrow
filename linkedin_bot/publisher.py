@@ -260,9 +260,9 @@ def _enabled(element: Any) -> bool:
         return False
 
 
-def screenshot(driver: Any, directory: str = "screenshots") -> Optional[Path]:
+def screenshot(driver: Any, directory: str = "data/screenshots") -> Optional[Path]:
     try:
-        folder = Path(directory or "screenshots")
+        folder = Path(directory or "data/screenshots")
         folder.mkdir(parents=True, exist_ok=True)
         path = folder / ("linkedin-%s.png" % datetime.now().strftime("%Y%m%d-%H%M%S"))
         if driver.save_screenshot(str(path)):
@@ -274,7 +274,7 @@ def screenshot(driver: Any, directory: str = "screenshots") -> Optional[Path]:
 
 
 def publish(
-    driver: Any, text: str, image_path: str, screenshot_dir: str = "screenshots"
+    driver: Any, text: str, image_path: str, screenshot_dir: str = "data/screenshots"
 ) -> PublishResult:
     """Compose, attach the image, post, and confirm. Never clicks Post twice."""
     result = _publish(driver, text, image_path)

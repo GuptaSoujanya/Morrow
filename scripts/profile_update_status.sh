@@ -33,4 +33,4 @@ else
 fi
 
 echo "== Last 8 log lines (logs/profile_update.log)"
-tail -8 logs/profile_update.log 2>/dev/null | cut -c1-150 | sed 's/^/  /' || true
+tail -8 data/logs/profile_update.log 2>/dev/null | cut -c1-150 | sed 's/^/  /' || true

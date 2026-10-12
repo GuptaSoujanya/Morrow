@@ -438,7 +438,7 @@ class SandyApp(App):
             yield from heading(
                 "Company sites",
                 "Jobs whose Apply button leads to the company's own website. The bot fills what it "
-                "can and lists the rest in data/company_sites.md.",
+                "can and lists the rest in data/inputs/company_sites.md.",
             )
             yield Static("Waiting for you", classes="section")
             yield Static("", id="sites-list", classes="card")
@@ -479,7 +479,7 @@ class SandyApp(App):
             yield from heading(
                 "LinkedIn post",
                 "One post a day: a fresh article on your topics, a short reaction in your own words, "
-                "and an image card. Drafts land in linkedin/drafts/.",
+                "and an image card. Drafts land in data/linkedin/drafts/.",
             )
             yield field("What to do", Select(LINKEDIN_CHOICES, value="dry-run", allow_blank=False, id="li-mode"))
             yield field("Draft to publish", Input(placeholder="today's saved draft", id="li-draft"))
@@ -496,7 +496,7 @@ class SandyApp(App):
             yield from heading(
                 "Tailor resume",
                 "Rewrites your resume for one job, using only what is true about you, and builds "
-                "the PDF in resume/out/tailored/.",
+                "the PDF in data/resume/out/tailored/.",
             )
             yield field("Job title", Input(id="rs-title"))
             yield field("Company", Input(id="rs-company"))
@@ -559,13 +559,13 @@ class SandyApp(App):
                 "Your to-dos",
                 "Things only you can do. Whatever you fill in here is used on the next run.",
             )
-            yield Static("Questions employers asked  ·  data/answers.txt", classes="section")
+            yield Static("Questions employers asked  ·  data/inputs/answers.txt", classes="section")
             yield Static("", id="todo-questions", classes="card")
             yield buttons(Button("✎  Answer them", id="edit-answers", variant="warning"))
-            yield Static("Facts left blank  ·  data/profile.yaml", classes="section")
+            yield Static("Facts left blank  ·  data/inputs/profile.yaml", classes="section")
             yield Static("", id="todo-facts", classes="card")
             yield buttons(Button("✎  Fill them in", id="edit-profile", variant="warning"))
-            yield Static("Company-site applications  ·  data/company_sites.md", classes="section")
+            yield Static("Company-site applications  ·  data/inputs/company_sites.md", classes="section")
             yield Static("", id="todo-sites", classes="card")
             yield buttons(
                 Button("✎  Open the list", id="edit-sites-2"),
@@ -665,7 +665,7 @@ class SandyApp(App):
     def resume(self, save: bool = False) -> Command:
         pasted = self.find("#rs-jd-text", TextArea).text
         if pasted.strip():
-            jd_file = str(state.save_job_description(pasted)) if save else "logs/jd/<pasted text>.txt"
+            jd_file = str(state.save_job_description(pasted)) if save else "data/logs/jd/<pasted text>.txt"
         else:
             jd_file = self.text("rs-jd-file")
         return state.resume_command(

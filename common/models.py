@@ -93,7 +93,7 @@ class ApplyStatus:
     APPLIED_PLATFORM = "applied_platform"
     #: The employer's site needed something the bot does not have (an account,
     #: an unanswered question, a required cover letter); it is listed in
-    #: data/company_sites.md for the user to finish.
+    #: data/inputs/company_sites.md for the user to finish.
     EXTERNAL_MANUAL = "external_manual"
     ABSTAINED = "abstained"
     NO_APPLY_BUTTON = "no_apply_button"
@@ -138,7 +138,7 @@ class AnswerSource:
     CACHE = "cache"      # previously resolved and stored in the ledger
     LLM = "llm"          # produced this run by the LLM, grounded in the profile
     PROFILE = "profile"  # read straight off a Profile field, no model involved
-    DATA = "data"        # the user's own words, from data/answers.txt
+    DATA = "data"        # the user's own words, from data/inputs/answers.txt
 
 
 @dataclass
@@ -278,9 +278,9 @@ class Settings:
     email: str = ""
     password: str = ""
 
-    profile_path: str = "data/profile.yaml"
+    profile_path: str = "data/inputs/profile.yaml"
     resume_path: str = ""
-    db_path: str = "naukri_bot.db"
+    db_path: str = "data/db/naukri_bot.db"
 
     daily_quota: int = 50
     target_applications: int = 50
@@ -308,7 +308,7 @@ class Settings:
     # survives between runs and the login form is not touched at all on most
     # mornings. That form intermittently reports itself as not interactable and
     # has cost two runs. Empty disables it and every run logs in afresh.
-    browser_profile_dir: str = ".browser-profile"
+    browser_profile_dir: str = "data/browser/naukri"
     # Override the browser's User-Agent header. Empty means send the browser's
     # own, which is the only value guaranteed to agree with what JavaScript
     # reports. A pinned string goes stale: the bot claimed Chrome 131 while
@@ -362,14 +362,14 @@ class Settings:
     # daily slots already ran, where a failure screenshot goes, a random wait
     # before a scheduled run starts, and an optional Telegram bot for failure
     # alerts. Both Telegram values empty disables alerts.
-    profile_update_state_path: str = "logs/profile_update.json"
-    screenshot_dir: str = "screenshots"
+    profile_update_state_path: str = "data/logs/profile_update.json"
+    screenshot_dir: str = "data/screenshots"
     max_start_delay_s: int = 0
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""
     # Resume tailoring and upload. resume_path (above) must point at the
     # LaTeX source for these to work; the PDFs are compiled from it.
-    resume_out_dir: str = "resume/out"
+    resume_out_dir: str = "data/resume/out"
     # Recruiter-visible file name. Empty derives "First_Last_Resume.pdf" from
     # the name in the resume header.
     resume_file_name: str = ""
@@ -380,7 +380,7 @@ class Settings:
     # (facts), answers.txt (their own answers to screening questions, plus the
     # ones the bot could not answer, left there to be filled in) and
     # company_sites.md (employer-site applications waiting for a person).
-    data_dir: str = "data"
+    data_dir: str = "data/inputs"
     # Apply on the employer's own site when Naukri's button leaves Naukri: fill
     # the form from the facts and answers, attach the resume, and submit only
     # when every required field is answered. Off, such roles only reach the
@@ -426,7 +426,7 @@ class Settings:
     gmail_app_password: str = ""
     cold_email_limit: int = 10
     # One Markdown report per day: what ran, what was applied to, what is left.
-    report_dir: str = "reports"
+    report_dir: str = "data/reports"
     # The study site in course/; the report names one module of its plan a day.
     course_dir: str = "course"
     # YYYY-MM-DD the plan began; empty means the day the first report was written.

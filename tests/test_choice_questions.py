@@ -151,7 +151,7 @@ def test_resolve_many_records_an_unanswerable_question(tmp_path, monkeypatch):
                           _profile(), settings)
     chosen, reason = engine.resolve_many("Which apply?", ["Haskell"])
     assert chosen is None and reason == "llm_selected_nothing"
-    written = (tmp_path / "unanswered_questions.md").read_text()
+    written = (tmp_path / "data/worklists/unanswered_questions.md").read_text()
     assert "Which apply?" in written
     assert "llm_selected_nothing" in written
 
@@ -162,7 +162,7 @@ def test_an_option_mismatch_is_recorded_as_such_not_as_an_abstain(tmp_path, monk
     engine = AnswerEngine(Ledger(":memory:"), _Client({}), _profile(),
                           Settings(email="t@e.com", password="p"))
     engine.record_option_mismatch("Salutation", "Mr", ["Mr.", "Ms."])
-    written = (tmp_path / "unanswered_questions.md").read_text()
+    written = (tmp_path / "data/worklists/unanswered_questions.md").read_text()
     assert "Salutation" in written
     assert "not_among_rendered_options" in written
     assert "options: ['Mr.', 'Ms.']" in written

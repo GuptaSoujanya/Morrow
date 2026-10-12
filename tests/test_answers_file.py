@@ -1,4 +1,4 @@
-"""data/answers.txt: the user's own words win, and unknown questions are left there to fill.
+"""data/inputs/answers.txt: the user's own words win, and unknown questions are left there to fill.
 
 The file is the one place a person edits between runs, so a question answered
 there must beat the cache, the profile and the model; a question the bot could
@@ -51,8 +51,8 @@ def test_parse_blocks_aliases_blank_and_multiline_answers():
 
 
 def _write(tmp_path, text):
-    path = tmp_path / "data" / "answers.txt"
-    path.parent.mkdir(exist_ok=True)
+    path = tmp_path / "data" / "inputs" / "answers.txt"
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
     return path
 
@@ -72,10 +72,10 @@ def test_a_blank_answer_means_unknown(tmp_path):
 
 
 def test_missing_file_is_an_empty_book(tmp_path):
-    book = AnswerBook(str(tmp_path / "data" / "answers.txt"))
+    book = AnswerBook(str(tmp_path / "data" / "inputs" / "answers.txt"))
     assert book.answer_for("anything") is None
     assert book.add_blank("Do you drive?", "profile_fact_missing")
-    assert (tmp_path / "data" / "answers.txt").read_text().endswith("Q: Do you drive?\nA:\n")
+    assert (tmp_path / "data" / "inputs" / "answers.txt").read_text().endswith("Q: Do you drive?\nA:\n")
 
 
 def test_add_blank_appends_once_with_context_and_survives_reload(tmp_path):
@@ -178,16 +178,16 @@ def test_an_unanswered_question_is_left_in_the_file_for_the_user(tmp_path):
     engine.set_job_context(JobPosting(job_id="1", url="u", title="Developer", company="Acme"))
     resolution = engine.resolve("Do you own a two wheeler?")
     assert resolution.abstained
-    text = (tmp_path / "data" / "answers.txt").read_text(encoding="utf-8")
+    text = (tmp_path / "data" / "inputs" / "answers.txt").read_text(encoding="utf-8")
     assert "Q: Do you own a two wheeler?\nA:\n" in text
     assert "while applying to Developer at Acme" in text
-    assert "Do you own a two wheeler?" in (tmp_path / "unanswered_questions.md").read_text()
+    assert "Do you own a two wheeler?" in (tmp_path / "data/worklists/unanswered_questions.md").read_text()
 
 
 def test_a_filled_in_answer_is_used_on_the_next_question(tmp_path):
     engine = _engine(tmp_path)
     assert engine.resolve("Do you own a two wheeler?").abstained
-    path = tmp_path / "data" / "answers.txt"
+    path = tmp_path / "data" / "inputs" / "answers.txt"
     path.write_text(path.read_text(encoding="utf-8").replace("Q: Do you own a two wheeler?\nA:\n", "Q: Do you own a two wheeler?\nA: Yes\n"), encoding="utf-8")
     later = os.path.getmtime(path) + 5
     os.utime(path, (later, later))
@@ -216,10 +216,10 @@ def test_a_long_option_list_is_shortened_in_the_file(tmp_path):
 
 
 def test_the_facts_fingerprint_ignores_blank_questions_but_not_answers(tmp_path):
-    settings = Settings(data_dir=str(tmp_path / "data"))
+    settings = Settings(data_dir=str(tmp_path / "data" / "inputs"))
     profile = Profile(full_name="Jane", notice_period_days=None)
-    path = tmp_path / "data" / "answers.txt"
-    path.parent.mkdir()
+    path = tmp_path / "data" / "inputs" / "answers.txt"
+    path.parent.mkdir(parents=True)
     path.write_text("Q: Why us?\nA:\n")
     first = facts_fingerprint(profile, settings)
 

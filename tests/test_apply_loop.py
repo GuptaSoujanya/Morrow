@@ -78,7 +78,7 @@ def _result(job, status):
 @pytest.fixture
 def fake_naukri(monkeypatch, tmp_path):
     """Replace every outward edge of run() and record what the loop attempted."""
-    monkeypatch.chdir(tmp_path)  # external_jobs.md is written to the cwd
+    monkeypatch.chdir(tmp_path)  # data/worklists/external_jobs.md is written to the cwd
 
     attempted = []
 
@@ -258,7 +258,7 @@ def test_external_roles_survive_an_interrupted_run(fake_naukri, tmp_path, monkey
     with pytest.raises(RuntimeError):
         _run(tmp_path, _settings(target_applications=50))
 
-    written = (tmp_path / "external_jobs.md").read_text()
+    written = (tmp_path / "data/worklists/external_jobs.md").read_text()
     for i in range(4):
         assert "job-listings-j%02d" % i in written, (
             "company-site role found before the crash was lost"
@@ -272,7 +272,7 @@ def test_company_site_roles_are_recorded_for_manual_application(fake_naukri, tmp
 
     _run(tmp_path, _settings(target_applications=5))
 
-    written = (tmp_path / "external_jobs.md").read_text()
+    written = (tmp_path / "data/worklists/external_jobs.md").read_text()
     for i in range(5):
         assert "job-listings-j%02d" % i in written, "external role was lost"
 
@@ -285,8 +285,8 @@ def test_a_job_that_stopped_for_you_waits_until_you_answer(fake_naukri, tmp_path
     _run(tmp_path, _settings(target_applications=5))
     assert attempted == ["a", "b"]
 
-    (tmp_path / "data").mkdir(exist_ok=True)
-    (tmp_path / "data" / "answers.txt").write_text("Q: What is your notice period?\nA: 30 days\n")
+    (tmp_path / "data" / "inputs").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "data" / "inputs" / "answers.txt").write_text("Q: What is your notice period?\nA: 30 days\n")
     _run(tmp_path, _settings(target_applications=5))
     assert attempted == ["a", "b", "a"]
 

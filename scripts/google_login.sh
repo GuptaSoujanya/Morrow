@@ -9,7 +9,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 PROFILE_ROOT="$(grep -E '^BROWSER_PROFILE_DIR=' .env 2>/dev/null | tail -1 | cut -d= -f2- || true)"
-PROFILE_ROOT="${PROFILE_ROOT:-.browser-profile}"
+PROFILE_ROOT="${PROFILE_ROOT:-data/browser/naukri}"
 [[ "$PROFILE_ROOT" = /* ]] || PROFILE_ROOT="$PWD/$PROFILE_ROOT"
 PROFILE="$PROFILE_ROOT/chrome"
 

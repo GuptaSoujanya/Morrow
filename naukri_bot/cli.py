@@ -42,7 +42,7 @@ from common.run import EXIT_CONFIG, EXIT_FAILED, EXIT_LOGIN, EXIT_OK, configure_
 
 logger = logging.getLogger(__name__)
 
-_EXTERNAL_JOBS_FILE = "external_jobs.md"
+_EXTERNAL_JOBS_FILE = "data/worklists/external_jobs.md"
 
 # How long a run waits at the start for a person to finish a Google sign-in
 # (passkey, phone prompt) before going on without it.
@@ -273,8 +273,8 @@ def _company_key(company: Optional[str]) -> str:
     return name.strip(" .,-")
 
 
-_EXTERNAL_ARCHIVE_FILE = "external_archive.md"
-_EXTERNAL_OPENED_FILE = "external_opened.tsv"
+_EXTERNAL_ARCHIVE_FILE = "data/worklists/external_archive.md"
+_EXTERNAL_OPENED_FILE = "data/worklists/external_opened.tsv"
 _EXTERNAL_MAX_OPENS = 3
 _EXTERNAL_STALE_DAYS = 10
 
@@ -438,6 +438,7 @@ def _write_external_jobs(
     header = ("| score | role | company | posted | first seen | opened | link |\n"
               "|---|---|---|---|---|---|---|\n")
     try:
+        Path(_EXTERNAL_JOBS_FILE).parent.mkdir(parents=True, exist_ok=True)
         with open(_EXTERNAL_JOBS_FILE, "w", encoding="utf-8") as handle:
             handle.write(
                 "# Roles that apply on the company site\n\n"

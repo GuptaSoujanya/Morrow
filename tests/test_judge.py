@@ -54,9 +54,9 @@ def _judged(answer, reason="CrewAI is named nowhere in her files", evidence="", 
 
 
 def _engine(tmp_path, brain, **overrides):
-    (tmp_path / "data").mkdir(exist_ok=True)
-    (tmp_path / "data" / "answers.txt").write_text(ANSWERS, encoding="utf-8")
-    (tmp_path / "data" / "profile.yaml").write_text(PROFILE_YAML, encoding="utf-8")
+    (tmp_path / "data" / "inputs").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "data" / "inputs" / "answers.txt").write_text(ANSWERS, encoding="utf-8")
+    (tmp_path / "data" / "inputs" / "profile.yaml").write_text(PROFILE_YAML, encoding="utf-8")
     values = dict(email="t@example.com", password="secret", report_dir=str(tmp_path / "reports"))
     values.update(overrides)
     settings = Settings(**values)
@@ -67,7 +67,7 @@ def _engine(tmp_path, brain, **overrides):
 
 
 def _answers(tmp_path):
-    return (tmp_path / "data" / "answers.txt").read_text(encoding="utf-8")
+    return (tmp_path / "data" / "inputs" / "answers.txt").read_text(encoding="utf-8")
 
 
 def _judgements(engine):

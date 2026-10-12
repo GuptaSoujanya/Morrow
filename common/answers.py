@@ -37,7 +37,7 @@ def _number_text(value: Any) -> str:
     return str(value)
 
 
-_UNANSWERED_FILE = "unanswered_questions.md"
+_UNANSWERED_FILE = "data/worklists/unanswered_questions.md"
 _seen_unanswered = set()
 _unanswered_loaded = False
 
@@ -51,7 +51,7 @@ _book = None  # type: Optional[AnswerBook]
 
 
 def answers_file_path(settings: Any) -> str:
-    return os.path.join(getattr(settings, "data_dir", "") or "data", _ANSWERS_FILE_NAME)
+    return os.path.join(getattr(settings, "data_dir", "") or "data/inputs", _ANSWERS_FILE_NAME)
 
 
 def _question_key(text: str) -> str:
@@ -134,7 +134,7 @@ def match_options(answer: str, options: List[str]) -> Optional[List[str]]:
 
 
 class AnswerBook:
-    """The user's own answers in data/answers.txt, and the questions left for them."""
+    """The user's own answers in data/inputs/answers.txt, and the questions left for them."""
 
     def __init__(self, path: str):
         self.path = path
@@ -276,6 +276,7 @@ def _record_unanswered(
     _seen_unanswered.add(key)
 
     try:
+        os.makedirs(os.path.dirname(_UNANSWERED_FILE), exist_ok=True)
         with open(_UNANSWERED_FILE, "a", encoding="utf-8") as handle:
             handle.write(
                 "- [%s] %s -- %s%s\n"
@@ -560,7 +561,7 @@ class AnswerEngine:
         )
 
     def own_answer(self, question: str, options: Optional[List[str]] = None) -> Optional[str]:
-        """The answer from data/answers.txt alone: no cache, no model, nothing recorded."""
+        """The answer from data/inputs/answers.txt alone: no cache, no model, nothing recorded."""
         resolution = self._own_answer(question, options)
         if resolution is None or resolution.answer is None:
             return None
@@ -569,7 +570,7 @@ class AnswerEngine:
     def _own_answer(
         self, question: str, options: Optional[List[str]]
     ) -> Optional[AnswerResolution]:
-        """What the user wrote in data/answers.txt, when it fits the rendered options."""
+        """What the user wrote in data/inputs/answers.txt, when it fits the rendered options."""
         text = self.book.answer_for(question)
         if text is None:
             return None
@@ -588,7 +589,7 @@ class AnswerEngine:
         return AnswerResolution.resolved(
             Answer(
                 text=text,
-                grounded_in="data/answers.txt",
+                grounded_in="data/inputs/answers.txt",
                 source=AnswerSource.DATA,
                 confidence=1.0,
             )
@@ -625,7 +626,7 @@ class AnswerEngine:
         Returns (selections, reason). Nothing is cached: the cache is keyed on a
         single answer string, and a partial hit would silently drop selections.
         Abstains are recorded like any other so the question reaches
-        unanswered_questions.md.
+        data/worklists/unanswered_questions.md.
         """
         self._current_options = options
         if not options:
@@ -637,7 +638,7 @@ class AnswerEngine:
             chosen = match_options(own, options)
             if chosen:
                 self.answered += 1
-                logger.info("[multi] %s -> %s (data/answers.txt)", question, chosen)
+                logger.info("[multi] %s -> %s (data/inputs/answers.txt)", question, chosen)
                 return chosen, ""
             logger.info(
                 "Your answer %r to %r names none of the options %s; asking the model",

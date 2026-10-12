@@ -369,7 +369,7 @@ def update_resume_headline(driver: Any, dry_run: bool = False) -> HeadlineUpdate
 
 
 def _screenshot(driver: Any, settings: Settings) -> None:
-    directory = Path(settings.screenshot_dir or "screenshots")
+    directory = Path(settings.screenshot_dir or "data/screenshots")
     try:
         directory.mkdir(parents=True, exist_ok=True)
         path = directory / (

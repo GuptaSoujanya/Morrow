@@ -6,7 +6,7 @@ signed in inside the bot's browser profile; then the email and password kept in
 .env (COMPANY_SITE_EMAIL / COMPANY_SITE_PASSWORD); then creating an account with
 them. The bot never types a Google password, never creates an account on a dry
 run, and stops for a person when a site wants its email verified or shows a
-captcha. data/accounts.md lists every site it signed in to or registered on.
+captcha. data/inputs/accounts.md lists every site it signed in to or registered on.
 """
 
 import logging
@@ -101,11 +101,11 @@ def account_password(settings: Settings) -> str:
 
 
 def accounts_file(settings: Settings) -> Path:
-    return Path(settings.data_dir or "data") / "accounts.md"
+    return Path(settings.data_dir or "data/inputs") / "accounts.md"
 
 
 def record_account(settings: Settings, host: str, email: str, what: str) -> Path:
-    """One row per site and outcome in data/accounts.md; the password itself is never written."""
+    """One row per site and outcome in data/inputs/accounts.md; the password itself is never written."""
     path = accounts_file(settings)
     path.parent.mkdir(parents=True, exist_ok=True)
     if not path.is_file():
@@ -126,7 +126,7 @@ def record_account(settings: Settings, host: str, email: str, what: str) -> Path
 
 
 def has_account(settings: Settings, host: str) -> bool:
-    """Whether data/accounts.md records an account the bot made or used on `host`."""
+    """Whether data/inputs/accounts.md records an account the bot made or used on `host`."""
     try:
         rows = accounts_file(settings).read_text(encoding="utf-8")
     except OSError:
@@ -413,7 +413,7 @@ def _press(driver: Any, pattern: "re.Pattern[str]") -> bool:
 
 
 def _refusal_file(settings: Settings) -> Path:
-    return Path(settings.report_dir or "reports") / "google_refused.txt"
+    return Path(settings.report_dir or "data/reports") / "google_refused.txt"
 
 
 def google_refused_today(settings: Settings) -> bool:

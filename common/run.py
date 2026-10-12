@@ -37,10 +37,10 @@ class _KeptLog(logging.FileHandler):
 
 
 def keep_log(settings: Settings, tool: str, now: Optional[datetime] = None) -> Optional[Path]:
-    """Also write this run's log to reports/<date>/logs/, next to the day's report."""
+    """Also write this run's log to data/reports/<date>/logs/, next to the day's report."""
     now = now or datetime.now()
     path = (
-        Path(settings.report_dir or "reports")
+        Path(settings.report_dir or "data/reports")
         / now.strftime("%Y-%m-%d")
         / "logs"
         / ("%s-%s.log" % (tool, now.strftime("%H%M%S")))

@@ -98,7 +98,7 @@ def test_a_piped_title_survives_the_worklist_round_trip(tmp_path, monkeypatch):
                        title="AI Engineer", company="Acme")
     cli._write_external_jobs([ScoredJob(job=other, score=65.0)], announce=False)
 
-    written = (tmp_path / "external_jobs.md").read_text()
+    written = (tmp_path / "data/worklists/external_jobs.md").read_text()
     rows = [l for l in written.splitlines() if l.startswith("| ") and not l.startswith("| score")]
     assert len(rows) == 2, "a row was lost on the second write:\n%s" % written
     assert "job-listings-walkin" in written
@@ -108,13 +108,14 @@ def test_a_piped_title_survives_the_worklist_round_trip(tmp_path, monkeypatch):
 def test_a_legacy_row_with_raw_pipes_is_not_dropped(tmp_path, monkeypatch):
     """Rows written before pipes were escaped must still survive a merge.
 
-    This is the actual 5 October loss: external_jobs.md went from 17 rows to 14
+    This is the actual 5 October loss: data/worklists/external_jobs.md went from 17 rows to 14
     while reporting "0 new", because titles like "Walk-in || GenAI Developer"
     split into seven fields and were silently discarded on read-back. Escaping
     on write fixes new rows; only splitting from the right rescues the old ones.
     """
     monkeypatch.chdir(tmp_path)
-    (tmp_path / "external_jobs.md").write_text(
+    (tmp_path / "data/worklists").mkdir(parents=True)
+    (tmp_path / "data/worklists/external_jobs.md").write_text(
         "# Roles that apply on the company site\n\n"
         "| score | role | company | posted | link |\n"
         "|---|---|---|---|---|\n"
@@ -127,7 +128,7 @@ def test_a_legacy_row_with_raw_pipes_is_not_dropped(tmp_path, monkeypatch):
                        title="New Role", company="NewCo")
     cli._write_external_jobs([ScoredJob(job=fresh, score=60.0)], announce=False)
 
-    written = (tmp_path / "external_jobs.md").read_text()
+    written = (tmp_path / "data/worklists/external_jobs.md").read_text()
     for marker in ("job-listings-keep1", "job-listings-piped",
                    "job-listings-piped2", "job-listings-new"):
         assert marker in written, "%s was dropped:\n%s" % (marker, written)
@@ -148,7 +149,7 @@ def test_repeated_writes_never_lose_rows(tmp_path, monkeypatch):
     for _ in range(3):  # three runs over the same roles
         cli._write_external_jobs(jobs, announce=False)
 
-    written = (tmp_path / "external_jobs.md").read_text()
+    written = (tmp_path / "data/worklists/external_jobs.md").read_text()
     rows = [l for l in written.splitlines() if l.startswith("| ") and not l.startswith("| score")]
     assert len(rows) == 8, "expected 8 unique rows, got %d" % len(rows)
 

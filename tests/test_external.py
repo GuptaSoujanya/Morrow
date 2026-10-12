@@ -529,8 +529,8 @@ def test_long_answers_never_come_from_the_model(tmp_path):
 
 
 def test_long_answers_come_from_answers_txt_and_missing_ones_are_added_there(tmp_path):
-    (tmp_path / "data").mkdir()
-    (tmp_path / "data" / "answers.txt").write_text(
+    (tmp_path / "data" / "inputs").mkdir(parents=True)
+    (tmp_path / "data" / "inputs" / "answers.txt").write_text(
         "Q: What is your proudest accomplishment?\nA: Growing WildClawBench into a platform other teams use.\n",
         encoding="utf-8",
     )
@@ -546,7 +546,7 @@ def test_long_answers_come_from_answers_txt_and_missing_ones_are_added_there(tmp
 
     assert _by_name(page, "proud").value == "Growing WildClawBench into a platform other teams use."
     assert outcome.missing == ["Why Acme?"]
-    text = (tmp_path / "data" / "answers.txt").read_text(encoding="utf-8")
+    text = (tmp_path / "data" / "inputs" / "answers.txt").read_text(encoding="utf-8")
     assert "LangChain Engineer at Acme | long answers are yours to write\nQ: Why Acme?\nA:\n" in text
 
 
@@ -939,7 +939,7 @@ def test_the_worklist_header_is_written_once(tmp_path):
     ext.record_company_site(settings, JOB, first)
     ext.record_company_site(settings, JobPosting(job_id="j2", url="u2", title="SDE", company="Beta"), first)
 
-    text = (tmp_path / "data" / "company_sites.md").read_text()
+    text = (tmp_path / "data" / "inputs" / "company_sites.md").read_text()
     assert text.count("# Applications on company websites that need you") == 1
     assert [entry["company"] for entry in ext.pending_company_sites(settings)] == ["Acme", "Beta"]
 
@@ -956,11 +956,11 @@ def test_trying_a_job_again_replaces_its_entry_and_applying_removes_it(tmp_path)
 
     ext.forget_company_site(settings, JOB)
     assert [entry["company"] for entry in ext.pending_company_sites(settings)] == ["Beta"]
-    assert (tmp_path / "data" / "company_sites.md").read_text().startswith("# Applications on company websites")
+    assert (tmp_path / "data" / "inputs" / "company_sites.md").read_text().startswith("# Applications on company websites")
 
 
 # ---------------------------------------------------------------------------
-# With the real answer engine and data/answers.txt
+# With the real answer engine and data/inputs/answers.txt
 # ---------------------------------------------------------------------------
 
 
@@ -970,8 +970,8 @@ class _NoLLM:
 
 
 def test_answers_txt_fills_the_form_and_collects_what_it_cannot_answer(tmp_path):
-    (tmp_path / "data").mkdir()
-    (tmp_path / "data" / "answers.txt").write_text(
+    (tmp_path / "data" / "inputs").mkdir(parents=True)
+    (tmp_path / "data" / "inputs" / "answers.txt").write_text(
         "Q: How did you hear about this job?\nA: Naukri\n\n"
         "Q: Are you legally authorized to work in India?\nA: Yes\n",
         encoding="utf-8",
@@ -987,7 +987,7 @@ def test_answers_txt_fills_the_form_and_collects_what_it_cannot_answer(tmp_path)
     assert [item.checked for item in page.fields if item.name == "auth"] == [True, False]
     assert result.status == ApplyStatus.EXTERNAL_MANUAL
     assert page.buttons[0].clicks == 0
-    text = (tmp_path / "data" / "answers.txt").read_text(encoding="utf-8")
+    text = (tmp_path / "data" / "inputs" / "answers.txt").read_text(encoding="utf-8")
     assert "Q: Why do you want to join us?\nA:\n" in text
     assert "LangChain Engineer at Acme" in text
 
@@ -1095,7 +1095,7 @@ def test_company_sites_are_tried_up_to_the_limit_with_the_base_resume(morning, t
         assert record["summary"]["external_manual"] == 1
     finally:
         ledger.close()
-    worklist = (tmp_path / "external_jobs.md").read_text()
+    worklist = (tmp_path / "data/worklists/external_jobs.md").read_text()
     assert "Role b" in worklist and "Role c" in worklist and "Role a" not in worklist
 
 
@@ -1118,7 +1118,7 @@ WORKDAY = "https://acme.wd5.myworkdayjobs.com/en-US/careers/job/1/apply/applyMan
 
 
 def _account_settings(tmp_path, **overrides):
-    values = dict(env_file=str(tmp_path / ".env"), data_dir=str(tmp_path / "data"), google_email="", email="jane@gmail.com")
+    values = dict(env_file=str(tmp_path / ".env"), data_dir=str(tmp_path / "data" / "inputs"), google_email="", email="jane@gmail.com")
     values.update(overrides)
     return _settings(**values)
 
@@ -1193,7 +1193,7 @@ def test_a_new_site_gets_an_account_with_a_generated_password_saved_to_env(tmp_p
     assert seen["agree"] is True
     assert seen["website"] == ""
     assert (tmp_path / ".env").read_text(encoding="utf-8") == "NAUKRI_EMAIL=jane@gmail.com\nCOMPANY_SITE_PASSWORD=%s\n" % password
-    accounts = (tmp_path / "data" / "accounts.md").read_text(encoding="utf-8")
+    accounts = (tmp_path / "data" / "inputs" / "accounts.md").read_text(encoding="utf-8")
     assert "| acme.wd5.myworkdayjobs.com | jane@gmail.com | account created |" in accounts
     assert password not in accounts
     assert not result.detail.startswith("the site asks for an account")
@@ -1212,7 +1212,7 @@ def test_a_dry_run_never_creates_an_account(tmp_path):
         "the site asks for an account: dry run: would create an account on acme.wd5.myworkdayjobs.com for jane@gmail.com"
     )
     assert not (tmp_path / ".env").exists()
-    assert not (tmp_path / "data" / "accounts.md").exists()
+    assert not (tmp_path / "data" / "inputs" / "accounts.md").exists()
 
 
 def test_the_saved_password_signs_in_with_the_forms_own_button(tmp_path):
@@ -1231,7 +1231,7 @@ def test_the_saved_password_signs_in_with_the_forms_own_button(tmp_path):
     assert typed == {"password": "Saved#Pass123", "website": ""}
     assert page.header[0].clicks == 0
     assert result.status == ext.DRY_RUN
-    assert "| signed in |" in (tmp_path / "data" / "accounts.md").read_text(encoding="utf-8")
+    assert "| signed in |" in (tmp_path / "data" / "inputs" / "accounts.md").read_text(encoding="utf-8")
 
 
 def test_an_account_made_elsewhere_with_another_password_is_left_for_a_person(tmp_path):
@@ -1262,7 +1262,7 @@ def test_a_site_that_wants_the_email_verified_stops_and_says_so(tmp_path):
 
     assert result.status == ApplyStatus.EXTERNAL_MANUAL
     assert result.detail.endswith("sent a verification email to jane@gmail.com; click the link in it, then apply again")
-    assert "waiting for email verification" in (tmp_path / "data" / "accounts.md").read_text(encoding="utf-8")
+    assert "waiting for email verification" in (tmp_path / "data" / "inputs" / "accounts.md").read_text(encoding="utf-8")
 
 
 def test_apply_manually_wins_over_apply_again():
@@ -1364,7 +1364,7 @@ def test_a_google_sign_in_that_takes_the_tab_away_falls_back_to_email(tmp_path):
     result = ext.apply_here(_browser(page), JOB, PROFILE, _Engine(), settings, _resume(tmp_path), dry_run=False)
 
     assert page.url == WORKDAY
-    assert "| jane@gmail.com | account created |" in (tmp_path / "data" / "accounts.md").read_text(encoding="utf-8")
+    assert "| jane@gmail.com | account created |" in (tmp_path / "data" / "inputs" / "accounts.md").read_text(encoding="utf-8")
     assert not result.detail.startswith("the site asks for an account")
     assert _by_name(page, "first_name").value == "Jane"
 
@@ -2003,7 +2003,7 @@ def test_an_error_after_submit_is_never_sent_to_the_brain(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Trying data/company_sites.md again
+# Trying data/inputs/company_sites.md again
 # ---------------------------------------------------------------------------
 
 
@@ -2030,7 +2030,7 @@ def test_an_entry_keeps_its_naukri_job_id():
 
 
 def test_a_retried_site_that_now_goes_through_leaves_the_list_and_is_recorded(tmp_path):
-    settings = _settings(data_dir=str(tmp_path / "data"))
+    settings = _settings(data_dir=str(tmp_path / "data" / "inputs"))
     stuck = ext.ExternalResult(status=ApplyStatus.EXTERNAL_MANUAL, url=GREENHOUSE,
                                detail="no application form found on %s (controls: none)" % GREENHOUSE)
     waiting = ext.ExternalResult(status=ApplyStatus.EXTERNAL_MANUAL, url=GREENHOUSE + "/2", detail="needs you for: Postal Code*")

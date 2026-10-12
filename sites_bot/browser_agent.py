@@ -264,7 +264,7 @@ def workdir_for(settings: Settings, label: str, now: Optional[datetime] = None) 
 
     now = now or datetime.now()
     return (
-        Path(settings.report_dir or "reports")
+        Path(settings.report_dir or "data/reports")
         / now.strftime("%Y-%m-%d")
         / "agent"
         / ("%s %s" % (now.strftime("%H%M%S"), _folder_name(label) or "task"))
@@ -614,8 +614,8 @@ def take_over(
 
 
 def records_for(settings: Settings, day: str) -> List[Dict[str, Any]]:
-    """The day's agent tasks, oldest first, from reports/<day>/agent/*/report.json."""
-    folder = Path(settings.report_dir or "reports") / day / "agent"
+    """The day's agent tasks, oldest first, from data/reports/<day>/agent/*/report.json."""
+    folder = Path(settings.report_dir or "data/reports") / day / "agent"
     records = []
     for path in sorted(folder.glob("*/report.json")):
         try:

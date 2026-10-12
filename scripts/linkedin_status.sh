@@ -37,4 +37,4 @@ else
 fi
 
 echo "== Last 8 log lines (logs/linkedin.log)"
-tail -8 logs/linkedin.log 2>/dev/null | cut -c1-150 | sed 's/^/  /' || true
+tail -8 data/logs/linkedin.log 2>/dev/null | cut -c1-150 | sed 's/^/  /' || true

@@ -46,9 +46,9 @@ class LinkedInSettings:
     post_time: str = "09:30"
     auto_post: bool = False
     max_age_days: int = 3
-    state_path: str = "linkedin/state.json"
-    draft_dir: str = "linkedin/drafts"
-    browser_profile_dir: str = ".browser-profile-linkedin"
+    state_path: str = "data/linkedin/state.json"
+    draft_dir: str = "data/linkedin/drafts"
+    browser_profile_dir: str = "data/browser/linkedin"
     headless: bool = False
     #: Driver, LLM and Telegram settings shared with naukri_bot.
     naukri: Settings = field(default_factory=Settings)

@@ -6,8 +6,8 @@ a Naukri job page. Nothing is guessed or looked up elsewhere. Each email is
 written from her resume and that posting, checked like the tailored summary
 (no claim the resume does not make, no filler words), signed with her real
 contact details, and saved as a draft: an .eml file under
-reports/<date>/emails/, and in Gmail's Drafts folder when GMAIL_APP_PASSWORD
-is set. Nothing is ever sent. Every draft is recorded in data/cold_emails.jsonl
+data/reports/<date>/emails/, and in Gmail's Drafts folder when GMAIL_APP_PASSWORD
+is set. Nothing is ever sent. Every draft is recorded in data/inputs/cold_emails.jsonl
 so no address is written to twice.
 
     python3 -m sites_bot.cold_email [--scan-naukri] [--limit 10] [--dry-run]
@@ -98,16 +98,16 @@ def _posting_header(text: str) -> Dict[str, str]:
 
 
 def leads_from_files(settings: Settings) -> List[Lead]:
-    """Postings saved with tailored resumes, browser-agent reports, and data/company_sites.md."""
+    """Postings saved with tailored resumes, browser-agent reports, and data/inputs/company_sites.md."""
     leads = []  # type: List[Lead]
-    tailored = Path(settings.resume_out_dir or "resume/out") / "tailored"
+    tailored = Path(settings.resume_out_dir or "data/resume/out") / "tailored"
     for posting in sorted(tailored.glob("*/posting.txt")):
         text = posting.read_text(encoding="utf-8", errors="replace")
         header = _posting_header(text)
         for address in find_addresses(text):
             leads.append(Lead(address, header.get("Company", ""), header.get("Title", ""), header.get("URL", ""),
                               "posting saved in %s" % posting.parent.name, text))
-    for record_path in sorted(Path(settings.report_dir or "reports").glob("*/agent/*/report.json")):
+    for record_path in sorted(Path(settings.report_dir or "data/reports").glob("*/agent/*/report.json")):
         try:
             record = json.loads(record_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
@@ -166,7 +166,7 @@ def leads_from_naukri(driver: Any, settings: Settings, ledger: Any, days: int, l
 
 
 def records_path(settings: Settings) -> Path:
-    return Path(settings.data_dir or "data") / RECORDS_NAME
+    return Path(settings.data_dir or "data/inputs") / RECORDS_NAME
 
 
 def read_records(settings: Settings) -> List[Dict[str, Any]]:
@@ -375,7 +375,7 @@ def draft_all(settings: Settings, profile: Profile, client: Any, leads: List[Lea
     records = read_records(settings)
     sender = settings.cold_email_from or settings.google_email or settings.email
     base = resume_module.load_base(settings.resume_path)
-    folder = Path(settings.report_dir or "reports") / now.strftime("%Y-%m-%d") / "emails"
+    folder = Path(settings.report_dir or "data/reports") / now.strftime("%Y-%m-%d") / "emails"
     for lead in unique_leads(settings, profile, leads):
         if counts["drafted"] >= limit:
             break

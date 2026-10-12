@@ -6,7 +6,7 @@ from the search pages, ranks them with the same scoring as Naukri, opens each
 chosen job, clicks Apply, answers any form with the company-site filler, and
 counts the application only when the board shows the job as applied after a
 reload. A board page the script cannot finish goes to the browser agent when
-it is on, and otherwise to data/company_sites.md for a person.
+it is on, and otherwise to data/inputs/company_sites.md for a person.
 
     python3 -m sites_bot.platforms --site hirist --limit 10 [--dry-run]
 """

@@ -84,7 +84,7 @@ def human_check(page_text: str) -> bool:
 
 
 def save_screenshot(driver: Any, settings: Settings, label: str) -> Optional[Path]:
-    folder = Path(settings.screenshot_dir or "screenshots")
+    folder = Path(settings.screenshot_dir or "data/screenshots")
     path = folder / ("company-site-%s-%s.png" % (label, datetime.now().strftime("%Y%m%d-%H%M%S")))
     try:
         folder.mkdir(parents=True, exist_ok=True)

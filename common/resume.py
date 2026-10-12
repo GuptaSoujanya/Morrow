@@ -1,6 +1,6 @@
 """Tailor the LaTeX resume to one job, compile it, and put it on the Naukri profile.
 
-The resume at RESUME_PATH (resume/base.tex) is the copy the user edits by
+The resume at RESUME_PATH (data/resume/base.tex) is the copy the user edits by
 hand; the bot never writes to it. For one job, three parts are adjusted: the
 one-line subtitle under the name, the Summary paragraph, and the order of the
 items inside each Skills category. Nothing else changes, and nothing is
@@ -60,7 +60,7 @@ _RESUME_MESSAGE = "#attachCVMsgBox"
 #: Naukri shows "Resume has been successfully uploaded." within a second and clears it after ~5 s.
 UPLOAD_WAIT_S = 60
 
-# The three tailored parts, located by the structure of resume/base.tex.
+# The three tailored parts, located by the structure of data/resume/base.tex.
 _SUBTITLE = re.compile(
     r"(\{\\normalsize\\color\{muted\}\s*)(?P<subtitle>[^\n}]*?)(\s*\}\\\\\[\d+pt\])"
 )

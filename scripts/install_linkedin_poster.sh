@@ -11,14 +11,14 @@ case "$PROJECT_DIR" in
   "$HOME/Desktop"*|"$HOME/Documents"*|"$HOME/Downloads"*)
     echo "WARNING: $PROJECT_DIR is under Desktop, Documents or Downloads." >&2
     echo "macOS privacy rules block background launchd jobs from reading those folders," >&2
-    echo "so the agent fails with 'Operation not permitted' in logs/launchd-linkedin.err." >&2
+    echo "so the agent fails with 'Operation not permitted' in data/logs/launchd-linkedin.err." >&2
     echo "Either move the checkout (for example ~/naukri/apply) and re-run this script, or" >&2
     echo "grant the Python binary that venv/bin/python points at access to this folder under" >&2
     echo "System Settings > Privacy & Security > Files and Folders." >&2
     ;;
 esac
 
-mkdir -p "$PROJECT_DIR/logs"
+mkdir -p "$PROJECT_DIR/data/logs"
 cat > "$PLIST" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -29,8 +29,8 @@ cat > "$PLIST" <<PLIST
   <array><string>$PROJECT_DIR/scripts/run_linkedin_post.sh</string></array>
   <key>RunAtLoad</key><true/>
   <key>StartInterval</key><integer>1800</integer>
-  <key>StandardOutPath</key><string>$PROJECT_DIR/logs/launchd-linkedin.out</string>
-  <key>StandardErrorPath</key><string>$PROJECT_DIR/logs/launchd-linkedin.err</string>
+  <key>StandardOutPath</key><string>$PROJECT_DIR/data/logs/launchd-linkedin.out</string>
+  <key>StandardErrorPath</key><string>$PROJECT_DIR/data/logs/launchd-linkedin.err</string>
 </dict>
 </plist>
 PLIST
