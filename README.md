@@ -99,14 +99,14 @@ MAX_APPLICATIONS=50
 ### 4. Run the bot
 
 ```bash
-python Naukri-Edge.py
+python legacy/Naukri-Edge.py
 ```
 
 > **Note:** The script uses `webdriver-manager` to automatically download the correct EdgeDriver. No manual driver setup needed!
 
 ### 5. Check results
 
-After running, results are saved to **`naukriapplied.csv`** with two columns:
+After running, results are saved to **`naukriapplied.csv`** (in the folder you ran it from) with two columns:
 - `passed` — URLs of jobs successfully applied to
 - `failed` — URLs where the apply attempt failed
 
@@ -115,7 +115,7 @@ After running, results are saved to **`naukriapplied.csv`** with two columns:
 Everything below can be run from one terminal screen, without remembering a single flag:
 
 ```bash
-../sandy                  # from apply/, or the full path from anywhere
+scripts/sandy             # or the full path from anywhere
 venv/bin/python -m sandy  # the same thing
 ```
 
@@ -143,8 +143,9 @@ the Mermaid diagrams are drawn (in the terminal they show as text).
 
 ## 🤖 naukri_bot (v2 — recommended)
 
-`Naukri-Edge.py` and `Naukri-Recommended.py` above are the **legacy** scripts. They are kept
-as-is and still work the way they always did. New work happens in the `naukri_bot/` package,
+`legacy/Naukri-Edge.py` and `legacy/Naukri-Recommended.py` above are the **legacy** scripts. They are kept
+as-is and still work the way they always did. New work happens in the `naukri_bot/` package
+(with what it shares with the other bots in `common/`),
 which exists because the legacy scripts could not answer three questions honestly:
 
 1. *Did the application actually go through?* — a click that did not raise proves nothing.
@@ -184,7 +185,7 @@ ones until the daily quota is spent.
 ```bash
 pip install -r requirements.txt
 cp .env.example .env                          # credentials + tuning
-mkdir -p data && cp naukri_bot/profile.example.yaml data/inputs/profile.yaml
+mkdir -p data/inputs && cp common/profile.example.yaml data/inputs/profile.yaml
 ```
 
 Then fill in `data/inputs/profile.yaml`. Fields you leave blank are facts the bot **does not know** — it
@@ -552,7 +553,7 @@ python3 -m common.report --date 2026-10-09
 python3 course/serve.py                       # the course site at http://localhost:8000
 ```
 
-Everything in the report comes from the records: the database, `data/`, `data/logs/`, `data/linkedin/`.
+Everything in the report comes from the records: the database and the files under `data/`.
 The report itself is not written by a model; the AI's file edits it lists carry their quotes.
 
 ## 💼 LinkedIn: one post a day
@@ -641,36 +642,39 @@ Naukri-autoapply-bot/
 ├── .gitignore            # Files to exclude from git
 ├── requirements.txt      # Python dependencies
 ├── README.md             # This file
-├── profile.example.yaml  # (in naukri_bot/) copy to data/inputs/profile.yaml and fill in your facts
 │
-├── sandy/                # the terminal screen that runs everything (../sandy)
-├── course/               # the PrepForge study site Sandy reads (python3 course/serve.py)
-├── naukri_bot/           # v2 package — the maintained bot (python3 -m naukri_bot)
-│   ├── __main__.py       #   entry point
-│   ├── cli.py            #   argument parsing + pipeline wiring
+├── common/               # code every bot shares
 │   ├── models.py         #   shared dataclasses; every other module imports from here
 │   ├── config.py         #   .env -> Settings
+│   ├── run.py            #   exit codes, logging, each run's saved log, Telegram alerts
 │   ├── profile.py        #   profile.yaml + resume -> Profile
+│   ├── profile.example.yaml  # copy to data/inputs/profile.yaml and fill in your facts
 │   ├── browser.py        #   driver factory with anti-detection
+│   ├── llm.py            #   LLM client (claude CLI by default, no API key needed)
+│   ├── answers.py        #   screening answers: exact cache -> profile -> LLM -> abstain
+│   ├── assist.py         #   AI fills answers.txt / profile.yaml blanks from quoted lines (python3 -m common.assist)
+│   ├── ledger.py         #   SQLite applied-history + rolling 24h quota ledger
+│   ├── resume.py         #   LaTeX resume -> PDF, per-job tailoring, upload (python3 -m common.resume)
+│   └── report.py         #   data/reports/<date>/report.md (python3 -m common.report)
+│
+├── naukri_bot/           # applying on Naukri (python3 -m naukri_bot)
+│   ├── __main__.py       #   entry point
+│   ├── cli.py            #   argument parsing + pipeline wiring
 │   ├── auth.py           #   login that VERIFIES it worked
 │   ├── sources.py        #   candidate collection (freshness-sorted search + recommended)
 │   ├── ranking.py        #   resume-based scoring — our order, not Naukri's
-│   ├── llm.py            #   LLM client (claude CLI by default, no API key needed)
-│   ├── answers.py        #   screening answers: exact cache -> profile -> LLM -> abstain
 │   ├── apply.py          #   verified apply; native vs external redirect
+│   ├── chatbot.py        #   questionnaire drawer handling
+│   ├── early_access.py   #   share interest on Early Access roles (no apply quota)
+│   └── update_profile.py #   keep the profile "recently updated" (python3 -m naukri_bot.update_profile)
+│
+├── sites_bot/            # applying everywhere else
 │   ├── external.py       #   apply on company websites (python3 -m sites_bot.external)
 │   ├── accounts.py       #   career-site sign-in / sign-up (Google, then email + password)
 │   ├── page_brain.py     #   no form on a company page: removed posting, or ask the model what to click
 │   ├── browser_agent.py  #   stuck company site: Claude Code drives this Chrome via Playwright MCP
 │   ├── platforms.py      #   other job boards: Hirist, Instahyre (python3 -m sites_bot.platforms)
-│   ├── cold_email.py     #   recruiter emails as drafts, never sent (python3 -m sites_bot.cold_email)
-│   ├── assist.py         #   AI fills answers.txt / profile.yaml blanks from quoted lines (python3 -m common.assist)
-│   ├── chatbot.py        #   questionnaire drawer handling
-│   ├── early_access.py   #   share interest on Early Access roles (no apply quota)
-│   ├── ledger.py         #   SQLite applied-history + rolling 24h quota ledger
-│   ├── resume.py         #   LaTeX resume -> PDF, per-job tailoring, upload (python3 -m common.resume)
-│   ├── report.py         #   data/reports/<date>/report.md (python3 -m common.report)
-│   └── update_profile.py #   keep the profile "recently updated" (python3 -m naukri_bot.update_profile)
+│   └── cold_email.py     #   recruiter emails as drafts, never sent (python3 -m sites_bot.cold_email)
 │
 ├── linkedin_bot/         # one LinkedIn post a day (python3 -m linkedin_bot)
 │   ├── config.py         #   LINKEDIN_* keys from the same .env
@@ -680,19 +684,23 @@ Naukri-autoapply-bot/
 │   ├── publisher.py      #   Selenium publish, verified at every stage; selectors at the top
 │   └── cli.py            #   --dry-run / --propose / --post / --if-due
 │
-├── data/                 # YOUR files: profile.yaml (facts), answers.txt (answers), company_sites.md (to finish),
-│                         #   accounts.md (career-site accounts), backups/ (before each AI edit)
-├── data/resume/               # base.tex (your resume) + out/base and out/tailored/<Company - Role>/
-├── data/reports/              # one folder per day: report.md + data/logs/ of every run; ai_changes.jsonl (auto-generated)
-├── scripts/              # launchd install/run/status, google_login.sh
-├── data/linkedin/             # drafts, cards and posted-URL state (auto-generated)
-├── data/logs/                 # profile updater + LinkedIn logs and slot memory (auto-generated)
-├── data/screenshots/          # page captures of failed runs (auto-generated)
-├── data/db/naukri_bot.db         # v2 state: applied history + quota memory (auto-generated)
-├── Naukri-Edge.py        # Legacy bot script for Microsoft Edge browser
-├── Naukri-Recommended.py # Legacy bot for the recommended-jobs feed
-├── Naukri autoapply jobs.ipynb  # Jupyter Notebook version (legacy)
-└── naukriapplied.csv     # Legacy output: applied/failed job links (auto-generated)
+├── sandy/                # the terminal screen that runs everything (scripts/sandy)
+├── course/               # the PrepForge study site Sandy reads (python3 course/serve.py)
+├── scripts/              # the sandy launcher, launchd install/run/status, google_login.sh
+├── tests/                # one folder per package: common/, naukri/, sites/, linkedin/, sandy/
+├── legacy/               # the original scripts: Naukri-Edge.py, Naukri-Recommended.py, the notebook, their CSVs
+│
+└── data/                 # everything personal or generated (gitignored)
+    ├── inputs/           #   YOUR files: profile.yaml (facts), answers.txt (answers), company_sites.md (to finish),
+    │                     #   accounts.md (career-site accounts), backups/ (before each AI edit), cold_emails.jsonl
+    ├── resume/           #   base.tex (your resume) + out/base and out/tailored/<Company - Role>/
+    ├── db/               #   naukri_bot.db: applied history + quota memory
+    ├── browser/          #   saved logins: the naukri/ and linkedin/ browser profiles
+    ├── worklists/        #   external_jobs.md and unanswered_questions.md from the Naukri run
+    ├── reports/          #   one folder per day: report.md + logs/ of every run; ai_changes.jsonl
+    ├── linkedin/         #   drafts, cards and posted-URL state
+    ├── logs/             #   profile updater + LinkedIn logs and slot memory
+    └── screenshots/      #   page captures of failed runs
 ```
 
 ## 🔧 Troubleshooting

@@ -1,6 +1,6 @@
 # Template for profile.yaml. Copy it, then replace every placeholder.
 #
-#     cp naukri_bot/profile.example.yaml profile.yaml
+#     cp common/profile.example.yaml data/inputs/profile.yaml
 #
 # profile.yaml is gitignored and must stay that way: it holds a tax ID, a phone
 # number and salary expectations.

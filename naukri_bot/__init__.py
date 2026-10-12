@@ -17,8 +17,8 @@ Design rules that every module in this package obeys:
 * Ranking is ours, not Naukri's: candidates are scored against the user's own
   resume and freshness, never accepted in the order Naukri returns them.
 
-The legacy scripts (``Naukri-Edge.py``, ``Naukri-Recommended.py``) are left in
-place untouched; this package does not import from them.
+The legacy scripts (``legacy/Naukri-Edge.py``, ``legacy/Naukri-Recommended.py``)
+are kept untouched; this package does not import from them.
 """
 
 __version__ = "2.0.0"

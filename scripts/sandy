@@ -1,0 +1,14 @@
+#!/bin/zsh
+# Sandy: one terminal screen that runs the job bots and the study site.
+# Start it from anywhere:  ~/Desktop/course/apply/scripts/sandy
+cd "${0:A:h}/.." || exit 1
+if [ ! -x venv/bin/python ]; then
+  echo "The bots' Python is missing. Create it once:"
+  echo "  cd \"$PWD\" && python3 -m venv venv && venv/bin/pip install -r requirements.txt"
+  exit 1
+fi
+if ! venv/bin/python -c "import textual" 2>/dev/null; then
+  echo "Installing the screen's one dependency (textual)..."
+  venv/bin/pip install -q -r requirements.txt || exit 1
+fi
+exec venv/bin/python -m sandy "$@"

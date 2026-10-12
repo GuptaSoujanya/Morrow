@@ -1165,7 +1165,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             )
             return EXIT_CONFIG
         logger.error(
-            "Copy profile.example.yaml to %s and fill it in.", settings.profile_path
+            "Copy common/profile.example.yaml to %s and fill it in.", settings.profile_path
         )
         return EXIT_CONFIG
 

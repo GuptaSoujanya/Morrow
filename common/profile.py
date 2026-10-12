@@ -150,7 +150,7 @@ def load_profile(settings: Settings) -> Profile:
     profile_path = Path(settings.profile_path)
     if not profile_path.is_file():
         raise ProfileError(
-            "Profile file not found at %s. Copy profile.example.yaml to profile.yaml "
+            "Profile file not found at %s. Copy common/profile.example.yaml there "
             "and fill it in." % settings.profile_path
         )
     try:
