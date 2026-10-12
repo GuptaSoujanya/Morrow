@@ -92,7 +92,7 @@ def test_the_day_lists_what_was_applied_and_what_was_not(monkeypatch, tmp_path):
     text = report.build_report(settings, DAY, NOON)
 
     assert text.startswith("# Daily report: Saturday, 10 October 2026")
-    assert "- Applied: 1 on Naukri, 1 on company sites" in text
+    assert "- Applied: 1 on Naukri, 0 on other job boards, 1 on company sites" in text
     assert "- Tried without applying: 2" in text
     assert "| 09:05 | Co a | Role a | Naukri | [job](https://www.naukri.com/job-a) |" in text
     assert "| 09:09 | Co b | Role b | Company site |" in text

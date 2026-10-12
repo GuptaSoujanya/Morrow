@@ -477,6 +477,35 @@ python3 -m naukri_bot.browser_agent --url "https://careers.acme.com" --task "fin
 
 A task needs Node (for `npx @playwright/mcp`) and the `claude` command on `PATH`.
 
+### Other job boards: Hirist, Instahyre
+
+```bash
+python3 -m naukri_bot.platforms --dry-run          # boards in PLATFORMS: collect, rank, open each job, click nothing
+python3 -m naukri_bot.platforms --site hirist --limit 10
+```
+
+One loop serves every board, with the same facts, answers, ranking (`MIN_SCORE`, `MAX_DAYS_OLD`)
+and records as Naukri. It reads the board's own job feed for your profile, then one search page per
+keyword, ranks the cards, opens each chosen job and clicks Apply. A one-click apply, or the board's
+own question form (answered from `data/` like a company site), counts as applied only when the job
+page shows **Applied** after a reload; such applications use no Naukri quota and are marked with the
+board's name in the daily report. A board that sends the job to the employer's site hands it to the
+company-site flow (`EXTERNAL_APPLY`); a form the script cannot finish goes to the browser agent when
+`BROWSER_AGENT=true`, otherwise to `data/company_sites.md`. A job where Apply was clicked but the
+board never showed Applied is never clicked again automatically.
+
+Sign in to each board once in the bot's browser (the run stops with this hint when a board is
+signed out), and finish the board's own profile, since recruiters there read it:
+
+```bash
+scripts/google_login.sh https://www.hirist.tech/ https://www.instahyre.com/login/
+python3 -m naukri_bot.browser_agent --url "https://www.instahyre.com/candidate/onboard/" \
+  --task "Complete her candidate profile on this job site from the facts; upload the resume; never invent anything"
+```
+
+Each board is one `Board` record at the top of `naukri_bot/platforms.py`: its feed and search
+addresses, the pattern of its job links, and the words on its Apply and Applied buttons.
+
 ### Daily report
 
 Every Naukri run, profile update and LinkedIn post rewrites `reports/<YYYY-MM-DD>/report.md`:
@@ -611,6 +640,7 @@ Naukri-autoapply-bot/
 │   ├── accounts.py       #   career-site sign-in / sign-up (Google, then email + password)
 │   ├── page_brain.py     #   no form on a company page: removed posting, or ask the model what to click
 │   ├── browser_agent.py  #   stuck company site: Claude Code drives this Chrome via Playwright MCP
+│   ├── platforms.py      #   other job boards: Hirist, Instahyre (python3 -m naukri_bot.platforms)
 │   ├── assist.py         #   AI fills answers.txt / profile.yaml blanks from quoted lines (python3 -m naukri_bot.assist)
 │   ├── chatbot.py        #   questionnaire drawer handling
 │   ├── early_access.py   #   share interest on Early Access roles (no apply quota)

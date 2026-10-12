@@ -31,6 +31,7 @@ MAX_LISTED = 40
 _OUTCOMES = {
     ApplyStatus.APPLIED: "Applied on Naukri",
     ApplyStatus.APPLIED_EXTERNAL: "Applied on the company site",
+    ApplyStatus.APPLIED_PLATFORM: "Applied on another job board",
     ApplyStatus.EXTERNAL_MANUAL: "Company site, needs you",
     ApplyStatus.EXTERNAL_SKIPPED: "Company site, not tried",
     ApplyStatus.ALREADY_APPLIED: "Already applied earlier",
@@ -42,7 +43,7 @@ _OUTCOMES = {
     ApplyStatus.SESSION_EXPIRED: "Signed out mid-run",
     ApplyStatus.ERROR: "Error",
 }
-_SENT = (ApplyStatus.APPLIED, ApplyStatus.APPLIED_EXTERNAL)
+_SENT = (ApplyStatus.APPLIED, ApplyStatus.APPLIED_EXTERNAL, ApplyStatus.APPLIED_PLATFORM)
 _SIDEBAR_LINK = re.compile(r"^\s*-\s*\[([^\]]+)\]\(([^)]+\.md)\)")
 
 
@@ -74,6 +75,14 @@ def funnel_text(record: Dict[str, Any]) -> str:
     if record.get("applied", 0) >= record.get("target", 0) > 0:
         line += " (stopped at the target of %d)" % record["target"]
     return line
+
+
+def _where(row: Dict[str, Any]) -> str:
+    if row.get("status") == ApplyStatus.APPLIED:
+        return "Naukri"
+    if row.get("status") == ApplyStatus.APPLIED_PLATFORM:
+        return str(row.get("job_id", "")).split(":", 1)[0].capitalize() or "Job board"
+    return "Company site"
 
 
 def _cell(value: Any, limit: int = 140) -> str:
@@ -319,6 +328,7 @@ def build_report(settings: Settings, day: Optional[date] = None, now: Optional[d
     untried = _untried_company_sites()
 
     naukri = sum(1 for row in sent if row.get("status") == ApplyStatus.APPLIED)
+    boards = sum(1 for row in sent if row.get("status") == ApplyStatus.APPLIED_PLATFORM)
     if linkedin["posted"]:
         linkedin_line = "posted \"%s\"" % _cell(linkedin["posted"][-1].get("title"), 80)
     elif linkedin["draft"]:
@@ -333,7 +343,8 @@ def build_report(settings: Settings, day: Optional[date] = None, now: Optional[d
         "",
         "## At a glance",
         "",
-        "- Applied: %d on Naukri, %d on company sites" % (naukri, len(sent) - naukri),
+        "- Applied: %d on Naukri, %d on other job boards, %d on company sites" % (
+            naukri, boards, len(sent) - naukri - boards),
         "- Tried without applying: %d" % len(not_sent),
         "- Company-site applications waiting for you: %d" % len(sites),
         "- Questions waiting for your answer in answers.txt: %d" % len(questions),
@@ -354,7 +365,7 @@ def build_report(settings: Settings, day: Optional[date] = None, now: Optional[d
                     _local_clock(row.get("at", "")),
                     _cell(row.get("company") or "-", 60),
                     _cell(row.get("title") or "-", 80),
-                    "Naukri" if row.get("status") == ApplyStatus.APPLIED else "Company site",
+                    _where(row),
                     row.get("url") or "",
                 )
             )

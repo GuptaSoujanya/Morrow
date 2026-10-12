@@ -176,6 +176,8 @@ def load_settings(
         "browser_agent_budget_usd": _env_float("BROWSER_AGENT_BUDGET_USD", defaults.browser_agent_budget_usd),
         "browser_agent_model": os.getenv("BROWSER_AGENT_MODEL", defaults.browser_agent_model),
         "browser_agent_mcp": os.getenv("BROWSER_AGENT_MCP", defaults.browser_agent_mcp) or defaults.browser_agent_mcp,
+        "platforms": os.getenv("PLATFORMS", defaults.platforms),
+        "platform_limit": _env_int("PLATFORM_LIMIT", defaults.platform_limit),
         "report_dir": os.getenv("REPORT_DIR", defaults.report_dir),
         "course_dir": os.getenv("COURSE_DIR", defaults.course_dir),
         "course_start_date": os.getenv("COURSE_START_DATE", defaults.course_start_date),
@@ -186,6 +188,7 @@ def load_settings(
     repo_root = Path(__file__).resolve().parent.parent
     for path_key in (
         "env_file",
+        "browser_profile_dir",
         "profile_path",
         "resume_path",
         "db_path",

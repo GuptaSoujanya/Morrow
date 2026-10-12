@@ -22,11 +22,12 @@ mkdir -p "$PROFILE"
 
 echo "Opening Chrome on $PROFILE"
 echo "1. Sign in to your Google account in that window."
-echo "2. Quit that Chrome window with Cmd+Q when you are done; the bot needs the profile free."
+echo "2. Sign in with Google on any other tab it opened (job sites given as arguments)."
+echo "3. Quit that Chrome window with Cmd+Q when you are done; the bot needs the profile free."
 open -na "Google Chrome" --args \
   --user-data-dir="$PROFILE" \
   --use-mock-keychain \
   --password-store=basic \
   --no-first-run \
   --no-default-browser-check \
-  "https://accounts.google.com/"
+  "https://accounts.google.com/" "$@"

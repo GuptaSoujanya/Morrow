@@ -88,6 +88,9 @@ class ApplyStatus:
     #: Submitted on the employer's own site and confirmed there. Uses no
     #: Naukri quota, so it is kept apart from APPLIED on purpose.
     APPLIED_EXTERNAL = "applied_external"
+    #: Applied on another job board (Hirist, Instahyre, ...) and shown there as
+    #: applied after a reload. Uses no Naukri quota.
+    APPLIED_PLATFORM = "applied_platform"
     #: The employer's site needed something the bot does not have (an account,
     #: an unanswered question, a required cover letter); it is listed in
     #: data/company_sites.md for the user to finish.
@@ -412,6 +415,10 @@ class Settings:
     browser_agent_model: str = ""
     # The MCP server command, pinned so a run never waits on a fresh download.
     browser_agent_mcp: str = "npx -y @playwright/mcp@0.0.83"
+    # Other job boards (python3 -m naukri_bot.platforms): which ones a run works
+    # on by default, and applications per board per run.
+    platforms: str = "hirist,instahyre"
+    platform_limit: int = 10
     # One Markdown report per day: what ran, what was applied to, what is left.
     report_dir: str = "reports"
     # The study site in course/; the report names one module of its plan a day.

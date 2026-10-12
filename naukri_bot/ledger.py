@@ -128,8 +128,8 @@ class Ledger:
         try:
             with self._lock:
                 row = self._connection.execute(
-                    "SELECT 1 FROM applications WHERE job_id = ? AND status IN (?, ?) LIMIT 1",
-                    (job_id, ApplyStatus.APPLIED, ApplyStatus.APPLIED_EXTERNAL),
+                    "SELECT 1 FROM applications WHERE job_id = ? AND status IN (?, ?, ?) LIMIT 1",
+                    (job_id, ApplyStatus.APPLIED, ApplyStatus.APPLIED_EXTERNAL, ApplyStatus.APPLIED_PLATFORM),
                 ).fetchone()
             return row is not None
         except sqlite3.Error:
