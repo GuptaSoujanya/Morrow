@@ -110,13 +110,13 @@ After running, results are saved to **`naukriapplied.csv`** (in the folder you r
 - `passed` — URLs of jobs successfully applied to
 - `failed` — URLs where the apply attempt failed
 
-## 🖥️ Sandy: one screen for everything
+## 🖥️ tui: one screen for everything
 
 Everything below can be run from one terminal screen, without remembering a single flag:
 
 ```bash
-scripts/sandy             # or the full path from anywhere
-venv/bin/python -m sandy  # the same thing
+scripts/tui               # or the full path from anywhere
+venv/bin/python -m tui    # the same thing
 ```
 
 Pick a section on the left (or press `1`-`9`, `0`), set its options, press **Run**, and watch
@@ -684,10 +684,10 @@ Naukri-autoapply-bot/
 │   ├── publisher.py      #   Selenium publish, verified at every stage; selectors at the top
 │   └── cli.py            #   --dry-run / --propose / --post / --if-due
 │
-├── sandy/                # the terminal screen that runs everything (scripts/sandy)
-├── course/               # the PrepForge study site Sandy reads (python3 course/serve.py)
-├── scripts/              # the sandy launcher, launchd install/run/status, google_login.sh
-├── tests/                # one folder per package: common/, naukri/, sites/, linkedin/, sandy/
+├── tui/                  # the terminal screen that runs everything (scripts/tui)
+├── course/               # the PrepForge study site the screen reads (python3 course/serve.py)
+├── scripts/              # the tui launcher, launchd install/run/status, google_login.sh
+├── tests/                # one folder per package: common/, naukri/, sites/, linkedin/, tui/
 ├── legacy/               # the original scripts: Naukri-Edge.py, Naukri-Recommended.py, the notebook, their CSVs
 │
 └── data/                 # everything personal or generated (gitignored)
