@@ -19,8 +19,8 @@ PyYAML>=6.0,<7.0
 # Image cards for the LinkedIn poster (linkedin_bot)
 Pillow>=10.0,<12.0
 
-# The terminal screen that runs everything (scripts/tui, or python -m tui)
-textual>=0.80,<9.0
+# Daily reports on the control site that runs everything (scripts/web, or python -m web)
+markdown-it-py>=3.0,<5.0
 
 # --- Required by the legacy scripts only ---
 # legacy/Naukri-Edge.py parses with html5lib and writes results with pandas.

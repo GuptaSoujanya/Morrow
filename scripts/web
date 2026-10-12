@@ -1,0 +1,14 @@
+#!/bin/zsh
+# web: the control site, one page on this computer that runs the job bots and holds the course.
+# Start it from anywhere:  ~/Desktop/apply/scripts/web   (then use http://localhost:8000)
+cd "${0:A:h}/.." || exit 1
+if [ ! -x venv/bin/python ]; then
+  echo "The bots' Python is missing. Create it once:"
+  echo "  cd \"$PWD\" && python3 -m venv venv && venv/bin/pip install -r requirements.txt"
+  exit 1
+fi
+if ! venv/bin/python -c "import markdown_it" 2>/dev/null; then
+  echo "Installing the site's one dependency (markdown-it-py)…"
+  venv/bin/pip install -q -r requirements.txt || exit 1
+fi
+exec venv/bin/python -m web "$@"

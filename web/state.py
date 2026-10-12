@@ -1,6 +1,6 @@
-"""What the terminal screen reads and runs, kept apart from the widgets so it can be tested.
+"""What the control site reads, runs and writes, kept apart from the server so it can be tested.
 
-Every command is the same one you would type in apply/ by hand; the screen only
+Every command is the same one you would type in apply/ by hand; the site only
 collects the options, shows the command, and streams its output.
 """
 from __future__ import annotations
@@ -10,14 +10,10 @@ import json
 import os
 import re
 import shlex
-import signal
-import socket
-import subprocess
 import sys
-import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional, Set, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 from common.report import course_modules as plan_order
 
@@ -30,9 +26,7 @@ COMPANY_SITES = APPLY / "data" / "inputs" / "company_sites.md"
 RESUMES = APPLY / "data" / "resume"
 REPORTS = APPLY / "data" / "reports"
 LOGS = APPLY / "data" / "logs"
-SERVE = COURSE / "serve.py"
 STUDIED = REPORTS / "studied.json"
-DEFAULT_PORT = 8000
 #: Pages that only work in a browser: the news page fetches its headlines with JavaScript.
 BROWSER_ONLY = {"news.md"}
 START_HERE = "Start here"
@@ -248,14 +242,67 @@ def blank_facts(path: Path = PROFILE) -> List[Tuple[int, str]]:
     return blank
 
 
-def waiting_company_sites(path: Path = COMPANY_SITES) -> List[str]:
-    """'Company · Title' for each company-site application that still needs you."""
-    entries = []
+def company_sites(path: Path = COMPANY_SITES) -> List[Dict[str, str]]:
+    """Each company-site application that still needs you: its heading parts and its "- Key: value" lines."""
+    entries = []  # type: List[Dict[str, str]]
     for line in _read(path).splitlines():
         if line.startswith("## "):
             parts = [p.strip() for p in line[3:].split("|")]
-            entries.append(" · ".join(parts[1:]) if len(parts) > 2 else line[3:].strip())
+            if len(parts) > 2:
+                entry = {"when": parts[0], "company": parts[1], "title": " · ".join(parts[2:])}
+            else:
+                entry = {"when": "", "company": "", "title": line[3:].strip()}
+            entry["name"] = " · ".join(p for p in (entry["company"], entry["title"]) if p)
+            entries.append(entry)
+        elif entries and line.startswith("- ") and ":" in line:
+            key, _, value = line[2:].partition(":")
+            entries[-1][key.strip().lower()] = value.strip()
     return entries
+
+
+def waiting_company_sites(path: Path = COMPANY_SITES) -> List[str]:
+    """'Company · Title' for each company-site application that still needs you."""
+    return [entry["name"] for entry in company_sites(path)]
+
+
+_FACT_LITERAL = re.compile(r"-?\d+(\.\d+)?|true|false", re.IGNORECASE)
+
+
+def _check_line(lines: List[str], line: int, name: str) -> str:
+    if not 1 <= line <= len(lines):
+        raise ValueError(f"{name} changed since you opened it; reload and try again")
+    return lines[line - 1]
+
+
+def save_answer(line: int, answer: str, path: Path = ANSWERS) -> None:
+    """Write your answer on the empty ``A:`` line the question is waiting on."""
+    answer = " ".join(answer.split())
+    if not answer:
+        raise ValueError("write an answer first")
+    lines = _read(path).splitlines(keepends=True)
+    text = _check_line(lines, line, path.name)
+    if not text.strip().startswith("A:") or text.strip()[2:].strip():
+        raise ValueError(f"{path.name} changed since you opened it; reload and try again")
+    indent = text[: len(text) - len(text.lstrip())]
+    lines[line - 1] = f"{indent}A: {answer}\n"
+    path.write_text("".join(lines), encoding="utf-8")
+
+
+def save_fact(line: int, value: str, path: Path = PROFILE) -> None:
+    """Fill one blank FILL fact in profile.yaml, keeping its comment."""
+    value = " ".join(value.split())
+    if not value:
+        raise ValueError("write a value first")
+    lines = _read(path).splitlines(keepends=True)
+    text = _check_line(lines, line, path.name)
+    if (line, text.partition(":")[0].strip()) not in blank_facts(path):
+        raise ValueError(f"{path.name} changed since you opened it; reload and try again")
+    body, _, comment = text.rstrip("\n").partition("#")
+    key = body.partition(":")[0]
+    shown = value.lower() if _FACT_LITERAL.fullmatch(value) else json.dumps(value, ensure_ascii=False)
+    filled = f"{key}: {shown}"
+    lines[line - 1] = f"{filled.ljust(len(body) - 1)} #{comment}\n"
+    path.write_text("".join(lines), encoding="utf-8")
 
 
 def report_path(day: Optional[dt.date] = None) -> Path:
@@ -266,6 +313,28 @@ def report_days() -> List[str]:
     if not REPORTS.is_dir():
         return []
     return sorted((p.parent.name for p in REPORTS.glob("*/report.md")), reverse=True)
+
+
+def report_html(day: dt.date) -> str:
+    """The day's report as HTML, its own links pointing at the files saved next to it."""
+    from markdown_it import MarkdownIt
+
+    md = MarkdownIt("commonmark", {"html": False}).enable(["table", "strikethrough"])
+    tokens = md.parse(_read(report_path(day)))
+    base = f"/reports/{day.isoformat()}/"
+    for token in tokens:
+        for child in [token, *(token.children or [])]:
+            for attr in ("href", "src"):
+                target = child.attrGet(attr)
+                if not isinstance(target, str):
+                    continue
+                if "://" in target or target.startswith(("mailto:", "#", "/")):
+                    if child.type == "link_open" and "://" in target:
+                        child.attrSet("target", "_blank")
+                        child.attrSet("rel", "noopener")
+                else:
+                    child.attrSet(attr, base + target)
+    return md.renderer.render(tokens, md.options, {})
 
 
 # --- the course -------------------------------------------------------------------
@@ -280,6 +349,12 @@ class Module:
     title: str
     path: str
     file: Path
+
+    @property
+    def route(self) -> str:
+        """Where the course site shows this page: README.md is its folder's page."""
+        route = self.path[: -len(".md")] if self.path.endswith(".md") else self.path
+        return route[: -len("README")] if route.endswith("README") else route
 
 
 def course_modules(course: Path = COURSE) -> List[Module]:
@@ -376,77 +451,6 @@ def mark_studied(module_path: str, done: bool = True, path: Optional[Path] = Non
     return read
 
 
-# --- the study site ---------------------------------------------------------------
-
-
-def site_url(port: int) -> str:
-    return f"http://localhost:{port}"
-
-
-def port_open(port: int) -> bool:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.settimeout(0.2)
-        return sock.connect_ex(("127.0.0.1", port)) == 0
-
-
-def site_pids(port: int) -> List[int]:
-    """PIDs of course serve.py processes listening on the port (not other apps)."""
-    try:
-        listed = subprocess.run(
-            ["lsof", "-nP", "-t", f"-iTCP:{port}", "-sTCP:LISTEN"],
-            capture_output=True, text=True, timeout=5,
-        ).stdout.split()
-    except (OSError, subprocess.TimeoutExpired):
-        return []
-    pids = []
-    for pid in listed:
-        command = subprocess.run(
-            ["ps", "-o", "command=", "-p", pid], capture_output=True, text=True
-        ).stdout
-        if "serve.py" in command:
-            pids.append(int(pid))
-    return pids
-
-
-def start_site(port: int) -> Tuple[bool, str]:
-    """Start the study site in the background; it keeps running after the screen closes."""
-    url = site_url(port)
-    if port_open(port):
-        if site_pids(port):
-            return True, f"The study site is already running at {url}"
-        return False, f"Another app is using port {port}. Pick another port."
-    LOGS.mkdir(exist_ok=True)
-    with open(LOGS / "study_site.log", "ab") as log:
-        subprocess.Popen(
-            [PYTHON, str(SERVE), str(port)],
-            cwd=COURSE, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
-            start_new_session=True,
-        )
-    for _ in range(30):
-        if port_open(port):
-            return True, f"Study site running at {url}"
-        time.sleep(0.1)
-    return False, "The study site did not start; see data/logs/study_site.log"
-
-
-def stop_site(port: int) -> Tuple[bool, str]:
-    pids = site_pids(port)
-    if not pids:
-        if port_open(port):
-            return False, f"Port {port} belongs to another app, not the study site."
-        return False, "The study site is not running."
-    for pid in pids:
-        try:
-            os.kill(pid, signal.SIGTERM)
-        except ProcessLookupError:
-            pass
-    for _ in range(30):
-        if not port_open(port):
-            break
-        time.sleep(0.1)
-    return True, "Study site stopped."
-
-
 def first_name(path: Path = PROFILE) -> str:
     for line in _read(path).splitlines():
         if line.startswith("first_name:"):
@@ -458,8 +462,3 @@ def greeting(now: Optional[dt.datetime] = None) -> str:
     hour = (now or dt.datetime.now()).hour
     return "Good morning" if hour < 12 else "Good afternoon" if hour < 17 else "Good evening"
 
-
-def tidy(text: str, width: int = 70) -> str:
-    """One line of a question or title, short enough for a list."""
-    text = " ".join(text.split())
-    return text if len(text) <= width else text[: width - 1] + "…"
