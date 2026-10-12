@@ -8,9 +8,9 @@ import yaml
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from naukri_bot import assist
-from naukri_bot.answers import AnswerBook
-from naukri_bot.models import Profile, Settings
+from common import assist
+from common.answers import AnswerBook
+from common.models import Profile, Settings
 
 
 ANSWERS = """# Your answers

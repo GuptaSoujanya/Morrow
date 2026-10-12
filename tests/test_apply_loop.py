@@ -20,8 +20,9 @@ import pytest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from naukri_bot import apply as apply_module
-from naukri_bot import auth, browser, cli, llm, ranking, sources
-from naukri_bot.models import (
+from naukri_bot import auth, cli, ranking, sources
+from common import browser, llm
+from common.models import (
     ApplyResult,
     ApplyStatus,
     JobPosting,
@@ -291,7 +292,7 @@ def test_a_job_that_stopped_for_you_waits_until_you_answer(fake_naukri, tmp_path
 
 
 def test_only_the_latest_attempt_under_the_same_facts_keeps_a_job_waiting(tmp_path):
-    from naukri_bot.ledger import Ledger
+    from common.ledger import Ledger
 
     ledger = Ledger(str(tmp_path / "w.db"))
     job = _scored(80.0, 1, "a").job
@@ -314,7 +315,7 @@ def test_only_the_latest_attempt_under_the_same_facts_keeps_a_job_waiting(tmp_pa
 
 
 def test_a_company_site_submit_without_a_confirmation_is_never_sent_again(fake_naukri, tmp_path):
-    from naukri_bot.ledger import Ledger
+    from common.ledger import Ledger
 
     install, attempted = fake_naukri
     install([_scored(80.0, 1, "sent"), _scored(75.0, 1, "agent"), _scored(70.0, 1, "fresh")], {})

@@ -17,12 +17,12 @@ from selenium.webdriver.common.keys import Keys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from naukri_bot import accounts as acc
+from sites_bot import accounts as acc
 from naukri_bot import apply as apply_module
-from naukri_bot import external as ext
-from naukri_bot.answers import AnswerEngine
-from naukri_bot.ledger import Ledger
-from naukri_bot.models import (
+from sites_bot import external as ext
+from common.answers import AnswerEngine
+from common.ledger import Ledger
+from common.models import (
     Answer,
     AnswerResolution,
     AnswerSource,
@@ -996,9 +996,10 @@ def test_answers_txt_fills_the_form_and_collects_what_it_cannot_answer(tmp_path)
 # Inside the morning run
 # ---------------------------------------------------------------------------
 
-from naukri_bot import auth, browser, cli, llm, ranking, sources  # noqa: E402
-from naukri_bot import resume as rs  # noqa: E402
-from naukri_bot.models import ApplyResult, LoginResult, ScoredJob  # noqa: E402
+from naukri_bot import auth, cli, ranking, sources  # noqa: E402
+from common import browser, llm
+from common import resume as rs  # noqa: E402
+from common.models import ApplyResult, LoginResult, ScoredJob  # noqa: E402
 
 
 def _queued(jid):
@@ -1541,7 +1542,7 @@ def test_optional_boxes_take_only_your_own_answers_and_never_reach_the_model(tmp
 
 from pathlib import Path  # noqa: E402
 
-from naukri_bot import page_brain  # noqa: E402
+from sites_bot import page_brain  # noqa: E402
 
 GONE_TEXT = "We're sorry this page was moved, deleted or does not exist. Search jobs"
 SEARCH_BOX = [_Control("text", "Keyword or job number", name="kw"), _Control("text", "Location", name="loc")]

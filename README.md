@@ -126,10 +126,10 @@ the output stream underneath. Each page shows the exact command it will run, so 
 |---|---|
 | Today | What is waiting for you, plus one-press Apply now / Practice run / report / answers / today's study module |
 | Apply on Naukri | `python -m naukri_bot` with practice run, limit, answer mode, Early Access, keywords, location |
-| Company sites | `naukri_bot.assist` for the waiting forms, `naukri_bot.external --url ...` for one page |
+| Company sites | `common.assist` for the waiting forms, `sites_bot.external --url ...` for one page |
 | Naukri profile | `naukri_bot.update_profile`, schedule status, turn on the daily schedule |
 | LinkedIn post | `linkedin_bot --dry-run / --propose / --post / --if-due` (publishing asks first) |
-| Tailor resume | `naukri_bot.resume --tailor`: paste the job description straight into the screen |
+| Tailor resume | `common.resume --tailor`: paste the job description straight into the screen |
 | Reports | Build a day's report and read it right there |
 | Study | Read the course right in the terminal: today's module from the 8-week plan, every module by track with ✓ for the ones you marked read (kept in `reports/studied.json`). Also starts / stops the course site at http://localhost:8000, which keeps running after you quit |
 | Your to-dos | The unanswered questions, blank facts and waiting company sites, with a built-in editor |
@@ -271,8 +271,8 @@ carries your phone number and email) and point `RESUME_PATH` at it. The bot comp
 example `Soujanya_Gupta_Resume.pdf`, or whatever `RESUME_FILE_NAME` says.
 
 ```bash
-python3 -m naukri_bot.resume            # compile resume/base.tex -> resume/out/base/<name>.pdf
-python3 -m naukri_bot.resume --upload   # compile, then put the PDF on your Naukri profile
+python3 -m common.resume            # compile resume/base.tex -> resume/out/base/<name>.pdf
+python3 -m common.resume --upload   # compile, then put the PDF on your Naukri profile
 ```
 
 `--upload` reads the profile's resume card before and after, reloads the page, and only
@@ -305,7 +305,7 @@ Each job gets its own folder named after it, `resume/out/tailored/<Company - Rol
 lists what changed and what was refused, so you can always read back what a recruiter received. Try it on a pasted posting first:
 
 ```bash
-python3 -m naukri_bot.resume --tailor posting.txt --title "AI Engineer" --company "Acme"
+python3 -m common.resume --tailor posting.txt --title "AI Engineer" --company "Acme"
 ```
 
 ### Your data folder: the three files you edit
@@ -341,8 +341,8 @@ CTC, notice period, serving-notice, passport, relocation or total experience, or
 is not a real date, the run log and the report say so. It does not pick a side; you fix it.
 
 ```bash
-python3 -m naukri_bot.assist --dry-run   # show what it would fill, change nothing
-python3 -m naukri_bot.assist             # fill, back up, record
+python3 -m common.assist --dry-run   # show what it would fill, change nothing
+python3 -m common.assist             # fill, back up, record
 ```
 
 **When nothing answers a question, the AI judges it (`JUDGE_ANSWERS=true`).** A screening
@@ -421,14 +421,14 @@ With `EXTERNAL_APPLY=true` the bot follows Naukri's company-site button for up t
 Sign in to Google once, while no bot is running (either works):
 
 ```bash
-python3 -m naukri_bot.external --google-login   # the bot types your email; you finish the passkey or prompt
+python3 -m sites_bot.external --google-login   # the bot types your email; you finish the passkey or prompt
 scripts/google_login.sh                         # plain Chrome on the bot's profile; sign in, then Cmd+Q
 ```
 
 Work one page by hand, for example a link from `company_sites.md`:
 
 ```bash
-python3 -m naukri_bot.external --url "https://jobs.lever.co/acme/123" --title "AI Engineer" --company "Acme" --dry-run
+python3 -m sites_bot.external --url "https://jobs.lever.co/acme/123" --title "AI Engineer" --company "Acme" --dry-run
 ```
 
 `--dry-run` fills the form and finds Submit without clicking it, and the window stays visible so you
@@ -471,8 +471,8 @@ and `BROWSER_AGENT_BUDGET_USD` each, and never on a page that stopped at a captc
 code, or after a Submit click. Give it one page by hand, or any specific task:
 
 ```bash
-python3 -m naukri_bot.browser_agent --url "<company_sites.md Site link>" --title "AI Engineer" --company "Acme" --dry-run
-python3 -m naukri_bot.browser_agent --url "https://careers.acme.com" --task "find the AI Engineer opening in Bengaluru and tell me its closing date"
+python3 -m sites_bot.browser_agent --url "<company_sites.md Site link>" --title "AI Engineer" --company "Acme" --dry-run
+python3 -m sites_bot.browser_agent --url "https://careers.acme.com" --task "find the AI Engineer opening in Bengaluru and tell me its closing date"
 ```
 
 A task needs Node (for `npx @playwright/mcp`) and the `claude` command on `PATH`.
@@ -480,8 +480,8 @@ A task needs Node (for `npx @playwright/mcp`) and the `claude` command on `PATH`
 ### Other job boards: Hirist, Instahyre
 
 ```bash
-python3 -m naukri_bot.platforms --dry-run          # boards in PLATFORMS: collect, rank, open each job, click nothing
-python3 -m naukri_bot.platforms --site hirist --limit 10
+python3 -m sites_bot.platforms --dry-run          # boards in PLATFORMS: collect, rank, open each job, click nothing
+python3 -m sites_bot.platforms --site hirist --limit 10
 ```
 
 One loop serves every board, with the same facts, answers, ranking (`MIN_SCORE`, `MAX_DAYS_OLD`)
@@ -499,19 +499,19 @@ signed out), and finish the board's own profile, since recruiters there read it:
 
 ```bash
 scripts/google_login.sh https://www.hirist.tech/ https://www.instahyre.com/login/
-python3 -m naukri_bot.browser_agent --url "https://www.instahyre.com/candidate/onboard/" \
+python3 -m sites_bot.browser_agent --url "https://www.instahyre.com/candidate/onboard/" \
   --task "Complete her candidate profile on this job site from the facts; upload the resume; never invent anything"
 ```
 
-Each board is one `Board` record at the top of `naukri_bot/platforms.py`: its feed and search
+Each board is one `Board` record at the top of `sites_bot/platforms.py`: its feed and search
 addresses, the pattern of its job links, and the words on its Apply and Applied buttons.
 
 ### Cold emails to recruiters (drafts only)
 
 ```bash
-python3 -m naukri_bot.cold_email --dry-run         # print what it would write
-python3 -m naukri_bot.cold_email --scan-naukri     # also read recent well-scored Naukri job pages
-python3 -m naukri_bot.cold_email --to hr@acme.in --company "Acme" --title "AI Engineer" --url "<posting>"
+python3 -m sites_bot.cold_email --dry-run         # print what it would write
+python3 -m sites_bot.cold_email --scan-naukri     # also read recent well-scored Naukri job pages
+python3 -m sites_bot.cold_email --to hr@acme.in --company "Acme" --title "AI Engineer" --url "<posting>"
 ```
 
 - **Who gets one:** only an address a company published for applications: a posting's text ("share
@@ -547,8 +547,8 @@ Every Naukri run, profile update and LinkedIn post rewrites `reports/<YYYY-MM-DD
   `COURSE_START_DATE` or from the first report.
 
 ```bash
-python3 -m naukri_bot.report --print          # rebuild today's report and show it
-python3 -m naukri_bot.report --date 2026-10-09
+python3 -m common.report --print          # rebuild today's report and show it
+python3 -m common.report --date 2026-10-09
 python3 course/serve.py                       # the course site at http://localhost:8000
 ```
 
@@ -658,18 +658,18 @@ Naukri-autoapply-bot/
 │   ├── llm.py            #   LLM client (claude CLI by default, no API key needed)
 │   ├── answers.py        #   screening answers: exact cache -> profile -> LLM -> abstain
 │   ├── apply.py          #   verified apply; native vs external redirect
-│   ├── external.py       #   apply on company websites (python3 -m naukri_bot.external)
+│   ├── external.py       #   apply on company websites (python3 -m sites_bot.external)
 │   ├── accounts.py       #   career-site sign-in / sign-up (Google, then email + password)
 │   ├── page_brain.py     #   no form on a company page: removed posting, or ask the model what to click
 │   ├── browser_agent.py  #   stuck company site: Claude Code drives this Chrome via Playwright MCP
-│   ├── platforms.py      #   other job boards: Hirist, Instahyre (python3 -m naukri_bot.platforms)
-│   ├── cold_email.py     #   recruiter emails as drafts, never sent (python3 -m naukri_bot.cold_email)
-│   ├── assist.py         #   AI fills answers.txt / profile.yaml blanks from quoted lines (python3 -m naukri_bot.assist)
+│   ├── platforms.py      #   other job boards: Hirist, Instahyre (python3 -m sites_bot.platforms)
+│   ├── cold_email.py     #   recruiter emails as drafts, never sent (python3 -m sites_bot.cold_email)
+│   ├── assist.py         #   AI fills answers.txt / profile.yaml blanks from quoted lines (python3 -m common.assist)
 │   ├── chatbot.py        #   questionnaire drawer handling
 │   ├── early_access.py   #   share interest on Early Access roles (no apply quota)
 │   ├── ledger.py         #   SQLite applied-history + rolling 24h quota ledger
-│   ├── resume.py         #   LaTeX resume -> PDF, per-job tailoring, upload (python3 -m naukri_bot.resume)
-│   ├── report.py         #   reports/<date>/report.md (python3 -m naukri_bot.report)
+│   ├── resume.py         #   LaTeX resume -> PDF, per-job tailoring, upload (python3 -m common.resume)
+│   ├── report.py         #   reports/<date>/report.md (python3 -m common.report)
 │   └── update_profile.py #   keep the profile "recently updated" (python3 -m naukri_bot.update_profile)
 │
 ├── linkedin_bot/         # one LinkedIn post a day (python3 -m linkedin_bot)

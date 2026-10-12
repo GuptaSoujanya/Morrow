@@ -17,10 +17,11 @@ import pytest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from naukri_bot import apply as apply_module
-from naukri_bot import auth, browser, cli, llm, ranking, sources
-from naukri_bot import resume as rs
+from naukri_bot import auth, cli, ranking, sources
+from common import browser, llm
+from common import resume as rs
 from naukri_bot import update_profile as up
-from naukri_bot.models import (
+from common.models import (
     ApplyResult,
     ApplyStatus,
     JobPosting,

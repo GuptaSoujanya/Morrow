@@ -10,7 +10,7 @@ reports/<date>/emails/, and in Gmail's Drafts folder when GMAIL_APP_PASSWORD
 is set. Nothing is ever sent. Every draft is recorded in data/cold_emails.jsonl
 so no address is written to twice.
 
-    python3 -m naukri_bot.cold_email [--scan-naukri] [--limit 10] [--dry-run]
+    python3 -m sites_bot.cold_email [--scan-naukri] [--limit 10] [--dry-run]
 """
 
 import argparse
@@ -27,7 +27,7 @@ from email.utils import formatdate, make_msgid
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
-from .models import JobPosting, Profile, Settings
+from common.models import JobPosting, Profile, Settings
 
 logger = logging.getLogger(__name__)
 
@@ -136,7 +136,7 @@ return (document.body ? document.body.innerText : '') + '\\n' + mails.join('\\n'
 
 def leads_from_naukri(driver: Any, settings: Settings, ledger: Any, days: int, limit: int) -> List[Lead]:
     """Open recent well-scored Naukri job pages and keep any address their text or mailto links show."""
-    from .browser import safe_get
+    from common.browser import safe_get
 
     since = (datetime.utcnow() - timedelta(days=days)).isoformat()
     rows = ledger._connection.execute(
@@ -236,7 +236,7 @@ _SCHEMA = '{"can_write": true, "subject": "", "body": ""}'
 
 def write_email(client: Any, base: Any, lead: Lead) -> Optional[Tuple[str, str]]:
     """(subject, body) from her resume and the posting; None when it cannot be made clean in two tries."""
-    from .resume import _lint, _terms, ungrounded_terms
+    from common.resume import _lint, _terms, ungrounded_terms
 
     if client is None or not client.available():
         return None
@@ -297,7 +297,7 @@ def build_message(sender: str, lead: Lead, subject: str, body: str, profile: Pro
 
 
 def save_eml(message: EmailMessage, folder: Path, lead: Lead) -> Path:
-    from .resume import _folder_name
+    from common.resume import _folder_name
 
     folder.mkdir(parents=True, exist_ok=True)
     name = _folder_name("%s - %s" % (lead.company or "Company", lead.title or "Role")) or "email"
@@ -330,7 +330,7 @@ def gmail_draft(message: EmailMessage, account: str, app_password: str) -> str:
 
 def attachment_for(settings: Settings, lead: Lead) -> Optional[Path]:
     """The resume tailored for that job when there is one, else the base resume."""
-    from . import resume as resume_module
+    from common import resume as resume_module
 
     folder = resume_module.tailored_dir(settings, lead.job())
     tailored = sorted(folder.glob("*.pdf")) if folder.is_dir() else []
@@ -349,7 +349,7 @@ def own_addresses(settings: Settings, profile: Profile) -> set:
 
 def unique_leads(settings: Settings, profile: Profile, leads: List[Lead]) -> List[Lead]:
     """One lead per address, never her own; the posting saved for that job is used when there is one."""
-    from .resume import tailored_dir
+    from common.resume import tailored_dir
 
     own = own_addresses(settings, profile)
     kept = {}  # type: Dict[str, Lead]
@@ -368,7 +368,7 @@ def unique_leads(settings: Settings, profile: Profile, leads: List[Lead]) -> Lis
 def draft_all(settings: Settings, profile: Profile, client: Any, leads: List[Lead], limit: int,
               dry_run: bool, now: Optional[datetime] = None) -> Dict[str, int]:
     """Write a draft for each new address, up to `limit`; counts of what happened."""
-    from . import resume as resume_module
+    from common import resume as resume_module
 
     now = now or datetime.now()
     counts = {"drafted": 0, "in gmail": 0, "already written": 0, "not written": 0}
@@ -411,7 +411,7 @@ def draft_all(settings: Settings, profile: Profile, client: Any, leads: List[Lea
 
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        prog="python3 -m naukri_bot.cold_email",
+        prog="python3 -m sites_bot.cold_email",
         description="Write cold emails to recruiters whose address a company published; leave them as drafts.",
     )
     parser.add_argument("--scan-naukri", action="store_true",
@@ -430,8 +430,8 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
 
 
 def main(argv: Optional[List[str]] = None) -> int:
-    from . import config, llm, profile as profile_module, report
-    from .cli import EXIT_CONFIG, EXIT_OK, configure_logging, keep_log
+    from common import config, llm, profile as profile_module, report
+    from common.run import EXIT_CONFIG, EXIT_OK, configure_logging, keep_log
 
     args = parse_args(argv)
     configure_logging(args.verbose)
@@ -448,7 +448,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     else:
         leads = leads_from_files(settings)
         if args.scan_naukri:
-            from . import browser, ledger as ledger_module
+            from common import browser, ledger as ledger_module
 
             ledger = ledger_module.open_ledger(settings)
             driver = browser.create_driver(settings)

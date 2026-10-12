@@ -9,11 +9,11 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from naukri_bot import external as ext
-from naukri_bot import ledger as ledger_module
-from naukri_bot import report
-from naukri_bot.ledger import Ledger
-from naukri_bot.models import ApplyResult, ApplyStatus, JobPosting, Settings
+from sites_bot import external as ext
+from common import ledger as ledger_module
+from common import report
+from common.ledger import Ledger
+from common.models import ApplyResult, ApplyStatus, JobPosting, Settings
 
 
 DAY = date(2026, 10, 10)
@@ -285,7 +285,7 @@ def test_a_failing_report_never_fails_the_run(monkeypatch, tmp_path):
 
 
 def test_a_bad_date_on_the_command_line_is_refused(monkeypatch, tmp_path):
-    from naukri_bot import config
+    from common import config
 
     monkeypatch.setattr(config, "load_settings", lambda env_path=None, overrides=None: _settings(tmp_path))
     assert report.main(["--date", "10/10/2026"]) == 1
@@ -295,18 +295,18 @@ def test_a_bad_date_on_the_command_line_is_refused(monkeypatch, tmp_path):
 def test_each_run_keeps_its_log_next_to_the_report(tmp_path):
     import logging
 
-    from naukri_bot import cli
+    from common import run
 
     settings = _settings(tmp_path)
     root = logging.getLogger()
     level = root.level
     root.setLevel(logging.INFO)
     try:
-        first = cli.keep_log(settings, "naukri", now=datetime(2026, 10, 10, 9, 5, 1))
-        second = cli.keep_log(settings, "naukri", now=datetime(2026, 10, 10, 18, 30, 0))
+        first = run.keep_log(settings, "naukri", now=datetime(2026, 10, 10, 9, 5, 1))
+        second = run.keep_log(settings, "naukri", now=datetime(2026, 10, 10, 18, 30, 0))
         logging.getLogger("naukri_bot.cli").info("applied to Acme")
     finally:
-        for handler in [h for h in root.handlers if isinstance(h, cli._KeptLog)]:
+        for handler in [h for h in root.handlers if isinstance(h, run._KeptLog)]:
             root.removeHandler(handler)
             handler.close()
         root.setLevel(level)

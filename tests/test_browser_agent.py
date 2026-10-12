@@ -16,9 +16,9 @@ import pytest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from naukri_bot import apply as apply_module
-from naukri_bot import browser_agent as agent
-from naukri_bot import external as ext
-from naukri_bot.models import ApplyStatus, JobPosting, Profile, Settings
+from sites_bot import browser_agent as agent
+from sites_bot import external as ext
+from common.models import ApplyStatus, JobPosting, Profile, Settings
 
 PASSWORD = "Ab#9$x'Q!z"
 SITE = "https://jobs.acme.test/apply"
@@ -404,7 +404,7 @@ def test_with_the_agent_off_the_page_is_left_for_her(claude, settings, profile, 
 def test_the_daily_report_lists_the_agent_tasks(claude, settings, profile, job):
     from datetime import date
 
-    from naukri_bot import report
+    from common import report
 
     claude.report = {"status": "needs_you", "why": "no address", "missing": ["Address Line 1*"]}
     agent.take_over(_Driver(), job, profile, settings, None, False, _stuck())

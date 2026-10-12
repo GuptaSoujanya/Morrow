@@ -14,9 +14,9 @@ import logging
 import re
 from typing import Any, Dict, List, Optional, Tuple
 
-from . import llm
-from .llm import LLMClient
-from .models import JobPosting, Profile, ScoredJob, Settings, Verdict
+from common import llm
+from common.llm import LLMClient
+from common.models import JobPosting, Profile, ScoredJob, Settings, Verdict
 
 
 logger = logging.getLogger(__name__)

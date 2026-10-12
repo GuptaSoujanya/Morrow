@@ -540,7 +540,7 @@ def run_pass(settings: Settings, write: bool = True) -> Tuple[List[Change], List
 
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        prog="python3 -m naukri_bot.assist",
+        prog="python3 -m common.assist",
         description="Let the AI fill blank answers and facts from your resume, profile and answers, with quotes.",
     )
     parser.add_argument("--dry-run", action="store_true", help="show what would be filled; change nothing")
@@ -551,7 +551,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
 
 def main(argv: Optional[List[str]] = None) -> int:
     from . import config
-    from .cli import EXIT_CONFIG, EXIT_OK, configure_logging, keep_log
+    from .run import EXIT_CONFIG, EXIT_OK, configure_logging, keep_log
 
     args = parse_args(argv)
     configure_logging(args.verbose)

@@ -39,8 +39,8 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
 
-from .browser import human_pause, safe_get
-from .models import Settings
+from common.browser import human_pause, safe_get
+from common.models import Settings
 
 logger = logging.getLogger(__name__)
 

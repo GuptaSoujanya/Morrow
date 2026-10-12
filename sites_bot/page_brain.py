@@ -13,7 +13,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, List, Optional
 
-from .models import JobPosting, Settings
+from common.models import JobPosting, Settings
 
 
 logger = logging.getLogger(__name__)

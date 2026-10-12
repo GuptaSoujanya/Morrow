@@ -23,8 +23,8 @@ from selenium.common.exceptions import WebDriverException
 from selenium.webdriver.common.by import By
 
 from . import external as ext
-from .config import write_env_value
-from .models import Profile, Settings
+from common.config import write_env_value
+from common.models import Profile, Settings
 
 
 logger = logging.getLogger(__name__)

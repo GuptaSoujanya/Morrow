@@ -16,10 +16,10 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from naukri_bot import assist, llm, report
-from naukri_bot.answers import AnswerEngine, AnswerBook
-from naukri_bot.ledger import Ledger
-from naukri_bot.models import AnswerMode, AnswerSource, Profile, Settings
+from common import assist, llm, report
+from common.answers import AnswerEngine, AnswerBook
+from common.ledger import Ledger
+from common.models import AnswerMode, AnswerSource, Profile, Settings
 
 
 RESUME = (

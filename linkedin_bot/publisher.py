@@ -16,8 +16,8 @@ from selenium.common.exceptions import WebDriverException
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 
-from naukri_bot.browser import human_pause, human_type, safe_get
-from naukri_bot.models import LoginResult
+from common.browser import human_pause, human_type, safe_get
+from common.models import LoginResult
 
 from .config import LinkedInSettings
 

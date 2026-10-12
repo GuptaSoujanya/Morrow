@@ -9,11 +9,11 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from naukri_bot import browser_agent
-from naukri_bot import external as ext
-from naukri_bot import platforms as pf
-from naukri_bot.ledger import Ledger
-from naukri_bot.models import ApplyStatus, JobPosting, Profile, ScoredJob, Settings
+from sites_bot import browser_agent
+from sites_bot import external as ext
+from sites_bot import platforms as pf
+from common.ledger import Ledger
+from common.models import ApplyStatus, JobPosting, Profile, ScoredJob, Settings
 
 HIRIST = pf.BOARDS["hirist"]
 INSTAHYRE = pf.BOARDS["instahyre"]
@@ -184,7 +184,8 @@ def test_no_apply_button_is_reported_with_what_was_there(board_page, tmp_path, m
 
 
 def test_a_board_run_applies_up_to_the_limit_without_touching_naukri_quota(board_page, tmp_path, monkeypatch):
-    from naukri_bot import ranking, report
+    from naukri_bot import ranking
+    from common import report
 
     jobs = [_job(str(n)) for n in range(1, 5)]
     monkeypatch.setattr(pf, "collect", lambda driver, board, keywords, limit: jobs)

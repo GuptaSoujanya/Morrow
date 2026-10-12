@@ -8,7 +8,7 @@ counts the application only when the board shows the job as applied after a
 reload. A board page the script cannot finish goes to the browser agent when
 it is on, and otherwise to data/company_sites.md for a person.
 
-    python3 -m naukri_bot.platforms --site hirist --limit 10 [--dry-run]
+    python3 -m sites_bot.platforms --site hirist --limit 10 [--dry-run]
 """
 
 import argparse
@@ -26,8 +26,8 @@ from selenium.common.exceptions import WebDriverException
 
 from . import browser_agent
 from . import external as ext
-from .browser import human_pause, safe_get
-from .models import ApplyResult, ApplyStatus, JobPosting, Profile, RunSummary, Settings
+from common.browser import human_pause, safe_get
+from common.models import ApplyResult, ApplyStatus, JobPosting, Profile, RunSummary, Settings
 
 logger = logging.getLogger(__name__)
 
@@ -183,7 +183,7 @@ _NOISE = re.compile(
 
 def _posted_days(label: str) -> Optional[float]:
     """Naukri-style "3 days ago", or a date such as "7 Oct 2026" (Cutshort)."""
-    from .sources import parse_posted_days
+    from naukri_bot.sources import parse_posted_days
 
     days = parse_posted_days(label)
     if days is not None or not label:
@@ -555,9 +555,9 @@ def run_board(
     restart: Optional[Callable[[], Optional[Any]]] = None,
 ) -> RunSummary:
     """Collect, rank and apply on one board; `restart` opens a new browser when the old one closed."""
-    from . import answers as answers_module
-    from . import ranking
-    from .cli import _pause_between_applications, _summary_record, derive_keywords
+    from common import answers as answers_module
+    from naukri_bot import ranking
+    from naukri_bot.cli import _pause_between_applications, _summary_record, derive_keywords
 
     summary = RunSummary()
     run_id = ledger.start_run()
@@ -648,7 +648,7 @@ def _count(summary: RunSummary, result: ApplyResult) -> None:
 
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        prog="python3 -m naukri_bot.platforms",
+        prog="python3 -m sites_bot.platforms",
         description="Apply on other job boards with the same facts, answers, ranking and records as Naukri.",
     )
     parser.add_argument("--site", action="append", choices=sorted(BOARDS) + ["all"],
@@ -668,10 +668,10 @@ def chosen_boards(names: Optional[List[str]], settings: Settings) -> List[Board]
 
 
 def main(argv: Optional[List[str]] = None) -> int:
-    from . import browser, config, ledger as ledger_module, llm, profile as profile_module, report
-    from . import resume as resume_module
-    from .answers import AnswerEngine
-    from .cli import EXIT_CONFIG, EXIT_OK, configure_logging, keep_log
+    from common import browser, config, ledger as ledger_module, llm, profile as profile_module, report
+    from common import resume as resume_module
+    from common.answers import AnswerEngine
+    from common.run import EXIT_CONFIG, EXIT_OK, configure_logging, keep_log
 
     args = parse_args(argv)
     configure_logging(args.verbose)

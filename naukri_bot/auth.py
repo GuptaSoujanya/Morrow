@@ -17,8 +17,8 @@ from selenium.webdriver.remote.webelement import WebElement
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
 
-from .browser import human_pause, human_type, safe_get
-from .models import LoginResult, Settings
+from common.browser import human_pause, human_type, safe_get
+from common.models import LoginResult, Settings
 
 
 logger = logging.getLogger(__name__)

@@ -20,8 +20,8 @@ from selenium.webdriver.remote.webelement import WebElement
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
 
-from .browser import human_pause, human_type
-from .models import AnswerResolution, ChatbotOutcome, Profile, Settings
+from common.browser import human_pause, human_type
+from common.models import AnswerResolution, ChatbotOutcome, Profile, Settings
 
 
 logger = logging.getLogger(__name__)

@@ -13,8 +13,9 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from naukri_bot import browser, cli
-from naukri_bot.models import Settings
+from common import browser
+from naukri_bot import cli
+from common.models import Settings
 
 
 def _settings(**overrides):

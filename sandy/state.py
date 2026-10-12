@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional, Set, Tuple
 
-from naukri_bot.report import course_modules as plan_order
+from common.report import course_modules as plan_order
 
 APPLY = Path(__file__).resolve().parent.parent
 COURSE = APPLY / "course"
@@ -102,7 +102,7 @@ def naukri_command(
 
 
 def assist_command(*, dry_run: bool = False) -> Command:
-    args = ["-m", "naukri_bot.assist"] + (["--dry-run"] if dry_run else [])
+    args = ["-m", "common.assist"] + (["--dry-run"] if dry_run else [])
     return py("Preview waiting company forms" if dry_run else "Fill waiting company forms", *args)
 
 
@@ -120,7 +120,7 @@ def external_command(
         raise ValueError("paste the application page link")
     if not url.startswith(("http://", "https://")):
         raise ValueError("the link has to start with http:// or https://")
-    args = ["-m", "naukri_bot.external", "--url", url]
+    args = ["-m", "sites_bot.external", "--url", url]
     if title.strip():
         args += ["--title", title.strip()]
     if company.strip():
@@ -169,7 +169,7 @@ def resume_command(
         path = APPLY / path
     if must_exist and not path.is_file():
         raise ValueError(f"no file at {jd_file}")
-    args = ["-m", "naukri_bot.resume", "--tailor", str(path)]
+    args = ["-m", "common.resume", "--tailor", str(path)]
     if title.strip():
         args += ["--title", title.strip()]
     if company.strip():
@@ -191,7 +191,7 @@ def parse_day(text: str) -> dt.date:
 
 def report_command(*, day: str = "") -> Command:
     date = parse_day(day)
-    args = ["-m", "naukri_bot.report"]
+    args = ["-m", "common.report"]
     if date != dt.date.today():
         args += ["--date", date.isoformat()]
     return py(f"Build the report for {date.isoformat()}", *args)

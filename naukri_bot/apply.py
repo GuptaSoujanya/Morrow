@@ -16,9 +16,9 @@ from selenium.webdriver.remote.webdriver import WebDriver
 from selenium.webdriver.remote.webelement import WebElement
 from selenium.webdriver.support.ui import WebDriverWait
 
-from .browser import human_pause, safe_get
+from common.browser import human_pause, safe_get
 from .chatbot import AnswerEngine, handle_chatbot
-from .models import ApplyResult, ApplyStatus, JobPosting, Profile, Settings
+from common.models import ApplyResult, ApplyStatus, JobPosting, Profile, Settings
 
 
 logger = logging.getLogger(__name__)

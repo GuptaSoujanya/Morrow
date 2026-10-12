@@ -253,8 +253,9 @@ class _Browser:
 def _first_login(monkeypatch, headless, answered):
     """Naukri answers the credentials with an OTP challenge; `answered` is
     whether a person types it in before the wait runs out."""
-    from naukri_bot import auth, browser
-    from naukri_bot.models import LoginResult, Settings
+    from naukri_bot import auth
+    from common import browser
+    from common.models import LoginResult, Settings
 
     driver = _Browser()
     waited = []

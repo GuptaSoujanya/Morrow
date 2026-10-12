@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 
-from .models import ApplyStatus, JobPosting, Profile, Settings
+from common.models import ApplyStatus, JobPosting, Profile, Settings
 
 logger = logging.getLogger(__name__)
 
@@ -112,7 +112,7 @@ def _text(value: Any) -> str:
 
 def facts_text(profile: Profile, settings: Settings) -> str:
     """Every fact she gave: profile.yaml, her answers.txt answers, then the resume."""
-    from .answers import PER_JOB, AnswerBook, answers_file_path
+    from common.answers import PER_JOB, AnswerBook, answers_file_path
     from .external import known_values
 
     lines = []  # type: List[str]
@@ -260,7 +260,7 @@ def task_prompt(instruction: str, url: str, facts: str, email: str, files: Tuple
 
 
 def workdir_for(settings: Settings, label: str, now: Optional[datetime] = None) -> Path:
-    from .resume import _folder_name
+    from common.resume import _folder_name
 
     now = now or datetime.now()
     return (
@@ -361,7 +361,7 @@ def run_agent(
     files: Tuple[Path, ...] = (),
 ) -> AgentRun:
     """Run one `claude -p` task against this browser; the report is None when it gave none."""
-    from .llm import _extract_json
+    from common.llm import _extract_json
 
     started = time.monotonic()
     workdir.mkdir(parents=True, exist_ok=True)
@@ -507,8 +507,8 @@ def to_result(driver: Any, run: AgentRun, previous: Any, dry_run: bool) -> Any:
 
 
 def _keep_written(settings: Settings, job: JobPosting, report: Dict[str, Any]) -> None:
-    from . import assist
-    from .resume import tailored_dir
+    from common import assist
+    from common.resume import tailored_dir
 
     written = [item for item in report.get("written") or [] if isinstance(item, dict) and item.get("answer")]
     if not written:
@@ -634,7 +634,7 @@ def records_for(settings: Settings, day: str) -> List[Dict[str, Any]]:
 
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        prog="python3 -m naukri_bot.browser_agent",
+        prog="python3 -m sites_bot.browser_agent",
         description=(
             "Let Claude Code drive the bot's Chrome (through Playwright MCP) for one task: by default, "
             "finish the application at --url from your facts; with --task, anything you describe."
@@ -652,10 +652,10 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
 
 
 def main(argv: Optional[List[str]] = None) -> int:
-    from . import browser, config, profile as profile_module, resume as resume_module
+    from common import browser, config, profile as profile_module, resume as resume_module
     from .accounts import account_email
-    from .browser import human_pause, safe_get
-    from .cli import EXIT_CONFIG, EXIT_FAILED, EXIT_OK, configure_logging, keep_log
+    from common.browser import human_pause, safe_get
+    from common.run import EXIT_CONFIG, EXIT_FAILED, EXIT_OK, configure_logging, keep_log
     from .external import GONE, ExternalResult, forget_company_site, record_company_site
 
     args = parse_args(argv)

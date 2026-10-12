@@ -2,7 +2,7 @@
 
 reports/<YYYY-MM-DD>/report.md is rebuilt from the records whenever a bot
 finishes (the morning run, the profile updater, the LinkedIn poster), so it
-always covers the whole day so far. `python3 -m naukri_bot.report` rebuilds it
+always covers the whole day so far. `python3 -m common.report` rebuilds it
 by hand. Every line comes from the ledger, the state files and the data folder;
 nothing in it is written by a model.
 """
@@ -16,7 +16,7 @@ from datetime import date, datetime, time as dtime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from . import browser_agent, cold_email
+from sites_bot import browser_agent, cold_email
 from .models import ApplyStatus, Settings
 
 
@@ -181,7 +181,7 @@ def _disagreements(settings: Settings) -> List[Any]:
 
 
 def _untried_company_sites() -> int:
-    from .cli import _EXTERNAL_JOBS_FILE, _parse_external_rows
+    from naukri_bot.cli import _EXTERNAL_JOBS_FILE, _parse_external_rows
 
     return len(_parse_external_rows(_EXTERNAL_JOBS_FILE))
 
@@ -198,7 +198,7 @@ def _tailored_today(settings: Settings, day: date) -> List[Dict[str, Any]]:
 
 
 def _profile_slots(settings: Settings, day: date, now: datetime) -> Tuple[List[str], Dict[str, Any]]:
-    from .update_profile import SLOTS
+    from naukri_bot.update_profile import SLOTS
 
     state = _read_json(Path(settings.profile_update_state_path))
     lines = []
@@ -311,7 +311,7 @@ def learning_for(settings: Settings, day: date) -> List[str]:
 
 
 def build_report(settings: Settings, day: Optional[date] = None, now: Optional[datetime] = None) -> str:
-    from .external import pending_company_sites
+    from sites_bot.external import pending_company_sites
 
     now = now or datetime.now()
     day = day or now.date()
@@ -339,7 +339,7 @@ def build_report(settings: Settings, day: Optional[date] = None, now: Optional[d
     out = [
         "# Daily report: %s" % day.strftime("%A, %d %B %Y"),
         "",
-        "_Updated %s. Rebuild with `python3 -m naukri_bot.report`._" % now.strftime("%H:%M"),
+        "_Updated %s. Rebuild with `python3 -m common.report`._" % now.strftime("%H:%M"),
         "",
         "## At a glance",
         "",
@@ -604,7 +604,7 @@ def update_quietly(settings: Settings) -> Optional[Path]:
 
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        prog="python3 -m naukri_bot.report",
+        prog="python3 -m common.report",
         description="Rebuild reports/<date>/report.md: applications, what is left for you, profile, LinkedIn, learning.",
     )
     parser.add_argument("--date", metavar="YYYY-MM-DD", help="the day to report on (default: today)")
@@ -616,7 +616,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
 
 def main(argv: Optional[List[str]] = None) -> int:
     from . import config
-    from .cli import EXIT_CONFIG, EXIT_OK, configure_logging
+    from .run import EXIT_CONFIG, EXIT_OK, configure_logging
 
     args = parse_args(argv)
     configure_logging(args.verbose)

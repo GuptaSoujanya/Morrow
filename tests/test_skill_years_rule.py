@@ -16,9 +16,9 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from naukri_bot.answers import AnswerEngine
-from naukri_bot.ledger import Ledger
-from naukri_bot.models import Profile, Settings
+from common.answers import AnswerEngine
+from common.ledger import Ledger
+from common.models import Profile, Settings
 
 
 class _NoLLM:

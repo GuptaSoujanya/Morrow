@@ -14,7 +14,7 @@ import pytest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from naukri_bot import ranking
-from naukri_bot.models import JobPosting, Settings
+from common.models import JobPosting, Settings
 
 
 def _settings(max_days_old=3):

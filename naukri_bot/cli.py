@@ -29,7 +29,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional, Set
 
-from .models import (
+from common.models import (
     ApplyResult,
     ApplyStatus,
     JobPosting,
@@ -38,6 +38,7 @@ from .models import (
     ScoredJob,
     Settings,
 )
+from common.run import EXIT_CONFIG, EXIT_FAILED, EXIT_LOGIN, EXIT_OK, configure_logging, keep_log
 
 logger = logging.getLogger(__name__)
 
@@ -48,11 +49,6 @@ _EXTERNAL_JOBS_FILE = "external_jobs.md"
 GOOGLE_LOGIN_WAIT_S = 120.0
 # One refusal can be a hiccup; two in a row and Naukri has closed for the day.
 REFUSALS_BEFORE_STOP = 2
-
-EXIT_OK = 0
-EXIT_CONFIG = 1
-EXIT_LOGIN = 2
-EXIT_FAILED = 3
 
 # Generic resume words that make terrible job-search keywords on their own.
 _WEAK_KEYWORDS = {
@@ -173,50 +169,6 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         help="Debug logging.",
     )
     return parser.parse_args(argv)
-
-
-_LOG_FORMAT = "%(asctime)s  %(levelname)-7s %(name)s  %(message)s"
-
-
-def configure_logging(verbose: bool) -> None:
-    logging.basicConfig(
-        level=logging.DEBUG if verbose else logging.INFO,
-        format=_LOG_FORMAT,
-        datefmt="%H:%M:%S",
-    )
-    # Selenium and urllib3 are noisy at DEBUG and tell us nothing useful.
-    logging.getLogger("selenium").setLevel(logging.WARNING)
-    logging.getLogger("urllib3").setLevel(logging.WARNING)
-    logging.getLogger("WDM").setLevel(logging.WARNING)
-
-
-class _KeptLog(logging.FileHandler):
-    pass
-
-
-def keep_log(settings: Settings, tool: str, now: Optional[datetime] = None) -> Optional[Path]:
-    """Also write this run's log to reports/<date>/logs/, next to the day's report."""
-    now = now or datetime.now()
-    path = (
-        Path(settings.report_dir or "reports")
-        / now.strftime("%Y-%m-%d")
-        / "logs"
-        / ("%s-%s.log" % (tool, now.strftime("%H%M%S")))
-    )
-    root = logging.getLogger()
-    for old in [h for h in root.handlers if isinstance(h, _KeptLog)]:
-        root.removeHandler(old)
-        old.close()
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        handler = _KeptLog(str(path), encoding="utf-8")
-    except OSError as exc:
-        logger.warning("Could not save this run's log to %s: %s", path, exc)
-        return None
-    handler.setFormatter(logging.Formatter(_LOG_FORMAT, datefmt="%H:%M:%S"))
-    root.addHandler(handler)
-    logger.info("This run's log: %s", path)
-    return path
 
 
 def build_overrides(args: argparse.Namespace) -> Dict[str, Any]:
@@ -561,7 +513,7 @@ def _log_summary(summary: RunSummary, settings: Settings) -> None:
         logger.info("DRY RUN -- nothing was submitted and no quota was used.")
     logger.info("collected            : %d", summary.collected)
     logger.info("ranked               : %d", summary.ranked)
-    from .report import funnel_text
+    from common.report import funnel_text
 
     funnel = funnel_text(_summary_record(summary, settings))
     if funnel:
@@ -628,15 +580,15 @@ def run(
     """Execute one full morning run. Imports are local so that --help and
     configuration errors do not require Selenium to be installed."""
     from . import apply as apply_module
-    from . import answers as answers_module
+    from common import answers as answers_module
     from . import auth
-    from . import browser
+    from common import browser
     from . import early_access as early_access_module
-    from . import external as external_module
-    from . import ledger as ledger_module
-    from . import llm
+    from sites_bot import external as external_module
+    from common import ledger as ledger_module
+    from common import llm
     from . import ranking
-    from . import resume as resume_module
+    from common import resume as resume_module
     from . import sources
 
     summary = RunSummary()
@@ -842,7 +794,7 @@ def run(
         tailoring = settings.tailor_resume and not settings.dry_run
         if tailoring:
             resume_tab = _ResumeTab(driver)
-        from .accounts import google_login, google_refused_today
+        from sites_bot.accounts import google_login, google_refused_today
 
         if settings.external_apply and settings.google_email and not settings.dry_run and not google_refused_today(settings):
             signed_in, how = google_login(driver, settings, timeout_s=GOOGLE_LOGIN_WAIT_S)
@@ -1024,7 +976,7 @@ def run(
             except Exception as exc:  # must not mask the error that ended the run
                 logger.warning(
                     "Could not put the base resume back on the profile (%s). "
-                    "Run `python3 -m naukri_bot.resume --upload`.",
+                    "Run `python3 -m common.resume --upload`.",
                     exc,
                 )
         if driver is not None:
@@ -1163,7 +1115,7 @@ def _restore_base_resume(
     except resume_module.ResumeError as exc:
         logger.warning(
             "Could not put the base resume back on the profile (%s); the last "
-            "tailored one is still there. Run `python3 -m naukri_bot.resume --upload`.",
+            "tailored one is still there. Run `python3 -m common.resume --upload`.",
             exc,
         )
         return
@@ -1178,8 +1130,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     args = parse_args(argv)
     configure_logging(args.verbose)
 
-    from . import config
-    from . import profile as profile_module
+    from common import config
+    from common import profile as profile_module
 
     try:
         settings = config.load_settings(args.env, build_overrides(args))
@@ -1194,7 +1146,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         logger.error("Fix the above in your .env file (see .env.example).")
         return EXIT_CONFIG
     keep_log(settings, "naukri")
-    from . import assist
+    from common import assist
 
     assist.run_pass(settings, write=not settings.dry_run)
 
@@ -1250,7 +1202,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     summary.finished_at = datetime.now().isoformat(timespec="seconds")
     _log_summary(summary, settings)
     assist.run_pass(settings, write=not settings.dry_run)
-    from . import report
+    from common import report
 
     report.update_quietly(settings)
     return EXIT_OK

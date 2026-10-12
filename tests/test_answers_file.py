@@ -12,7 +12,7 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from naukri_bot.answers import (
+from common.answers import (
     AnswerBook,
     AnswerEngine,
     facts_fingerprint,
@@ -20,8 +20,8 @@ from naukri_bot.answers import (
     match_options,
     parse_answers,
 )
-from naukri_bot.ledger import Ledger
-from naukri_bot.models import Answer, AnswerSource, JobPosting, Profile, Settings
+from common.ledger import Ledger
+from common.models import Answer, AnswerSource, JobPosting, Profile, Settings
 
 
 SAMPLE = """# a comment line
@@ -234,7 +234,7 @@ def test_the_facts_fingerprint_ignores_blank_questions_but_not_answers(tmp_path)
 def test_a_date_typed_into_profile_yaml_reaches_the_model_as_text(tmp_path):
     import json
 
-    from naukri_bot.profile import load_profile
+    from common.profile import load_profile
 
     (tmp_path / "resume.txt").write_text("Python engineer", encoding="utf-8")
     (tmp_path / "profile.yaml").write_text(

@@ -9,8 +9,8 @@ appear somewhere in the base resume, or the proposal is dropped and the base
 text is used instead. A recruiter reading the tailored PDF therefore reads
 the user's own claims, in the user's own words, in a different order.
 
-    python3 -m naukri_bot.resume                     # compile the base resume
-    python3 -m naukri_bot.resume --tailor jd.txt \\
+    python3 -m common.resume                     # compile the base resume
+    python3 -m common.resume --tailor jd.txt \\
         --title "Backend Engineer" --company Acme    # tailor to a pasted posting
 
 The apply run tailors and uploads before each application when TAILOR_RESUME
@@ -932,7 +932,7 @@ def file_digest(path: Path) -> str:
 
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        prog="python3 -m naukri_bot.resume",
+        prog="python3 -m common.resume",
         description="Compile the LaTeX resume, or tailor it to a pasted job posting.",
     )
     parser.add_argument("--tailor", metavar="JD_FILE", help="text file with the job description")
@@ -950,7 +950,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
 
 
 def main(argv: Optional[List[str]] = None) -> int:
-    from .cli import EXIT_CONFIG, EXIT_FAILED, EXIT_LOGIN, EXIT_OK, configure_logging, keep_log
+    from .run import EXIT_CONFIG, EXIT_FAILED, EXIT_LOGIN, EXIT_OK, configure_logging, keep_log
     from . import config, llm
 
     args = parse_args(argv)
@@ -990,7 +990,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     if not args.upload:
         return EXIT_OK
 
-    from . import update_profile
+    from naukri_bot import update_profile
 
     try:
         result = update_profile.with_session(settings, lambda driver: upload_resume(driver, pdf))

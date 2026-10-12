@@ -19,9 +19,9 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from naukri_bot import answers as answers_module
-from naukri_bot import llm
-from naukri_bot.models import (
+from common import answers as answers_module
+from common import llm
+from common.models import (
     Answer,
     AnswerResolution,
     ApplyStatus,

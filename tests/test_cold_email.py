@@ -10,8 +10,8 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from naukri_bot import cold_email as ce
-from naukri_bot.models import Profile, Settings
+from sites_bot import cold_email as ce
+from common.models import Profile, Settings
 
 TEX = r"""\documentclass{extarticle}
 \begin{document}
@@ -108,7 +108,7 @@ def test_leads_come_from_saved_postings_agent_reports_and_company_sites(settings
 
 
 def test_a_grounded_email_is_kept_and_a_buzzword_one_is_sent_back(settings):
-    from naukri_bot.resume import load_base
+    from common.resume import load_base
 
     base = load_base(settings.resume_path)
     client = _Client({"subject": "AI Engineer role - Jane Doe", "body": "I am thrilled and passionate. " + BODY},
@@ -119,7 +119,7 @@ def test_a_grounded_email_is_kept_and_a_buzzword_one_is_sent_back(settings):
 
 
 def test_an_email_claiming_what_the_resume_does_not_say_is_dropped(settings):
-    from naukri_bot.resume import load_base
+    from common.resume import load_base
 
     claim = BODY.replace("I have also worked with RAG", "I have also shipped Kubernetes clusters")
     client = _Client({"subject": "AI Engineer role", "body": claim}, {"subject": "AI Engineer role", "body": claim})
@@ -185,7 +185,7 @@ def test_with_an_app_password_the_draft_also_lands_in_gmail(settings, profile, n
 
 
 def test_the_daily_report_lists_todays_drafts(settings, profile, no_pdf):
-    from naukri_bot import report
+    from common import report
 
     ce.draft_all(settings, profile, _Client({"subject": "AI Engineer role", "body": BODY}), [_lead()], 10, False)
     text = report.build_report(settings, date.today())

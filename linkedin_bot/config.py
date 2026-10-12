@@ -5,8 +5,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from naukri_bot import config as naukri_config
-from naukri_bot.models import Settings
+from common import config as naukri_config
+from common.models import Settings
 
 DEFAULT_TOPICS = [
     "AI agent evaluation",

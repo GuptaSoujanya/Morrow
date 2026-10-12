@@ -10,8 +10,9 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from naukri_bot import cli, profile as profile_module, ranking
-from naukri_bot.models import JobPosting, Profile, ScoredJob, Settings
+from naukri_bot import cli, ranking
+from common import profile as profile_module
+from common.models import JobPosting, Profile, ScoredJob, Settings
 
 DESC = ("Build agentic AI with Python, LangGraph, RAG, embeddings, vector "
         "search, prompt engineering and LLM evaluation.")
@@ -206,7 +207,7 @@ class _RankingClient:
 
 @pytest.mark.parametrize("workers", [1, 3])
 def test_every_job_is_scored_whether_batches_run_one_at_a_time_or_together(workers):
-    from naukri_bot import llm
+    from common import llm
 
     jobs = [JobPosting(job_id="j%d" % index, url="u", title="AI Engineer", company="C%d" % index,
                        description=DESC) for index in range(7)]

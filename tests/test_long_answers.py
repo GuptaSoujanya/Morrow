@@ -12,12 +12,12 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from naukri_bot import assist
-from naukri_bot import external as ext
-from naukri_bot import resume as rs
-from naukri_bot.answers import AnswerEngine
-from naukri_bot.ledger import Ledger
-from naukri_bot.models import AnswerMode, JobPosting, Profile, Settings
+from common import assist
+from sites_bot import external as ext
+from common import resume as rs
+from common.answers import AnswerEngine
+from common.ledger import Ledger
+from common.models import AnswerMode, JobPosting, Profile, Settings
 
 
 TEX = """\\documentclass{article}

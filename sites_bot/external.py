@@ -29,9 +29,9 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 
 from . import browser_agent
-from .answers import _NOT_FOR_JUDGEMENT, match_option
-from .browser import human_pause, human_type, safe_get
-from .models import AnswerMode, ApplyResult, ApplyStatus, JobPosting, Profile, Settings
+from common.answers import _NOT_FOR_JUDGEMENT, match_option
+from common.browser import human_pause, human_type, safe_get
+from common.models import AnswerMode, ApplyResult, ApplyStatus, JobPosting, Profile, Settings
 
 
 logger = logging.getLogger(__name__)
@@ -1014,8 +1014,8 @@ def long_answer_writer(settings: Settings, answer_engine: Any, job: JobPosting) 
         return None
     if client is None or not client.available():
         return None
-    from . import assist
-    from . import resume as resume_module
+    from common import assist
+    from common import resume as resume_module
 
     try:
         base = resume_module.load_base(settings.resume_path)
@@ -1553,7 +1553,7 @@ def apply_on_company_site(
     resume_pdf: Optional[Path] = None,
 ) -> ExternalResult:
     """From the Naukri job page: follow 'Apply on company site', apply there, come back."""
-    from .apply import classify_apply_button
+    from naukri_bot.apply import classify_apply_button
 
     naukri_handle = driver.current_window_handle
     keep = list(driver.window_handles)
@@ -1589,7 +1589,7 @@ def record_company_site(settings: Settings, job: JobPosting, result: ExternalRes
         "The bot opened these from Naukri's \"Apply on company site\" button, filled\n"
         "what it could and stopped short of submitting. Finish each one by hand, or\n"
         "answer the open questions in answers.txt and run\n"
-        "`python3 -m naukri_bot.external --url <site link> --title \"...\" --company \"...\"`.\n"
+        "`python3 -m sites_bot.external --url <site link> --title \"...\" --company \"...\"`.\n"
         "Delete an entry once you have applied; the bot drops it itself when it\n"
         "finishes one, and replaces it when it tries the same job again.\n"
     )
@@ -1760,7 +1760,7 @@ def retry_pending(
 
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        prog="python3 -m naukri_bot.external",
+        prog="python3 -m sites_bot.external",
         description=(
             "Apply on an employer's own career page: fill the form from your facts and "
             "answers, attach the resume, submit only when complete and confirmed."
@@ -1789,9 +1789,9 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
 
 
 def main(argv: Optional[List[str]] = None) -> int:
-    from .cli import EXIT_CONFIG, EXIT_FAILED, EXIT_OK, configure_logging, keep_log
-    from . import browser, config, ledger as ledger_module, llm, profile as profile_module, resume as resume_module
-    from .answers import AnswerEngine
+    from common.run import EXIT_CONFIG, EXIT_FAILED, EXIT_OK, configure_logging, keep_log
+    from common import browser, config, ledger as ledger_module, llm, profile as profile_module, resume as resume_module
+    from common.answers import AnswerEngine
 
     args = parse_args(argv)
     configure_logging(args.verbose)
@@ -1825,7 +1825,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         logger.error("Could not load your profile: %s", exc)
         return EXIT_CONFIG
     if args.retry_pending:
-        from . import report
+        from common import report
 
         ledger = ledger_module.open_ledger(settings)
         engine = AnswerEngine(ledger, llm.build_client(settings), profile, settings)

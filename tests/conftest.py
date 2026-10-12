@@ -21,7 +21,7 @@ def _isolate_working_directory(tmp_path, monkeypatch):
 @pytest.fixture(autouse=True)
 def _reset_unanswered_dedup_cache():
     """The record-once cache is module state and would leak between tests."""
-    from naukri_bot import answers
+    from common import answers
 
     answers._seen_unanswered.clear()
     answers._unanswered_loaded = False

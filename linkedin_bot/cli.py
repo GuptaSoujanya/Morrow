@@ -9,8 +9,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from naukri_bot.cli import EXIT_CONFIG, EXIT_FAILED, EXIT_LOGIN, EXIT_OK, configure_logging, keep_log
-from naukri_bot.update_profile import send_alert
+from common.run import EXIT_CONFIG, EXIT_FAILED, EXIT_LOGIN, EXIT_OK, configure_logging, keep_log
+from common.run import send_alert
 
 from . import config as config_module
 from . import publisher
@@ -132,7 +132,7 @@ def read_draft(path: Path) -> Tuple[Dict[str, str], str]:
 
 def prepare(settings: LinkedInSettings, day: str) -> Prepared:
     """Pick an article, write the post, draw the card. No browser."""
-    from naukri_bot.llm import build_client
+    from common.llm import build_client
 
     state = load_state(Path(settings.state_path))
     article = pick_article(settings, state)
@@ -156,7 +156,7 @@ def prepare(settings: LinkedInSettings, day: str) -> Prepared:
 def post_with_browser(
     settings: LinkedInSettings, text: str, card: Path
 ) -> publisher.PublishResult:
-    from naukri_bot.browser import create_driver
+    from common.browser import create_driver
 
     driver = create_driver(settings.naukri)
     try:
@@ -398,7 +398,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         return EXIT_FAILED
     finally:
         if acted and not args.dry_run:
-            from naukri_bot import report as report_module
+            from common import report as report_module
 
             report_module.update_quietly(settings.naukri)
 

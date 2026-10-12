@@ -34,7 +34,7 @@ def test_external_needs_a_link():
     with pytest.raises(ValueError):
         state.external_command(url="jobs.example.com")
     argv = state.external_command(url="https://jobs.example.com/1", company="Acme", dry_run=True).argv
-    assert argv[1:] == ("-m", "naukri_bot.external", "--url", "https://jobs.example.com/1", "--company", "Acme", "--dry-run")
+    assert argv[1:] == ("-m", "sites_bot.external", "--url", "https://jobs.example.com/1", "--company", "Acme", "--dry-run")
 
 
 def test_linkedin_post_takes_an_optional_draft():
@@ -44,7 +44,7 @@ def test_linkedin_post_takes_an_optional_draft():
 
 
 def test_report_date_is_checked():
-    assert state.report_command().argv[1:] == ("-m", "naukri_bot.report")
+    assert state.report_command().argv[1:] == ("-m", "common.report")
     assert state.report_command(day="2026-01-02").argv[-2:] == ("--date", "2026-01-02")
     with pytest.raises(ValueError):
         state.report_command(day="yesterday")

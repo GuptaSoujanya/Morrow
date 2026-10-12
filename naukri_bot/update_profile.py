@@ -30,7 +30,6 @@ import logging
 import random
 import sys
 import time
-import urllib.request
 from dataclasses import dataclass
 from datetime import datetime
 from datetime import time as dtime
@@ -47,11 +46,11 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import WebDriverWait
 
-from . import report as report_module
-from . import resume as resume_module
-from .browser import human_pause, safe_get
-from .cli import EXIT_CONFIG, EXIT_FAILED, EXIT_LOGIN, EXIT_OK, configure_logging, keep_log
-from .models import LoginResult, Settings
+from common import report as report_module
+from common import resume as resume_module
+from common.browser import human_pause, safe_get
+from common.run import EXIT_CONFIG, EXIT_FAILED, EXIT_LOGIN, EXIT_OK, configure_logging, keep_log, send_alert
+from common.models import LoginResult, Settings
 
 logger = logging.getLogger(__name__)
 
@@ -387,7 +386,7 @@ def _screenshot(driver: Any, settings: Settings) -> None:
 def with_session(settings: Settings, work: Callable[[Any], Any]) -> Any:
     """Verified login, then `work(driver)`; a screenshot if it fails, browser closed."""
     from . import auth
-    from . import browser
+    from common import browser
 
     driver = browser.create_driver(settings)
     try:
@@ -461,21 +460,6 @@ def _resume_to_upload(settings: Settings, state_path: Path, dry_run: bool) -> Op
     return pdf
 
 
-def send_alert(settings: Settings, message: str) -> None:
-    """Telegram message on failure; a no-op unless both values are configured."""
-    if not (settings.telegram_bot_token and settings.telegram_chat_id):
-        return
-    url = "https://api.telegram.org/bot%s/sendMessage" % settings.telegram_bot_token
-    body = json.dumps({"chat_id": settings.telegram_chat_id, "text": message})
-    request = urllib.request.Request(
-        url, data=body.encode("utf-8"), headers={"Content-Type": "application/json"}
-    )
-    try:
-        urllib.request.urlopen(request, timeout=15)
-    except (OSError, ValueError) as exc:  # alerting must never mask the real failure
-        logger.warning("Telegram alert failed (%s): %s", type(exc).__name__, exc)
-
-
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
@@ -529,7 +513,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     args = parse_args(argv)
     configure_logging(args.verbose)
 
-    from . import config
+    from common import config
 
     overrides = {}  # type: Dict[str, Any]
     if args.headless:

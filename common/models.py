@@ -415,11 +415,11 @@ class Settings:
     browser_agent_model: str = ""
     # The MCP server command, pinned so a run never waits on a fresh download.
     browser_agent_mcp: str = "npx -y @playwright/mcp@0.0.83"
-    # Other job boards (python3 -m naukri_bot.platforms): which ones a run works
+    # Other job boards (python3 -m sites_bot.platforms): which ones a run works
     # on by default, and applications per board per run.
     platforms: str = "hirist,instahyre"
     platform_limit: int = 10
-    # Cold emails (python3 -m naukri_bot.cold_email): drafts only, never sent.
+    # Cold emails (python3 -m sites_bot.cold_email): drafts only, never sent.
     # The sender address (empty: GOOGLE_EMAIL, then NAUKRI_EMAIL), its Gmail app
     # password for putting drafts in Gmail (empty: .eml files only), drafts per run.
     cold_email_from: str = ""
