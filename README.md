@@ -110,36 +110,34 @@ After running, results are saved to **`naukriapplied.csv`** (in the folder you r
 - `passed` — URLs of jobs successfully applied to
 - `failed` — URLs where the apply attempt failed
 
-## 🖥️ tui: one screen for everything
+## 🖥️ web: one page for everything
 
-Everything below can be run from one terminal screen, without remembering a single flag:
+Everything below can be run from one page in your browser, without remembering a single flag:
 
 ```bash
-scripts/tui               # or the full path from anywhere
-venv/bin/python -m tui    # the same thing
+scripts/web               # opens http://localhost:8000 (or the full path from anywhere)
+venv/bin/python -m web    # the same thing; --port 8899 picks another port, --no-open skips the browser
 ```
 
 Pick a section on the left (or press `1`-`9`, `0`), set its options, press **Run**, and watch
-the output stream underneath. Each page shows the exact command it will run, so nothing is hidden.
+the output stream at the bottom. Each form shows the exact command it will run, so nothing is hidden.
+The page only listens on this computer and only one command runs at a time.
 
 | Section | What it runs |
 |---|---|
 | Today | What is waiting for you, plus one-press Apply now / Practice run / report / answers / today's study module |
-| Apply on Naukri | `python -m naukri_bot` with practice run, limit, answer mode, Early Access, keywords, location |
-| Company sites | `common.assist` for the waiting forms, `sites_bot.external --url ...` for one page |
+| Apply on Naukri | `python -m naukri_bot` with practice run, limit, answer mode, Early Access, keywords, location (a real run asks first) |
+| Company sites | Every waiting application with links to the form, the Naukri listing and the resume to send; `common.assist` for the waiting forms, `sites_bot.external --url ...` for one page |
 | Naukri profile | `naukri_bot.update_profile`, schedule status, turn on the daily schedule |
 | LinkedIn post | `linkedin_bot --dry-run / --propose / --post / --if-due` (publishing asks first) |
-| Tailor resume | `common.resume --tailor`: paste the job description straight into the screen |
-| Reports | Build a day's report and read it right there |
-| Study | Read the course right in the terminal: today's module from the 8-week plan, every module by track with ✓ for the ones you marked read (kept in `data/reports/studied.json`). Also starts / stops the course site at http://localhost:8000, which keeps running after you quit |
-| Your to-dos | The unanswered questions, blank facts and waiting company sites, with a built-in editor |
+| Tailor resume | `common.resume --tailor`: paste the job description straight into the page |
+| Reports | Every day's report, rendered; build or rebuild any day |
+| Study | The course: today's module from the 8-week plan, every module by track with the ones you marked read (kept in `data/reports/studied.json`), and a reader with next / previous / mark read |
+| Your to-dos | Answer the waiting questions and fill the blank facts right in the page, or edit the whole file |
 | Setup | Google sign-in for company sites, edit `.env`, install requirements, run the tests |
 
-Keys: `x` stops a run (press again to force), `o` makes the output full height, `l` clears it,
-`esc` goes back to the menu, `q` quits. In the editor, `ctrl+s` saves and `esc` closes.
-In a course module, `n` / `p` turn to the next or previous module, `m` marks it read, `t` hides the
-contents, `b` goes back after following a link, and `w` opens the page on the study site, where
-the Mermaid diagrams are drawn (in the terminal they show as text).
+Keys: `x` stops a run (press Stop again to force it), `o` makes the output bigger or smaller.
+In the file editor, `⌘S` saves and `esc` closes.
 
 ## 🤖 naukri_bot (v2 — recommended)
 
@@ -684,10 +682,10 @@ Naukri-autoapply-bot/
 │   ├── publisher.py      #   Selenium publish, verified at every stage; selectors at the top
 │   └── cli.py            #   --dry-run / --propose / --post / --if-due
 │
-├── tui/                  # the terminal screen that runs everything (scripts/tui)
-├── course/               # the PrepForge study site the screen reads (python3 course/serve.py)
-├── scripts/              # the tui launcher, launchd install/run/status, google_login.sh
-├── tests/                # one folder per package: common/, naukri/, sites/, linkedin/, tui/
+├── web/                  # the page that runs everything (scripts/web, http://localhost:8000)
+├── course/               # the PrepForge study site, served by web/ at /course/
+├── scripts/              # the web launcher, launchd install/run/status, google_login.sh
+├── tests/                # one folder per package: common/, naukri/, sites/, linkedin/, web/
 ├── legacy/               # the original scripts: Naukri-Edge.py, Naukri-Recommended.py, the notebook, their CSVs
 │
 └── data/                 # everything personal or generated (gitignored)
