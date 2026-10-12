@@ -419,6 +419,12 @@ class Settings:
     # on by default, and applications per board per run.
     platforms: str = "hirist,instahyre"
     platform_limit: int = 10
+    # Cold emails (python3 -m naukri_bot.cold_email): drafts only, never sent.
+    # The sender address (empty: GOOGLE_EMAIL, then NAUKRI_EMAIL), its Gmail app
+    # password for putting drafts in Gmail (empty: .eml files only), drafts per run.
+    cold_email_from: str = ""
+    gmail_app_password: str = ""
+    cold_email_limit: int = 10
     # One Markdown report per day: what ran, what was applied to, what is left.
     report_dir: str = "reports"
     # The study site in course/; the report names one module of its plan a day.

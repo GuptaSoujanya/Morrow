@@ -506,6 +506,28 @@ python3 -m naukri_bot.browser_agent --url "https://www.instahyre.com/candidate/o
 Each board is one `Board` record at the top of `naukri_bot/platforms.py`: its feed and search
 addresses, the pattern of its job links, and the words on its Apply and Applied buttons.
 
+### Cold emails to recruiters (drafts only)
+
+```bash
+python3 -m naukri_bot.cold_email --dry-run         # print what it would write
+python3 -m naukri_bot.cold_email --scan-naukri     # also read recent well-scored Naukri job pages
+python3 -m naukri_bot.cold_email --to hr@acme.in --company "Acme" --title "AI Engineer" --url "<posting>"
+```
+
+- **Who gets one:** only an address a company published for applications: a posting's text ("share
+  your CV at hr@..."), a career page the bot or the browser agent read, a Naukri job page. Support,
+  no-reply and privacy mailboxes, and addresses with no hiring words around them, are left out.
+  Nothing is guessed or looked up elsewhere.
+- **What it says:** written from your resume and that posting by the local `claude`, 70 to 190
+  words, first person, checked like the tailored summary (no tool, employer or number your resume
+  does not name, no filler words, no em dashes), then signed with your name, phone, LinkedIn and
+  portfolio. The resume tailored for that job is attached, or the base one.
+- **Never sent:** each email is saved as `reports/<date>/emails/<Company - Role> (<address>).eml`;
+  double-click to open it in Mail as a draft, check it, send. With `GMAIL_APP_PASSWORD` set for
+  `COLD_EMAIL_FROM` (default `GOOGLE_EMAIL`), it is also put in that Gmail account's **Drafts**.
+- **Once per address:** `data/cold_emails.jsonl` records every draft; the same address is not written
+  to again for 30 days. At most `COLD_EMAIL_LIMIT` drafts a run. The day's report lists them.
+
 ### Daily report
 
 Every Naukri run, profile update and LinkedIn post rewrites `reports/<YYYY-MM-DD>/report.md`:
@@ -641,6 +663,7 @@ Naukri-autoapply-bot/
 │   ├── page_brain.py     #   no form on a company page: removed posting, or ask the model what to click
 │   ├── browser_agent.py  #   stuck company site: Claude Code drives this Chrome via Playwright MCP
 │   ├── platforms.py      #   other job boards: Hirist, Instahyre (python3 -m naukri_bot.platforms)
+│   ├── cold_email.py     #   recruiter emails as drafts, never sent (python3 -m naukri_bot.cold_email)
 │   ├── assist.py         #   AI fills answers.txt / profile.yaml blanks from quoted lines (python3 -m naukri_bot.assist)
 │   ├── chatbot.py        #   questionnaire drawer handling
 │   ├── early_access.py   #   share interest on Early Access roles (no apply quota)

@@ -16,7 +16,7 @@ from datetime import date, datetime, time as dtime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from . import browser_agent
+from . import browser_agent, cold_email
 from .models import ApplyStatus, Settings
 
 
@@ -533,6 +533,18 @@ def build_report(settings: Settings, day: Optional[date] = None, now: Optional[d
         out += ["- %s: `%s`" % (_cell(record.get("item"), 80), record.get("file")) for record in written]
         out.append("")
         out.append("Written from your resume and the posting. Read them; a version you put in answers.txt is used instead next time.")
+
+    drafts = [record for record in cold_email.read_records(settings)
+              if str(record.get("drafted_at", "")).startswith(day.isoformat())]
+    if drafts:
+        out += ["", "## Cold emails drafted today (not sent)", ""]
+        out += ["| To | Company | Role | In Gmail | Draft |", "|---|---|---|---|---|"]
+        for record in drafts:
+            out.append("| %s | %s | %s | %s | `%s` |" % (
+                record.get("email"), _cell(record.get("company"), 40), _cell(record.get("title"), 50),
+                "yes" if record.get("gmail_draft") else "no", record.get("eml")))
+        out.append("")
+        out.append("Read each one, then send it from Gmail's Drafts or by opening the .eml file in Mail.")
 
     tasks = browser_agent.records_for(settings, day.isoformat())
     if tasks:
