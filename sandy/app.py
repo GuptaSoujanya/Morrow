@@ -915,7 +915,7 @@ class SandyApp(App):
         elif self.modules:
             self.study(self.modules[0])
         else:
-            self.notify(f"No course found next to apply/ ({state.COURSE}).", severity="warning")
+            self.notify(f"No course found in {state.COURSE}.", severity="warning")
 
     def do_go_linkedin(self) -> None:
         self.run_command(state.linkedin_command(mode="dry-run"))

@@ -414,8 +414,8 @@ class Settings:
     browser_agent_mcp: str = "npx -y @playwright/mcp@0.0.83"
     # One Markdown report per day: what ran, what was applied to, what is left.
     report_dir: str = "reports"
-    # The study site next door; the report names one module of its plan a day.
-    course_dir: str = ".."
+    # The study site in course/; the report names one module of its plan a day.
+    course_dir: str = "course"
     # YYYY-MM-DD the plan began; empty means the day the first report was written.
     course_start_date: str = ""
 

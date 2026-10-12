@@ -22,7 +22,7 @@ from typing import List, Optional, Set, Tuple
 from naukri_bot.report import course_modules as plan_order
 
 APPLY = Path(__file__).resolve().parent.parent
-COURSE = APPLY.parent
+COURSE = APPLY / "course"
 PYTHON = sys.executable
 ANSWERS = APPLY / "data" / "answers.txt"
 PROFILE = APPLY / "data" / "profile.yaml"

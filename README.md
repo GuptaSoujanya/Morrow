@@ -491,14 +491,14 @@ Every Naukri run, profile update and LinkedIn post rewrites `reports/<YYYY-MM-DD
 - where `answers.txt` and `profile.yaml` disagree, and what the AI filled in today, with its quotes;
 - **logs**: every run also saves its full log to `reports/<YYYY-MM-DD>/logs/<tool>-<HHMMSS>.log`
   (naukri, company-site, resume, assist, profile-update, linkedin), linked from the report;
-- **learning**: today's module from the PrepForge course next door (`COURSE_DIR`), following its
+- **learning**: today's module from the PrepForge course in `course/` (`COURSE_DIR`), following its
   8-week plan (DSA, then system design, full stack, ML/GenAI, behavioral), one module a day from
   `COURSE_START_DATE` or from the first report.
 
 ```bash
 python3 -m naukri_bot.report --print          # rebuild today's report and show it
 python3 -m naukri_bot.report --date 2026-10-09
-python3 ../serve.py                          # the course site at http://localhost:8000
+python3 course/serve.py                       # the course site at http://localhost:8000
 ```
 
 Everything in the report comes from the records: the database, `data/`, `logs/`, `linkedin/`.
@@ -593,6 +593,7 @@ Naukri-autoapply-bot/
 ├── profile.example.yaml  # (in naukri_bot/) copy to data/profile.yaml and fill in your facts
 │
 ├── sandy/                # the terminal screen that runs everything (../sandy)
+├── course/               # the PrepForge study site Sandy reads (python3 course/serve.py)
 ├── naukri_bot/           # v2 package — the maintained bot (python3 -m naukri_bot)
 │   ├── __main__.py       #   entry point
 │   ├── cli.py            #   argument parsing + pipeline wiring

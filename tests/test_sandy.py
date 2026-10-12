@@ -141,7 +141,7 @@ def test_read_marks_are_saved(tmp_path):
 
 def test_study_reads_modules_and_follows_links(tmp_path, monkeypatch):
     if not state.course_modules():
-        pytest.skip("the course is not next to apply/")
+        pytest.skip("the course is not in apply/course/")
     monkeypatch.setattr(state, "STUDIED", tmp_path / "studied.json")
 
     async def drive():
