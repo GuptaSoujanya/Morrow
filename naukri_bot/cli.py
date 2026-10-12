@@ -27,7 +27,7 @@ import time
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Iterator, List, Optional
+from typing import Any, Dict, Iterator, List, Optional, Set
 
 from .models import (
     ApplyResult,
@@ -46,6 +46,8 @@ _EXTERNAL_JOBS_FILE = "external_jobs.md"
 # How long a run waits at the start for a person to finish a Google sign-in
 # (passkey, phone prompt) before going on without it.
 GOOGLE_LOGIN_WAIT_S = 120.0
+# One refusal can be a hiccup; two in a row and Naukri has closed for the day.
+REFUSALS_BEFORE_STOP = 2
 
 EXIT_OK = 0
 EXIT_CONFIG = 1
@@ -638,6 +640,7 @@ def run(
     from . import sources
 
     summary = RunSummary()
+    external_module.browser_agent.reset()
     ledger = ledger_module.open_ledger(settings)
     run_id = ledger.start_run()
     driver = None
@@ -654,10 +657,16 @@ def run(
             remaining,
         )
         if remaining <= 0 and not settings.dry_run:
-            logger.warning("Daily quota already exhausted. Nothing to do today.")
-            summary.quota_after = summary.quota_before
-            return summary
+            if not settings.external_apply or settings.external_apply_limit <= 0:
+                logger.warning("Daily quota already exhausted. Nothing to do today.")
+                summary.quota_after = summary.quota_before
+                return summary
+            logger.warning(
+                "Daily quota already exhausted; this run applies on company sites only "
+                "(up to %d).", settings.external_apply_limit,
+            )
 
+        wanted = settings.target_applications
         # Never plan more applications than we are allowed to make.
         budget = min(settings.target_applications, max(remaining, 0))
         if settings.dry_run:
@@ -794,6 +803,17 @@ def run(
                 answers_module.answers_file_path(settings),
                 settings.profile_path,
             )
+        unconfirmed = ledger.sent_unconfirmed()
+        sent_before = [scored for scored in selected if scored.job.job_id in unconfirmed]
+        if sent_before:
+            selected = [scored for scored in selected if scored.job.job_id not in unconfirmed]
+            summary.held_back += len(sent_before)
+            logger.info(
+                "Held back %d company-site job(s) where Submit was already clicked without a "
+                "confirmation (%s); check them by hand so nothing is sent twice.",
+                len(sent_before),
+                ", ".join(scored.job.company or scored.job.title for scored in sent_before),
+            )
         summary.eligible = len(selected)
         if not selected:
             logger.warning(
@@ -830,17 +850,39 @@ def run(
                 "Google: %s%s", how, "" if signed_in else "; company sites will use email sign-in"
             )
         company_site_tries = 0
+        refused_in_a_row = 0
         base_pdf = None  # type: Optional[Path]
+        # Naukri's limit is not the employers': once Naukri is closed for the
+        # day, company-site postings are still worth applying to.
+        naukri_open = settings.target_applications > 0
+        # Ten Accenture postings met the same sign-up wall one after another and
+        # used up every company-site try; one meeting per company is enough.
+        walled: Set[str] = set()
+
+        def sites_left() -> bool:
+            return settings.external_apply and company_site_tries < settings.external_apply_limit
 
         for scored in selected:
-            if summary.applied >= settings.target_applications:
-                logger.info(
-                    "Reached the target of %d applications.",
-                    settings.target_applications,
-                )
-                break
-            if ledger.quota_remaining(settings.daily_quota) <= 0:
-                logger.warning("Quota exhausted mid-run. Stopping cleanly.")
+            if naukri_open:
+                closed = ""
+                if summary.applied >= settings.target_applications:
+                    logger.info(
+                        "Reached the target of %d applications.",
+                        settings.target_applications,
+                    )
+                    if summary.applied >= wanted:
+                        break
+                    closed = "Naukri's daily quota is used up"
+                elif ledger.quota_remaining(settings.daily_quota) <= 0:
+                    closed = "Naukri's daily quota is used up"
+                if closed:
+                    naukri_open = False
+                    if not sites_left():
+                        logger.warning("%s. Stopping cleanly.", closed)
+                        break
+                    logger.warning("%s; going on with company sites only.", closed)
+            if not naukri_open and not sites_left():
+                logger.info("Tried %d company sites; stopping.", company_site_tries)
                 break
 
             # One prolific poster can list a dozen near-identical roles, each
@@ -859,26 +901,56 @@ def run(
                 )
                 continue
 
-            logger.info(
-                "[%d of %d applied] %s @ %s",
-                summary.applied,
-                settings.target_applications,
-                scored.job.title,
-                scored.job.company,
-            )
-            tailored_pdf = None  # type: Optional[Path]
-            if tailoring:
-                tailored_pdf = _upload_tailored_resume(
-                    driver, settings, client, scored.job, resume_module, resume_tab
+            if not naukri_open:
+                kind = apply_module.apply_button_kind(driver, scored.job)
+                if kind == "signed_out":
+                    logger.warning("Signed out of Naukri. Stopping.")
+                    break
+                if kind != "external" or company_key in walled:
+                    continue
+                company_site_tries += 1
+                logger.info(
+                    "[company site %d of %d] %s @ %s",
+                    company_site_tries,
+                    settings.external_apply_limit,
+                    scored.job.title,
+                    scored.job.company,
                 )
-                profile_resume_changed = profile_resume_changed or tailored_pdf is not None
-            result = apply_module.apply_to_job(
-                driver, scored.job, profile, answer_engine, settings
-            )
+                site_pdf = (
+                    _tailored_pdf_only(settings, client, scored.job, resume_module)
+                    if tailoring
+                    else None
+                )
+                if site_pdf is None and base_pdf is None:
+                    base_pdf = _base_pdf(settings, resume_module)
+                result = external_module.apply_on_company_site(
+                    driver, scored.job, profile, answer_engine, settings,
+                    site_pdf or base_pdf,
+                ).to_apply_result(scored.job)
+            else:
+                result = None  # type: Optional[ApplyResult]
+            if result is None:
+                logger.info(
+                    "[%d of %d applied] %s @ %s",
+                    summary.applied,
+                    settings.target_applications,
+                    scored.job.title,
+                    scored.job.company,
+                )
+                tailored_pdf = None  # type: Optional[Path]
+                if tailoring:
+                    tailored_pdf = _upload_tailored_resume(
+                        driver, settings, client, scored.job, resume_module, resume_tab
+                    )
+                    profile_resume_changed = profile_resume_changed or tailored_pdf is not None
+                result = apply_module.apply_to_job(
+                    driver, scored.job, profile, answer_engine, settings
+                )
             if (
-                result.status == ApplyStatus.EXTERNAL_SKIPPED
-                and settings.external_apply
-                and company_site_tries < settings.external_apply_limit
+                naukri_open
+                and result.status == ApplyStatus.EXTERNAL_SKIPPED
+                and sites_left()
+                and company_key not in walled
             ):
                 company_site_tries += 1
                 if tailored_pdf is None and base_pdf is None:
@@ -887,6 +959,12 @@ def run(
                     driver, scored.job, profile, answer_engine, settings,
                     tailored_pdf or base_pdf,
                 ).to_apply_result(scored.job)
+            if (
+                result.status == ApplyStatus.EXTERNAL_MANUAL
+                and "the site asks for an account" in (result.detail or "")
+                and company_key
+            ):
+                walled.add(company_key)
             ledger.record_attempt(
                 result, title=scored.job.title or "", company=scored.job.company or "",
                 facts=facts,
@@ -914,6 +992,23 @@ def run(
                     "Naukri reports the daily quota is exhausted. Stopping."
                 )
                 break
+            refused_in_a_row = (
+                refused_in_a_row + 1
+                if result.status == ApplyStatus.NAUKRI_REFUSED
+                else 0
+            )
+            if naukri_open and refused_in_a_row >= REFUSALS_BEFORE_STOP:
+                naukri_open = False
+                logger.warning(
+                    "Naukri refused %d applications in a row (%r). That is its "
+                    "limit for the day; %s",
+                    refused_in_a_row,
+                    result.detail,
+                    "going on with company sites only." if sites_left()
+                    else "stopping. Run again tomorrow.",
+                )
+                if not sites_left():
+                    break
 
         if external_jobs:
             _write_external_jobs(external_jobs, external_history)
@@ -1001,6 +1096,20 @@ def _upload_tailored_resume(
         )
         return None
     logger.info("      resume: uploaded %s", pdf)
+    return pdf
+
+
+def _tailored_pdf_only(
+    settings: Settings, client: Any, job: JobPosting, resume_module: Any
+) -> Optional[Path]:
+    """The resume tailored to `job`, built for a company site and not put on Naukri."""
+    try:
+        pdf, notes = resume_module.build_tailored_pdf(settings, client, job)
+    except resume_module.ResumeError as exc:
+        logger.warning("      resume: %s; sending the base resume", exc)
+        return None
+    for note in notes:
+        logger.info("      resume: %s", note)
     return pdf
 
 

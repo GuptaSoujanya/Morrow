@@ -4,9 +4,11 @@ import json
 import logging
 import math
 import os
+import re
 import shutil
 import subprocess
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from .models import (
@@ -99,20 +101,43 @@ class ClaudeCLIClient(LLMClient):
     def complete_json(
         self, prompt: str, schema_hint: str
     ) -> Optional[Dict[str, Any]]:
+        return self._complete(prompt, schema_hint, None)
+
+    def complete_json_with_image(
+        self, prompt: str, schema_hint: str, image: Path
+    ) -> Optional[Dict[str, Any]]:
+        """complete_json, with a screenshot the CLI opens through its Read tool."""
+        image = Path(image).resolve()
+        prompt = (
+            "First use the Read tool to look at the image %s: it is a screenshot "
+            "of the page described below.\n\n%s"
+        ) % (image, prompt)
+        return self._complete(prompt, schema_hint, image)
+
+    def _complete(
+        self, prompt: str, schema_hint: str, image: Optional[Path]
+    ) -> Optional[Dict[str, Any]]:
         full_prompt = (
             "%s\n\nRequired JSON shape:\n%s\n\n"
             "Reply with ONE valid JSON object and nothing else."
         ) % (prompt, schema_hint)
+        # Read is the only tool it may use, and only inside the screenshot's folder.
+        extra: Dict[str, Any] = {}
+        tool_args: List[str] = []
+        if image is not None:
+            tool_args = ["--allowedTools=Read", "--add-dir=%s" % image.parent]
+            extra = {"cwd": str(image.parent), "stdin": subprocess.DEVNULL}
         for attempt in range(2):
             request = full_prompt
             if attempt:
                 request += "\nYour prior reply could not be parsed. Reply with JSON only."
             try:
                 completed = subprocess.run(
-                    ["claude", "-p", request],
+                    ["claude", "-p", request] + tool_args,
                     capture_output=True,
                     text=True,
                     timeout=self.settings.llm_timeout_s,
+                    **extra,
                 )
             except subprocess.TimeoutExpired as error:
                 output = error.stdout or error.stderr or ""
@@ -575,12 +600,148 @@ def resolve_answer(
     )
 
 
+JUDGED_MAX_CHARS = 90
+
+_JUDGE_PROMPT = (
+    "A job application asks the candidate a screening question that her stated "
+    "facts do not answer directly. Decide whether ONE of these honest inferences "
+    "answers it. If none does, set can_answer to false: a skipped question costs "
+    "one job, a wrong answer is a false statement made in her name.\n"
+    "1. A skill, tool, framework, language or domain that appears nowhere in her "
+    "facts: she has no recorded experience with it. Answer 0 for years (or the "
+    "option meaning none, 0 or less than a year) and No for 'have you worked "
+    "with it'.\n"
+    "2. A skill her resume shows her using: the years are the time of the role "
+    "or project where she used it, never more than her total experience. Quote "
+    "that resume line.\n"
+    "3. A follow-up whose premise her facts make false, such as 'If yes, share "
+    "your employee code' when her facts say she never worked there: answer N/A, "
+    "or the option meaning not applicable.\n"
+    "4. A choice list without her stated value: pick the range that contains her "
+    "number, or Other, None of these or Not applicable when nothing else fits.\n"
+    "5. A question her facts already answer in other words (a city she lists, a "
+    "work mode or shift she accepts or declined): give that answer and quote "
+    "the fact.\n"
+    "Never answer about gender, religion, caste, race, disability, criminal "
+    "history, visa, sponsorship, citizenship or the legal right to work in a "
+    "country. Never write a motivation or essay answer. Never invent a number, "
+    "date, name, percentage or year that is not written in her facts.\n"
+    "evidence: copy a phrase word for word from her facts (or from the job, when "
+    "the answer rests on it) unless the answer is 0, None, No, N/A or Other. "
+    "reason: one short sentence a person can check, for example 'CrewAI is not "
+    "named in her resume, profile or answers'. depends_on_posting: true when the "
+    "answer rests on this job's details (its city, its company) rather than on "
+    "her alone.\n"
+    "Keep answer under 90 characters: a bare value, Yes or No, or one short "
+    "sentence. With options, copy one option exactly.\n\n"
+    "HER FACTS\n%s\n\nTHE JOB\n%s\n\nINPUT\n%s"
+)
+_JUDGE_SCHEMA = (
+    '{"can_answer": false, "answer": "", "evidence": "", "reason": "", '
+    '"depends_on_posting": false}'
+)
+_NOTHING_CLAIMED = re.compile(
+    r"^\s*(zero|none|no|nil|n/?a|not applicable|others?|none of (the|these)( above)?"
+    r"|fresher|no experience|less than (1|one|a) year)\b",
+    re.I,
+)
+_NUMBER = re.compile(r"\d+(?:\.\d+)?")
+
+
+def claims_nothing(answer: str) -> bool:
+    """0 years, No, N/A, Other: an answer that asserts no experience or fact of hers."""
+    if _NOTHING_CLAIMED.match(answer):
+        return True
+    numbers = [float(n) for n in _NUMBER.findall(answer)]
+    return bool(numbers) and min(numbers) == 0
+
+
+def _quoted(evidence: str, text: str) -> bool:
+    def norm(value: str) -> str:
+        for curly, plain in (("\u2019", "'"), ("\u2018", "'"), ("\u201c", '"'), ("\u201d", '"')):
+            value = value.replace(curly, plain)
+        return " ".join(value.casefold().split())
+
+    quote = norm(evidence).strip(" .\"'")
+    return len(quote) >= 12 and quote in norm(text)
+
+
+def judge_answer(
+    client: LLMClient,
+    question: str,
+    candidate_text: str,
+    options: Optional[List[str]] = None,
+    job_context: Optional[Dict[str, str]] = None,
+) -> Optional[Dict[str, Any]]:
+    """A second look at a question the strict pass abstained on.
+
+    Returns {"answer", "reason", "evidence", "depends_on_posting"}, or None when
+    no listed inference applies, the claim is not quoted from the facts, or a
+    number in a typed answer is not written in them.
+    """
+    if not client.available():
+        return None
+    usable_options = [o for o in (options or []) if o and o.strip()]
+    job_text = "\n".join("%s: %s" % (k, v) for k, v in (job_context or {}).items() if v)
+    request: Dict[str, Any] = {"question": question}
+    if usable_options:
+        request["options"] = usable_options
+    prompt = _JUDGE_PROMPT % (
+        candidate_text[:12000],
+        job_text or "not given",
+        json.dumps(request, ensure_ascii=True),
+    )
+    response = client.complete_json(prompt, _JUDGE_SCHEMA)
+    if response is None:
+        logger.info("No judgement for %r: the model did not answer", question)
+        return None
+    if response.get("can_answer") is not True:
+        logger.info("No judgement for %r: %s", question, response.get("reason") or "none applies")
+        return None
+
+    answer, reason, evidence = (
+        response.get(key) if isinstance(response.get(key), str) else ""
+        for key in ("answer", "reason", "evidence")
+    )
+    answer, reason, evidence = answer.strip(), reason.strip(), evidence.strip()
+    refusal = ""
+    if not answer or not reason:
+        refusal = "no answer or no reason given"
+    elif usable_options:
+        lookup = {_normalise_space(option): option for option in usable_options}
+        matched = lookup.get(_normalise_space(answer))
+        if matched is None:
+            refusal = "%r is not one of the options" % answer
+        answer = matched or answer
+    elif len(answer) > JUDGED_MAX_CHARS:
+        refusal = "the answer runs past %d characters" % JUDGED_MAX_CHARS
+    else:
+        stated = set(_NUMBER.findall(candidate_text))
+        invented = [n for n in _NUMBER.findall(answer) if float(n) != 0 and n not in stated]
+        if invented:
+            refusal = "%s is not written in her facts" % ", ".join(invented)
+    if not refusal and not claims_nothing(answer):
+        if not _quoted(evidence, candidate_text + "\n" + job_text):
+            refusal = "the evidence %r is not a quote from her facts" % evidence
+    if refusal:
+        logger.info("Refused the judged answer %r to %r: %s", answer, question, refusal)
+        return None
+    return {
+        "answer": answer,
+        "reason": reason,
+        "evidence": evidence,
+        "depends_on_posting": response.get("depends_on_posting") is True,
+    }
+
+
 __all__ = [
     "AnthropicClient",
     "ClaudeCLIClient",
     "LLMClient",
     "NullClient",
     "build_client",
+    "claims_nothing",
+    "judge_answer",
     "resolve_answer",
     "score_jobs",
 ]

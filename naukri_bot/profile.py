@@ -90,6 +90,9 @@ def extract_resume_text(path: str) -> str:
         logger.warning("Unsupported resume extension %s; reading as plain text", extension)
         return text
 
+    body = re.search(r"\\begin\{document\}(.*?)(?:\\end\{document\}|\Z)", text, re.S)
+    if body:
+        text = body.group(1)
     lines = []
     for line in text.splitlines():
         if line.lstrip().startswith("%"):

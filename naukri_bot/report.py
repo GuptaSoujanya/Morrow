@@ -16,6 +16,7 @@ from datetime import date, datetime, time as dtime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from . import browser_agent
 from .models import ApplyStatus, Settings
 
 
@@ -37,6 +38,7 @@ _OUTCOMES = {
     ApplyStatus.NO_APPLY_BUTTON: "No apply button",
     ApplyStatus.CHATBOT_TIMEOUT: "Naukri's question bot stalled",
     ApplyStatus.QUOTA_EXPIRED: "Naukri's daily limit reached",
+    ApplyStatus.NAUKRI_REFUSED: "Naukri refused the click (its limit for the day)",
     ApplyStatus.SESSION_EXPIRED: "Signed out mid-run",
     ApplyStatus.ERROR: "Error",
 }
@@ -497,6 +499,43 @@ def build_report(settings: Settings, day: Optional[date] = None, now: Optional[d
         out.append("Each one is marked in the file. Change any that are wrong; your edit wins.")
     else:
         out.append("Nothing.")
+
+    judged = changes_on(settings, day.isoformat(), kind="judged")
+    if judged:
+        out += ["", "### Answered by judgement", ""]
+        out += [
+            "- %s: **%s** (%s; %s)"
+            % (
+                _cell(record.get("item"), 80),
+                _cell(record.get("value"), 60),
+                _cell(record.get("evidence"), 100),
+                "saved in answers.txt" if record.get("file") != "this application only" else "this application only",
+            )
+            for record in judged
+        ]
+        out.append("")
+        out.append("No fact of yours said these outright. Check them; an answer you write in answers.txt replaces the judgement.")
+
+    written = changes_on(settings, day.isoformat(), kind="written")
+    if written:
+        out += ["", "### Long answers written for company forms", ""]
+        out += ["- %s: `%s`" % (_cell(record.get("item"), 80), record.get("file")) for record in written]
+        out.append("")
+        out.append("Written from your resume and the posting. Read them; a version you put in answers.txt is used instead next time.")
+
+    tasks = browser_agent.records_for(settings, day.isoformat())
+    if tasks:
+        out += ["", "## Browser agent (Claude Code on the company sites)", ""]
+        out += ["| Time | Company | Role | Outcome | Minutes | Folder |", "|---|---|---|---|---|---|"]
+        for task in tasks:
+            job = task.get("job") or {}
+            folder = Path(task["folder"])
+            out.append("| %s | %s | %s | %s | %.1f | [%s](agent/%s/) |" % (
+                _local_clock(task.get("at", "")), _cell(job.get("company"), 40), _cell(job.get("title"), 50),
+                _cell("%s: %s" % (task.get("status"), task.get("detail")), 160), (task.get("seconds") or 0) / 60.0,
+                folder.name, folder.name.replace(" ", "%20")))
+        out.append("")
+        out.append("Each folder keeps the task it was given (task.md), its reply (transcript.json) and report.json.")
 
     out += ["", "## Logs", ""]
     logs = sorted((report_path(settings, day).parent / "logs").glob("*.log"))

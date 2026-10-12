@@ -217,3 +217,16 @@ def test_every_job_is_scored_whether_batches_run_one_at_a_time_or_together(worke
     assert sorted(scores) == sorted(job.job_id for job in jobs)
     assert client.calls == 4
     assert client.most == (1 if workers == 1 else 3)
+
+
+def test_a_latex_resume_reads_from_its_body_not_the_preamble(tmp_path):
+    tex = tmp_path / "resume.tex"
+    tex.write_text(
+        "\\documentclass{extarticle}\n\\usepackage{charter} % Charter: clean serif\n"
+        "\\definecolor{accent}{HTML}{1f4e79}\n\\begin{document}\n"
+        "{\\Large\\bfseries JANE DOE}\n\\section{Experience}\nBuilt LangChain agents.\n\\end{document}\n"
+    )
+    text = profile_module.extract_resume_text(str(tex))
+    assert text.startswith("JANE DOE")
+    assert "Built LangChain agents." in text
+    assert "charter" not in text.lower() and "1f4e79" not in text

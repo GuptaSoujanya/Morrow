@@ -43,6 +43,9 @@ _unanswered_loaded = False
 
 _ANSWERS_FILE_NAME = "answers.txt"
 _FUZZY_MATCH_RATIO = 0.9
+# An answer written like this in answers.txt is never sent as it stands: the AI
+# writes a fresh one for every posting from the resume and that posting.
+PER_JOB = "[AI writes this for each job]"
 _LISTED_OPTIONS = 12
 _book = None  # type: Optional[AnswerBook]
 
@@ -163,7 +166,16 @@ class AnswerBook:
             self.reload()
 
     def answer_for(self, question: str) -> Optional[str]:
-        """The user's answer, or None when the question is unknown or still blank."""
+        """The user's answer, or None when the question is unknown, blank or written per job."""
+        answer = self._lookup(question)
+        return None if answer is None or _is_per_job(answer) else answer
+
+    def per_job(self, question: str) -> bool:
+        """Whether the user asked for this one to be written fresh for every posting."""
+        answer = self._lookup(question)
+        return answer is not None and _is_per_job(answer)
+
+    def _lookup(self, question: str) -> Optional[str]:
         self._refresh_if_changed()
         key = _question_key(question)
         if not key:
@@ -224,6 +236,10 @@ class AnswerBook:
         self.entries.append(([question], ""))
         self._by_key[key] = ""
         return True
+
+
+def _is_per_job(answer: str) -> bool:
+    return " ".join(answer.split()).casefold() == PER_JOB.casefold()
 
 
 def install_answer_book(settings: Any) -> AnswerBook:
@@ -299,6 +315,15 @@ def facts_fingerprint(profile: Profile, settings: Any) -> str:
     return hashlib.sha1(payload.encode("utf-8")).hexdigest()[:16]
 
 
+# Questions where a guess is a false declaration or private: always left to you.
+_NOT_FOR_JUDGEMENT = re.compile(
+    r"\b(gender|sex|marital|religio\w*|caste|race|ethnic\w*|veteran|disabilit\w*"
+    r"|criminal|convict\w*|visa|sponsor\w*|citizen\w*|permanent resident"
+    r"|authori[sz]ed to work|work authori[sz]ation|right to work|pan|aadhaa?r"
+    r"|passport number|ssn|social security|bank|account number)\b",
+    re.I,
+)
+
 _SKILL_YEARS_RE = re.compile(
     r"(how many years|years of (experience|exp)\b|relevant experience"
     r"|experience in years|yrs of (experience|exp)\b)"
@@ -321,6 +346,7 @@ class AnswerEngine:
         self.abstained = 0
         self.profile_fingerprint = _profile_fingerprint(profile)
         self.job_context: Dict[str, str] = {}
+        self.job = None  # type: Any
         self.book = install_answer_book(settings)
 
     def set_job_context(self, job: Any) -> None:
@@ -330,6 +356,7 @@ class AnswerEngine:
         walk-in?" means the employer's own location. Without this the model has
         nothing to resolve it against and abstains, which skips the job.
         """
+        self.job = job
         self.job_context = {
             key: value
             for key, value in (
@@ -347,6 +374,8 @@ class AnswerEngine:
         field_type: str = "text",
     ) -> AnswerResolution:
         self._current_options = options
+        if not options and self.book.per_job(question):
+            return self._write_for_job(question, field_type)
         own = self._own_answer(question, options)
         if own is not None:
             return self._accept(question, own, field_type, persist=False)
@@ -377,7 +406,10 @@ class AnswerEngine:
             job_context=self.job_context,
         )
         if llm_resolution.abstained:
-            return self._finish(question, llm_resolution, False)
+            judged = self._judge(question, options)
+            if judged is None:
+                return self._finish(question, llm_resolution, False)
+            return self._accept(question, judged, field_type, persist=False)
         if self.settings.answer_mode == AnswerMode.ASK:
             return self._finish(
                 question, AnswerResolution.abstain("ask_mode_llm_answer"), False
@@ -394,6 +426,138 @@ class AnswerEngine:
                 llm_resolution.answer.grounded_in if llm_resolution.answer else "",
             )
         return self._accept(question, llm_resolution, field_type, persist=persist)
+
+    def _judge(
+        self, question: str, options: Optional[List[str]]
+    ) -> Optional[AnswerResolution]:
+        """The model's honest inference for a question no fact answers, or None."""
+        if not self.settings.judge_answers or self.settings.answer_mode != AnswerMode.AUTO:
+            return None
+        from . import assist  # assist imports this module, so not at the top
+
+        if _NOT_FOR_JUDGEMENT.search(question) or assist._OWN_WORDS.search(question):
+            return None
+        texts = assist.sources(self.settings, self.profile, self.book)
+        candidate_text = "\n\n".join(
+            "%s:\n%s" % (name.upper(), text) for name, text in texts.items() if text
+        )
+        judged = llm.judge_answer(
+            self.client, question, candidate_text, options=options, job_context=self.job_context
+        )
+        if judged is None:
+            return None
+        answer = judged["answer"]
+        skill = assist._SKILL_YEARS.search(question)
+        if skill and not llm.claims_nothing(answer):
+            total = self.profile.total_experience_years
+            numbers = [float(n) for n in re.findall(r"\d+(?:\.\d+)?", answer)]
+            if not assist._named_anywhere(skill.group(1), candidate_text.casefold()):
+                logger.info("Refused %r for %r: the skill is named nowhere in your files", answer, question)
+                return None
+            if total is not None and any(n > float(total) for n in numbers):
+                logger.info("Refused %r for %r: more than your %s years in total", answer, question, total)
+                return None
+        logger.info("[judged] %s -> %s (%s)", question, answer, judged["reason"])
+        self._keep_judged(question, answer, judged, saved=not options and not judged["depends_on_posting"])
+        return AnswerResolution.resolved(
+            Answer(
+                text=answer,
+                grounded_in="judged: %s" % judged["reason"],
+                source=AnswerSource.LLM,
+                confidence=0.6,
+            )
+        )
+
+    def _keep_judged(self, question: str, answer: str, judged: Dict[str, Any], saved: bool) -> None:
+        """Write a typed judged answer into answers.txt; note every judgement for the report.
+
+        A pick from one form's list ("Other", "10 - 20 LPA") is not saved: replayed
+        as typed text on another form it would be wrong.
+        """
+        from . import assist
+
+        where = ""
+        if self.job_context.get("company"):
+            where = " while applying to %s at %s" % (
+                self.job_context.get("title") or "a role",
+                self.job_context["company"],
+            )
+        note = "AI judged this on %s%s: %s. Change it if it is wrong." % (
+            datetime.now().strftime("%Y-%m-%d"),
+            where,
+            judged["reason"].rstrip("."),
+        )
+        self.book._refresh_if_changed()
+        key = _question_key(question)
+        if saved and self.book._by_key.get(key):
+            saved = False
+        if saved:
+            try:
+                with open(self.book.path, "r", encoding="utf-8") as handle:
+                    text = handle.read()
+            except OSError:
+                text = ""
+            updated = assist.fill_answer(text, question, answer, note) if key in self.book._by_key else None
+            if updated is None:
+                updated = text + "\n# %s\nQ: %s\nA: %s\n" % (note, " ".join(question.split()), answer)
+            try:
+                os.makedirs(os.path.dirname(self.book.path) or ".", exist_ok=True)
+                with open(self.book.path, "w", encoding="utf-8") as handle:
+                    handle.write(updated)
+                self.book.reload()
+            except OSError as exc:
+                logger.warning("Could not write the judged answer to %s: %s", self.book.path, exc)
+                saved = False
+        try:
+            assist.record_change(
+                self.settings,
+                assist.Change(
+                    file=self.book.path if saved else "this application only",
+                    item=" ".join(question.split()),
+                    value=answer,
+                    source="judgement",
+                    evidence=judged["evidence"] or judged["reason"],
+                    kind="judged",
+                ),
+            )
+        except OSError as exc:
+            logger.warning("Could not record the judged answer: %s", exc)
+
+    def _write_for_job(self, question: str, field_type: str) -> AnswerResolution:
+        """A fresh answer for this posting, from the resume and the posting only."""
+        from . import assist
+        from . import resume
+
+        text = None  # type: Optional[str]
+        if self.job is not None and self.client.available():
+            try:
+                base = resume.load_base(self.settings.resume_path)
+            except resume.ResumeError as exc:
+                logger.info("Cannot write %r for this job: %s", question, exc)
+            else:
+                text = resume.write_long_answer(
+                    self.client, base, self.job, question, max_chars=llm.JUDGED_MAX_CHARS
+                )
+        if text is None:
+            return self._finish(
+                question, AnswerResolution.abstain("the AI could not write it for this job"), False
+            )
+        company = getattr(self.job, "company", "") or "this company"
+        logger.info("[written for %s] %s -> %s", company, question, text)
+        assist.record_change(self.settings, assist.Change(
+            file="this application only", item=" ".join(question.split()), value=text,
+            source="resume and the %s posting" % company, evidence="", kind="written"))
+        return self._accept(
+            question,
+            AnswerResolution.resolved(Answer(
+                text=text,
+                grounded_in="written for %s from your resume and the posting" % company,
+                source=AnswerSource.LLM,
+                confidence=0.8,
+            )),
+            field_type,
+            persist=False,
+        )
 
     def own_answer(self, question: str, options: Optional[List[str]] = None) -> Optional[str]:
         """The answer from data/answers.txt alone: no cache, no model, nothing recorded."""

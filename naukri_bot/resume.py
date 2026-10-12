@@ -520,6 +520,73 @@ def tailor(client: LLMClient, base: BaseResume, job: JobPosting) -> Tuple[Resume
 # --- compiling --------------------------------------------------------------------
 
 
+LONG_ANSWER_MAX_CHARS = 700
+_LONG_ANSWER_SCHEMA = '{"can_answer": true, "answer": ""}'
+_LONG_ANSWER_PROMPT = (
+    "Write the candidate's answer to one question on a job application form, as "
+    "she would type it herself: first person, plain and specific, %s, "
+    "under %d characters, one paragraph. Use only facts from her "
+    "resume below; you may name the company, the role and what the posting says "
+    "the team works on. Never invent a project, number, employer, date, feeling "
+    "or plan the resume does not state. No buzzwords, no em or en dashes, no "
+    "exclamation marks, no lists, no greeting or sign-off. If the resume cannot "
+    "answer it (a reference, a date, a legal or personal fact), set can_answer "
+    "to false.%s\n\nHER RESUME\n%s\n\nTHE JOB\n%s at %s\n%s\n\nQUESTION\n%s"
+)
+
+
+def write_long_answer(
+    client: LLMClient,
+    base: BaseResume,
+    job: JobPosting,
+    question: str,
+    max_chars: int = LONG_ANSWER_MAX_CHARS,
+) -> Optional[str]:
+    """Her answer to a form's long question, from the resume and the posting only.
+
+    None when the model declines, or when after two tries the text still names
+    something neither source mentions or trips the same lint as the summary.
+    """
+    if not client.available():
+        return None
+    known = frozenset(_terms(" ".join(part or "" for part in (job.title, job.company, job.location, job.description, question))))
+    # A chat box takes one short sentence; a form's text area takes a paragraph.
+    shape, min_words = ("one sentence", 8) if max_chars < 200 else ("2 to 4 sentences", 15)
+    problems = []  # type: List[str]
+    for _ in range(2):
+        feedback = ""
+        if problems:
+            feedback = "\nYour last draft was refused; fix these: %s." % "; ".join(problems)
+        prompt = _LONG_ANSWER_PROMPT % (
+            shape,
+            max_chars,
+            feedback,
+            base.plain_text[:8000],
+            job.title or "a role",
+            job.company or "the company",
+            (job.description or "")[:3000],
+            question,
+        )
+        response = client.complete_json(prompt, _LONG_ANSWER_SCHEMA)
+        if response is None or response.get("can_answer") is False:
+            return None
+        answer = response.get("answer")
+        if not isinstance(answer, str):
+            return None
+        answer = " ".join(answer.split())
+        problems = _lint(answer, "the answer")
+        problems += ["it names %s, which neither the resume nor the posting does" % term
+                     for term in ungrounded_terms(answer, base, known)]
+        if len(answer) > max_chars:
+            problems.append("it runs to %d characters, over %d" % (len(answer), max_chars))
+        if len(answer.split()) < min_words:
+            problems.append("it is too short to answer the question")
+        if not problems:
+            return answer
+    logger.info("No long answer for %r: %s", question, "; ".join(problems))
+    return None
+
+
 def find_compiler(preferred: str = "") -> Optional[Tuple[str, str]]:
     """(name, path) of the first LaTeX compiler on PATH, or None."""
     names = [preferred.strip()] if preferred.strip() else ["tectonic", "pdflatex", "xelatex", "lualatex"]

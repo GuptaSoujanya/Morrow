@@ -47,6 +47,12 @@ _QUOTA_XPATH = (
     " or contains(translate(normalize-space(.),"
     "'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'quota has been expired')]"
 )
+# Only the element whose own text says it, not every ancestor up to <body>.
+_REFUSED_XPATH = (
+    "//*[text()[contains(translate(normalize-space(.),"
+    "'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),"
+    "'error while processing your request')]]"
+)
 _APPLY_CONTROL_CSS = (
     "button#company-site-button, a#company-site-button, "
     "button[class*='company-site'], a[class*='company-site'], "
@@ -302,6 +308,30 @@ def _reload_and_check_applied(driver: WebDriver, job: JobPosting) -> str:
     return _applied_marker(driver)
 
 
+def apply_button_kind(driver: WebDriver, job: JobPosting) -> str:
+    """Open the posting and name its apply button without clicking it.
+
+    'external', 'native', 'applied', 'signed_out', or '' when there is none.
+    """
+    try:
+        if not safe_get(driver, job.url):
+            return ""
+        if not _on_job_page(driver):
+            human_pause()
+            if not safe_get(driver, job.url):
+                return ""
+        if _looks_logged_out(driver):
+            return "signed_out"
+        _wait_for_apply_controls(driver)
+        button, classification = classify_apply_button(driver)
+        if button is None:
+            return "applied" if _applied_marker(driver) else ""
+        return classification
+    except WebDriverException as exc:
+        logger.warning("Could not read the apply button for job %s: %s", job.job_id, exc)
+        return ""
+
+
 def apply_to_job(
     driver: WebDriver,
     job: JobPosting,
@@ -375,6 +405,9 @@ def apply_to_job(
             quota_message = _visible_message(driver, _QUOTA_XPATH)
             if quota_message:
                 return _result(job, ApplyStatus.QUOTA_EXPIRED, quota_message)
+            refusal = _visible_message(driver, _REFUSED_XPATH)
+            if refusal:
+                return _result(job, ApplyStatus.NAUKRI_REFUSED, refusal)
 
             drawer = _find_visible(
                 driver, By.CSS_SELECTOR, "[id*='ChatbotContainer'], .chatbot_Drawer"
@@ -467,4 +500,4 @@ def apply_to_job(
         return _result(job, ApplyStatus.ERROR, detail)
 
 
-__all__ = ["apply_to_job", "classify_apply_button", "verify_applied"]
+__all__ = ["apply_button_kind", "apply_to_job", "classify_apply_button", "verify_applied"]

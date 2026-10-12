@@ -251,7 +251,9 @@ class Ledger:
         """Jobs whose latest attempt stopped for you while `facts` was what it is now.
 
         `facts` fingerprints the answers and facts the user edits; until it
-        changes, the same question stops the same application again.
+        changes, the same question stops the same application again. A company
+        site that stopped for any other reason (it had not loaded, it wanted an
+        account) is tried again: a fix to the bot can get past those.
         """
         if not facts:
             return set()
@@ -260,12 +262,31 @@ class Ledger:
                 rows = self._connection.execute(
                     """SELECT a.job_id FROM applications a
                        WHERE a.id = (SELECT MAX(b.id) FROM applications b WHERE b.job_id = a.job_id)
-                         AND a.status IN (?, ?) AND a.facts_fingerprint = ?""",
-                    (ApplyStatus.ABSTAINED, ApplyStatus.EXTERNAL_MANUAL, facts),
+                         AND (a.status = ? OR (a.status = ? AND a.detail LIKE ?))
+                         AND a.facts_fingerprint = ?""",
+                    (ApplyStatus.ABSTAINED, ApplyStatus.EXTERNAL_MANUAL, "%needs you for%", facts),
                 ).fetchall()
             return {row[0] for row in rows}
         except sqlite3.Error:
             logger.exception("failed to list applications waiting on the user")
+            raise
+
+    def sent_unconfirmed(self) -> Set[str]:
+        """Jobs whose latest attempt clicked Submit on a company site and saw no confirmation.
+
+        The application may have gone through, so another attempt could send it twice.
+        """
+        try:
+            with self._lock:
+                rows = self._connection.execute(
+                    """SELECT a.job_id FROM applications a
+                       WHERE a.id = (SELECT MAX(b.id) FROM applications b WHERE b.job_id = a.job_id)
+                         AND (a.detail LIKE ? OR a.detail LIKE ?)""",
+                    ("%submit was clicked%", "%browser agent did not report%"),
+                ).fetchall()
+            return {row[0] for row in rows}
+        except sqlite3.Error:
+            logger.exception("failed to list company-site submits without a confirmation")
             raise
 
     def external_history(self) -> Dict[str, Dict[str, Any]]:

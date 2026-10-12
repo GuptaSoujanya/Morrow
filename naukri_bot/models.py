@@ -97,6 +97,10 @@ class ApplyStatus:
     QUOTA_EXPIRED = "quota_expired"
     SESSION_EXPIRED = "session_expired"
     CHATBOT_TIMEOUT = "chatbot_timeout"
+    #: Naukri answered the Apply click with "There was an error while
+    #: processing your request". Five in a row ended a run at 46 applications
+    #: in 24 hours, so it is how Naukri says the day is over.
+    NAUKRI_REFUSED = "naukri_refused"
     ERROR = "error"
 
     #: Statuses that mean a Naukri application was really submitted.
@@ -345,6 +349,11 @@ class Settings:
     llm_model: str = ""
     llm_timeout_s: int = 90
     answer_mode: str = AnswerMode.AUTO
+    # A question no fact answers gets a second, judged pass in auto mode: 0 years
+    # for a skill never named, N/A for a premise the facts make false, Other when
+    # the list lacks your value. Each judged answer is written to answers.txt.
+    # A required long answer on a company form is written from resume + posting.
+    judge_answers: bool = True
 
     # Profile updater (python3 -m naukri_bot.update_profile): memory of which
     # daily slots already ran, where a failure screenshot goes, a random wait
@@ -390,10 +399,23 @@ class Settings:
     company_site_password: str = ""
     # The .env these settings came from, so generated values can be saved back.
     env_file: str = ".env"
+    # When the scripted filler stops short on a company site, Claude Code (the
+    # local `claude` login) takes over the same Chrome window through a
+    # Playwright MCP server attached over CDP, works the form from the same
+    # facts, and stops at captchas and emailed codes. Its "submitted" counts only
+    # when the confirmation it quotes is on the page. Tasks per run, seconds and
+    # dollars per task, and an optional model alias.
+    browser_agent: bool = False
+    browser_agent_limit: int = 5
+    browser_agent_timeout_s: int = 900
+    browser_agent_budget_usd: float = 5.0
+    browser_agent_model: str = ""
+    # The MCP server command, pinned so a run never waits on a fresh download.
+    browser_agent_mcp: str = "npx -y @playwright/mcp@0.0.83"
     # One Markdown report per day: what ran, what was applied to, what is left.
     report_dir: str = "reports"
     # The study site next door; the report names one module of its plan a day.
-    course_dir: str = "../system degine/course"
+    course_dir: str = ".."
     # YYYY-MM-DD the plan began; empty means the day the first report was written.
     course_start_date: str = ""
 

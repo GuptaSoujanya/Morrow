@@ -141,6 +141,7 @@ def load_settings(
         "llm_model": os.getenv("LLM_MODEL", defaults.llm_model),
         "llm_timeout_s": _env_int("LLM_TIMEOUT_S", defaults.llm_timeout_s),
         "answer_mode": os.getenv("ANSWER_MODE", defaults.answer_mode),
+        "judge_answers": _env_bool("JUDGE_ANSWERS", defaults.judge_answers),
         "profile_update_state_path": os.getenv(
             "PROFILE_UPDATE_STATE_PATH", defaults.profile_update_state_path
         ),
@@ -169,6 +170,12 @@ def load_settings(
         "company_site_email": os.getenv("COMPANY_SITE_EMAIL", defaults.company_site_email),
         "company_site_password": os.getenv("COMPANY_SITE_PASSWORD", defaults.company_site_password),
         "env_file": env_path or defaults.env_file,
+        "browser_agent": _env_bool("BROWSER_AGENT", defaults.browser_agent),
+        "browser_agent_limit": _env_int("BROWSER_AGENT_LIMIT", defaults.browser_agent_limit),
+        "browser_agent_timeout_s": _env_int("BROWSER_AGENT_TIMEOUT_S", defaults.browser_agent_timeout_s),
+        "browser_agent_budget_usd": _env_float("BROWSER_AGENT_BUDGET_USD", defaults.browser_agent_budget_usd),
+        "browser_agent_model": os.getenv("BROWSER_AGENT_MODEL", defaults.browser_agent_model),
+        "browser_agent_mcp": os.getenv("BROWSER_AGENT_MCP", defaults.browser_agent_mcp) or defaults.browser_agent_mcp,
         "report_dir": os.getenv("REPORT_DIR", defaults.report_dir),
         "course_dir": os.getenv("COURSE_DIR", defaults.course_dir),
         "course_start_date": os.getenv("COURSE_START_DATE", defaults.course_start_date),

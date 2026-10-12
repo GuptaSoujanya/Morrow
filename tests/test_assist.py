@@ -195,3 +195,18 @@ def test_disagreements_between_the_two_files_are_named(tmp_path):
         ("date of birth", "05/0/2003", "not a real date"),
         ("last working day", "yes", "not a real date"),
     ]
+
+
+def test_shift_answers_that_disagree_with_the_profile_facts_are_named(tmp_path):
+    answers = (
+        "Q: Are you comfortable with night shifts?\nQ: Are you open to working in US shift timings?\nA: No\n\n"
+        "Q: Are you comfortable with rotational shifts?\nA: No\n"
+    )
+    settings, _ = _setup(tmp_path, answers=answers)
+    profile = Profile(extra_facts={"willing_night_shifts": "false", "willing_rotational_shifts": True})
+
+    found = assist.disagreements(profile, AnswerBook(str(tmp_path / "data" / "answers.txt")))
+
+    assert [(item.topic, item.in_answers, item.in_profile) for item in found] == [
+        ("rotational shifts", "No", "extra_facts.willing_rotational_shifts: true"),
+    ]

@@ -110,6 +110,37 @@ After running, results are saved to **`naukriapplied.csv`** with two columns:
 - `passed` — URLs of jobs successfully applied to
 - `failed` — URLs where the apply attempt failed
 
+## 🖥️ Sandy: one screen for everything
+
+Everything below can be run from one terminal screen, without remembering a single flag:
+
+```bash
+../sandy                  # from apply/, or the full path from anywhere
+venv/bin/python -m sandy  # the same thing
+```
+
+Pick a section on the left (or press `1`-`9`, `0`), set its options, press **Run**, and watch
+the output stream underneath. Each page shows the exact command it will run, so nothing is hidden.
+
+| Section | What it runs |
+|---|---|
+| Today | What is waiting for you, plus one-press Apply now / Practice run / report / answers / today's study module |
+| Apply on Naukri | `python -m naukri_bot` with practice run, limit, answer mode, Early Access, keywords, location |
+| Company sites | `naukri_bot.assist` for the waiting forms, `naukri_bot.external --url ...` for one page |
+| Naukri profile | `naukri_bot.update_profile`, schedule status, turn on the daily schedule |
+| LinkedIn post | `linkedin_bot --dry-run / --propose / --post / --if-due` (publishing asks first) |
+| Tailor resume | `naukri_bot.resume --tailor`: paste the job description straight into the screen |
+| Reports | Build a day's report and read it right there |
+| Study | Read the course right in the terminal: today's module from the 8-week plan, every module by track with ✓ for the ones you marked read (kept in `reports/studied.json`). Also starts / stops the course site at http://localhost:8000, which keeps running after you quit |
+| Your to-dos | The unanswered questions, blank facts and waiting company sites, with a built-in editor |
+| Setup | Google sign-in for company sites, edit `.env`, install requirements, run the tests |
+
+Keys: `x` stops a run (press again to force), `o` makes the output full height, `l` clears it,
+`esc` goes back to the menu, `q` quits. In the editor, `ctrl+s` saves and `esc` closes.
+In a course module, `n` / `p` turn to the next or previous module, `m` marks it read, `t` hides the
+contents, `b` goes back after following a link, and `w` opens the page on the study site, where
+the Mermaid diagrams are drawn (in the terminal they show as text).
+
 ## 🤖 naukri_bot (v2 — recommended)
 
 `Naukri-Edge.py` and `Naukri-Recommended.py` above are the **legacy** scripts. They are kept
@@ -291,9 +322,9 @@ Everything the bot needs from you, and everything it could not do alone, lives i
 `answers.txt` is read before anything else, so your own words always win over the cache, the
 profile and the model. Several `Q:` lines can share one `A:`; a question matches when it is the
 same text, ignoring case and punctuation, or nearly so. For a dropdown the answer must name one of
-its options. When a question cannot be answered from these files, the bot does not guess: it adds
-the question to the end of `answers.txt` with an empty `A:`, the job and the date, and the next run
-uses whatever you write there. The file is re-read whenever it changes, even during a run.
+its options. When a question cannot be answered from these files, the bot makes one honest
+judgement (below) and otherwise does not guess: it adds the question to the end of `answers.txt`
+with an empty `A:`, the job and the date, and the next run uses whatever you write there. The file is re-read whenever it changes, even during a run.
 
 **The AI fills what your own files already answer.** Before and after every run (and on demand),
 the model looks at each empty `A:` in `answers.txt` and each `null` in `profile.yaml` and answers
@@ -314,6 +345,28 @@ python3 -m naukri_bot.assist --dry-run   # show what it would fill, change nothi
 python3 -m naukri_bot.assist             # fill, back up, record
 ```
 
+**When nothing answers a question, the AI judges it (`JUDGE_ANSWERS=true`).** A screening
+question that no file and no stated fact answers used to skip the whole job. Now, in `auto` mode,
+the model gets a second look with your resume, profile, answers and the posting, and may answer
+only with one of these honest inferences:
+
+- a skill, tool or domain that none of your files name: **0** years (or the "none / less than a
+  year" option), "No" to "have you worked with it";
+- a skill your resume shows: the years of that role, never more than your total experience, with
+  the resume line quoted;
+- a follow-up whose premise your files make false ("If yes, share the employee code" when you never
+  worked there): **N/A**;
+- a list without your value: the range that contains your number, or "Other";
+- a question your files answer in other words (a city you listed, a shift you declined), quoted.
+
+Anything else stays blank for you. A number it types must be written in your files, a positive
+claim must quote them, and gender, race, disability, visa, sponsorship, citizenship, the right to
+work in a country, identity numbers and "why us" questions are never judged. A typed judgement is
+written into `answers.txt` with `# AI judged this on <date> while applying to <role> at <company>:
+<reason>. Change it if it is wrong.` above it, so the next job reads it from the file and your edit
+replaces it. A pick from one form's list ("Other") is used for that application only. The day's
+report lists every judgement under **Answered by judgement**.
+
 ### Company websites ("Apply on company site")
 
 With `EXTERNAL_APPLY=true` the bot follows Naukri's company-site button for up to
@@ -321,7 +374,16 @@ With `EXTERNAL_APPLY=true` the bot follows Naukri's company-site button for up t
 
 1. Opens the site in a new tab and recognises the system behind it (Greenhouse, Lever, Ashby,
    Workable, SmartRecruiters, ...). It clicks through an "Apply" button when the form is behind one.
-2. If the site wants an account (Workday, iCIMS, Taleo, SuccessFactors, company portals), it
+   A job-search box ("Keyword", "Location") is not taken for an application form. A removed posting
+   ("this page was moved", "no longer available", a 404) is recorded as gone and kept off your list.
+   When the page shows no form and no sign-in, the **page brain** takes a screenshot (kept in
+   `screenshots/`), shows it with the page's text and a numbered list of its buttons and links to the
+   local `claude` CLI, and acts on the answer: click one control that leads to this job's form (up
+   to twice), call the posting gone, or stop. The model may only read that screenshot; the page's
+   words are passed as data, never as instructions. A page with a captcha or "verify you are human"
+   check is never sent to it: the screenshot is saved for you and the job goes to your list.
+2. If the site wants an account (Workday, iCIMS, Taleo, SuccessFactors, company portals, or any
+   page whose form is just an email and a password), it
    first tries **Sign in with Google** with `GOOGLE_EMAIL`. Each run makes sure the bot's browser
    is signed in to that Google account before the first company site: it types the email, then
    `GOOGLE_PASSWORD` if you set one (optional), and leaves a passkey, phone prompt or code to you,
@@ -341,7 +403,13 @@ With `EXTERNAL_APPLY=true` the bot follows Naukri's company-site button for up t
    role come from `data/profile.yaml`; every other
    question from `data/answers.txt`, then the profile, then the model, exactly as on Naukri;
    attaches the resume tailored for that job (or the base one); declines optional diversity
-   questions; ticks the privacy consent.
+   questions; ticks the privacy consent and leaves other optional boxes ("Remember me", job alerts)
+   alone. A **required** long-answer box ("Why this role?", a cover-letter text box) takes your
+   answer from `answers.txt` if there is one; otherwise, with `JUDGE_ANSWERS=true`, one is written
+   for that job from your resume and the posting only: first person, 2 to 4 sentences, checked so it
+   names nothing the resume or posting does not and uses none of the usual filler words, and sent
+   back once to be fixed if it does. Each one is kept in
+   `resume/out/tailored/<Company - Role>/answers.md` and listed in the day's report.
 4. Clicks Submit **only** when every required field is filled, and counts the application only when
    the site confirms it ("Thank you for applying", a confirmation page). A site that answers with an
    error is recorded as an error, never as applied.
@@ -368,6 +436,47 @@ can look. Company-site applications use no Naukri quota and never count toward
 `TARGET_APPLICATIONS`. Google may still ask "verify it's you" on some sites; when it does, the bot
 waits two minutes for you in the window, then tries the email route.
 
+### Browser agent: Claude Code takes over a stuck site
+
+The scripted filler above knows the common forms. When a site beats it (an odd dropdown, a
+Workday step it cannot find the resume upload on, a "Save and Continue" that does not move on),
+`BROWSER_AGENT=true` hands that open page to **Claude Code**, signed in with your local `claude`
+login, as a browser agent:
+
+- `claude -p` starts with one MCP server, Playwright, attached over CDP to the bot's own Chrome.
+  The sign-ins, cookies and the half-filled form carry over, and you can watch it work in the
+  window. Its only tools are the browser tools: no shell, no file edits, no web fetch, no other
+  MCP servers.
+- Its task holds your facts (`profile.yaml`), your answers (`answers.txt`), your resume text, the
+  posting, the tailored resume PDF to attach, and the same rules as the scripted filler: never
+  invent an answer (an unanswered required question comes back to you as "needs you for: ..."),
+  decline optional diversity questions, write a required "Why us?" in 2-3 sentences from the resume
+  and posting only, click Submit at most once.
+- It stops, and the job goes to `data/company_sites.md`, at any captcha or "I am not a robot"
+  check (it never tries to solve one), a code or link sent to your email or phone, two-factor,
+  payment, or an identity number you have not given.
+- For the career-site password it types the word `COMPANY_SITE_PASSWORD`; the Playwright server
+  swaps in the real one from `.env` and blanks it out of everything the model reads back, so the
+  password never reaches the model.
+- It answers with a JSON report. "Submitted" counts as applied only when the confirmation it
+  quotes is on the page when the bot reads it afterwards; otherwise the job is recorded as "Submit
+  was clicked ..." and never tried again automatically, so nothing is sent twice.
+- Each task gets a folder `reports/<date>/agent/<time> <Company - Role>/` with the task it was given
+  (`task.md`), its reply (`transcript.json`), page snapshots and `report.json`; the day's report
+  lists them. Long answers it wrote go to the job's `answers.md`, accounts it made to
+  `data/accounts.md`.
+
+It is used at most `BROWSER_AGENT_LIMIT` times a run, for up to `BROWSER_AGENT_TIMEOUT_S` seconds
+and `BROWSER_AGENT_BUDGET_USD` each, and never on a page that stopped at a captcha, an emailed
+code, or after a Submit click. Give it one page by hand, or any specific task:
+
+```bash
+python3 -m naukri_bot.browser_agent --url "<company_sites.md Site link>" --title "AI Engineer" --company "Acme" --dry-run
+python3 -m naukri_bot.browser_agent --url "https://careers.acme.com" --task "find the AI Engineer opening in Bengaluru and tell me its closing date"
+```
+
+A task needs Node (for `npx @playwright/mcp`) and the `claude` command on `PATH`.
+
 ### Daily report
 
 Every Naukri run, profile update and LinkedIn post rewrites `reports/<YYYY-MM-DD>/report.md`:
@@ -389,7 +498,7 @@ Every Naukri run, profile update and LinkedIn post rewrites `reports/<YYYY-MM-DD
 ```bash
 python3 -m naukri_bot.report --print          # rebuild today's report and show it
 python3 -m naukri_bot.report --date 2026-10-09
-python3 "../system degine/course/serve.py"    # the course site at http://localhost:8000
+python3 ../serve.py                          # the course site at http://localhost:8000
 ```
 
 Everything in the report comes from the records: the database, `data/`, `logs/`, `linkedin/`.
@@ -483,6 +592,7 @@ Naukri-autoapply-bot/
 ├── README.md             # This file
 ├── profile.example.yaml  # (in naukri_bot/) copy to data/profile.yaml and fill in your facts
 │
+├── sandy/                # the terminal screen that runs everything (../sandy)
 ├── naukri_bot/           # v2 package — the maintained bot (python3 -m naukri_bot)
 │   ├── __main__.py       #   entry point
 │   ├── cli.py            #   argument parsing + pipeline wiring
@@ -498,6 +608,8 @@ Naukri-autoapply-bot/
 │   ├── apply.py          #   verified apply; native vs external redirect
 │   ├── external.py       #   apply on company websites (python3 -m naukri_bot.external)
 │   ├── accounts.py       #   career-site sign-in / sign-up (Google, then email + password)
+│   ├── page_brain.py     #   no form on a company page: removed posting, or ask the model what to click
+│   ├── browser_agent.py  #   stuck company site: Claude Code drives this Chrome via Playwright MCP
 │   ├── assist.py         #   AI fills answers.txt / profile.yaml blanks from quoted lines (python3 -m naukri_bot.assist)
 │   ├── chatbot.py        #   questionnaire drawer handling
 │   ├── early_access.py   #   share interest on Early Access roles (no apply quota)
@@ -538,6 +650,7 @@ Naukri-autoapply-bot/
 | Login failed | Double-check your `NAUKRI_EMAIL` and `NAUKRI_PASSWORD` in `.env` |
 | No jobs found | Try broader keywords or remove the location filter |
 | "Daily quota expired" | Naukri limits daily applications. Try again the next day. |
+| "There was an error while processing your request" after Apply | Naukri's other way of saying the day is over (it began at 46 applications in 24 hours). The run stops after two in a row and those jobs are tried again next run. |
 | Script too fast/slow | Adjust the `time.sleep()` values in the script if needed |
 | "Apply on company site" opens external site | This is expected — many Naukri jobs now redirect to company career pages |
 

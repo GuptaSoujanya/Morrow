@@ -296,8 +296,14 @@ def test_only_the_latest_attempt_under_the_same_facts_keeps_a_job_waiting(tmp_pa
     ledger = Ledger(str(tmp_path / "w.db"))
     job = _scored(80.0, 1, "a").job
     other = _scored(80.0, 1, "b").job
+    unloaded = _scored(80.0, 1, "c").job
     ledger.record_attempt(_result(job, ApplyStatus.ABSTAINED), facts="f1")
-    ledger.record_attempt(_result(other, ApplyStatus.EXTERNAL_MANUAL), facts="f1")
+    needs_her = _result(other, ApplyStatus.EXTERNAL_MANUAL)
+    needs_her.detail = "greenhouse | needs you for: Cover letter"
+    ledger.record_attempt(needs_her, facts="f1")
+    not_loaded = _result(unloaded, ApplyStatus.EXTERNAL_MANUAL)
+    not_loaded.detail = "workday | no application form found on https://x (controls: none)"
+    ledger.record_attempt(not_loaded, facts="f1")
     assert ledger.waiting_on_you("f1") == {"a", "b"}
     assert ledger.waiting_on_you("f2") == set()
 
@@ -305,6 +311,27 @@ def test_only_the_latest_attempt_under_the_same_facts_keeps_a_job_waiting(tmp_pa
     assert ledger.waiting_on_you("f1") == {"b"}
     assert ledger.waiting_on_you("") == set()
     ledger.close()
+
+
+def test_a_company_site_submit_without_a_confirmation_is_never_sent_again(fake_naukri, tmp_path):
+    from naukri_bot.ledger import Ledger
+
+    install, attempted = fake_naukri
+    install([_scored(80.0, 1, "sent"), _scored(75.0, 1, "agent"), _scored(70.0, 1, "fresh")], {})
+    ledger = Ledger(str(tmp_path / "test.db"))
+    clicked = _result(_scored(80.0, 1, "sent").job, ApplyStatus.ERROR)
+    clicked.detail = "https://acme.test/careers | Submit was clicked but no confirmation within 30 seconds"
+    ledger.record_attempt(clicked, facts="old")
+    silent = _result(_scored(75.0, 1, "agent").job, ApplyStatus.ERROR)
+    silent.detail = "website | the browser agent did not report (timeout); check the site before trying again"
+    ledger.record_attempt(silent, facts="old")
+    assert ledger.sent_unconfirmed() == {"sent", "agent"}
+    ledger.close()
+
+    summary = _run(tmp_path, _settings(target_applications=5))
+
+    assert attempted == ["fresh"]
+    assert summary.held_back == 2
 
 
 def test_the_summary_says_where_every_collected_job_went(fake_naukri, tmp_path):
@@ -317,3 +344,25 @@ def test_the_summary_says_where_every_collected_job_went(fake_naukri, tmp_path):
     assert (summary.collected, summary.below_score, summary.eligible) == (3, 1, 2)
     assert (summary.too_old, summary.not_ranked, summary.held_back) == (0, 0, 0)
     assert sorted(attempted) == ["fine", "good"]
+
+
+def test_two_refusals_in_a_row_end_the_run(fake_naukri, tmp_path):
+    install, attempted = fake_naukri
+    queue = [_scored(80.0, 1, "j%03d" % i) for i in range(10)]
+    install(queue, {"j002": ApplyStatus.NAUKRI_REFUSED, "j003": ApplyStatus.NAUKRI_REFUSED})
+
+    summary = _run(tmp_path, _settings(target_applications=10))
+
+    assert attempted == ["j000", "j001", "j002", "j003"]
+    assert summary.applied == 2
+
+
+def test_one_refusal_between_applications_does_not_end_the_run(fake_naukri, tmp_path):
+    install, attempted = fake_naukri
+    queue = [_scored(80.0, 1, "j%03d" % i) for i in range(5)]
+    install(queue, {"j001": ApplyStatus.NAUKRI_REFUSED, "j003": ApplyStatus.NAUKRI_REFUSED})
+
+    summary = _run(tmp_path, _settings(target_applications=10))
+
+    assert len(attempted) == 5
+    assert summary.applied == 3

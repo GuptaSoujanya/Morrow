@@ -19,6 +19,9 @@ PyYAML>=6.0,<7.0
 # Image cards for the LinkedIn poster (linkedin_bot)
 Pillow>=10.0,<12.0
 
+# The terminal screen that runs everything (../sandy, or python -m sandy)
+textual>=0.80,<9.0
+
 # --- Required by the legacy scripts only ---
 # Naukri-Edge.py parses with html5lib and writes results with pandas.
 # naukri_bot uses lxml and sqlite3 (stdlib) instead.

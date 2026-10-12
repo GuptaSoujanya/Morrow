@@ -51,6 +51,8 @@ _TOPICS = (
     ("passport", re.compile(r"\bpassport\b(?!.*number)", re.I), "has_passport", "bool"),
     ("relocation", re.compile(r"relocat", re.I), "willing_to_relocate", "bool"),
     ("total experience", re.compile(r"(total|overall) (years of )?experience", re.I), "total_experience_years", "number"),
+    ("night shifts", re.compile(r"night shift|\bus shift", re.I), "extra_facts.willing_night_shifts", "bool"),
+    ("rotational shifts", re.compile(r"rotational shift", re.I), "extra_facts.willing_rotational_shifts", "bool"),
 )
 
 
@@ -290,8 +292,8 @@ def read_changes(settings: Settings) -> List[Dict[str, Any]]:
     return records
 
 
-def changes_on(settings: Settings, day: str) -> List[Dict[str, Any]]:
-    return [record for record in read_changes(settings) if str(record.get("at", "")).startswith(day) and record.get("kind") == "filled"]
+def changes_on(settings: Settings, day: str, kind: str = "filled") -> List[Dict[str, Any]]:
+    return [record for record in read_changes(settings) if str(record.get("at", "")).startswith(day) and record.get("kind") == kind]
 
 
 # ---------------------------------------------------------------------------
@@ -318,6 +320,15 @@ def _as_date(text: str) -> Optional[datetime]:
     return None
 
 
+def _fact(profile: Profile, attribute: str) -> Any:
+    if not attribute.startswith("extra_facts."):
+        return getattr(profile, attribute)
+    value = profile.extra_facts.get(attribute.split(".", 1)[1])
+    if isinstance(value, str):
+        return {"true": True, "yes": True, "false": False, "no": False}.get(value.strip().casefold())
+    return value
+
+
 def disagreements(profile: Profile, book: AnswerBook) -> List[Disagreement]:
     """Where answers.txt and profile.yaml say different things, so employers would hear both."""
     found = []  # type: List[Disagreement]
@@ -341,7 +352,7 @@ def disagreements(profile: Profile, book: AnswerBook) -> List[Disagreement]:
             if topic is None:
                 continue
             name, _, attribute, kind = topic
-            value = getattr(profile, attribute)
+            value = _fact(profile, attribute)
             if value is None:
                 break
             if kind == "number":

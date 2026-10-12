@@ -46,9 +46,12 @@ _TO_EMAIL_FORM = re.compile(
 _SIGN_IN_LINK = re.compile(r"^((sign|log) ?in|login|already have an account\??.*)$", re.I)
 _CREATE_LINK = re.compile(
     r"^(create( an| your| new)? account|sign ?up|register( now| here)?|new (user|candidate)\??.*"
-    r"|join( now)?|don'?t have an account\??.*)$",
+    r"|join( now)?|don'?t have an account\??.*|start (your |an |a new )?application)$",
     re.I,
 )
+# Accenture's sign-up (Azure B2C) and others like it email a code before they
+# let anyone in, and the bot cannot read that inbox.
+_SEND_CODE = re.compile(r"^(send|get|e-?mail me)( a| the| my)?( verification)? code$|^verify( your)? e-?mail$", re.I)
 _SIGN_IN_SUBMIT = re.compile(r"^((sign|log) ?in|login|continue|next|submit)$", re.I)
 _CREATE_SUBMIT = re.compile(r"^(create( an| my)? account|sign ?up|register|submit|continue)$", re.I)
 _EXISTS = re.compile(r"already (exists|registered|in use|taken)|already have an account|account (with|for) this e-?mail", re.I)
@@ -120,6 +123,15 @@ def record_account(settings: Settings, host: str, email: str, what: str) -> Path
     with path.open("a", encoding="utf-8") as handle:
         handle.write("| %s | %s | %s | %s |\n" % (datetime.now().strftime("%Y-%m-%d %H:%M"), host, email, what))
     return path
+
+
+def has_account(settings: Settings, host: str) -> bool:
+    """Whether data/accounts.md records an account the bot made or used on `host`."""
+    try:
+        rows = accounts_file(settings).read_text(encoding="utf-8")
+    except OSError:
+        return False
+    return "| %s |" % host in rows
 
 
 # ---------------------------------------------------------------------------
@@ -213,8 +225,10 @@ def _wait_for(predicate: Callable[[], bool], timeout_s: float) -> bool:
 # ---------------------------------------------------------------------------
 
 
-def _submit_sign_in(driver: Any, email: str, password: str) -> Tuple[str, str]:
-    fields = _fields(driver)
+def _submit_sign_in(
+    driver: Any, email: str, password: str, fields: Optional[List[ext.Field]] = None
+) -> Tuple[str, str]:
+    fields = fields if fields is not None else _fields(driver)
     box = _email_field(fields)
     secret = _passwords(fields)
     if box is None or not secret:
@@ -284,10 +298,28 @@ def sign_in(driver: Any, settings: Settings, profile: Profile, dry_run: bool) ->
         if control is not None:
             ext._click(driver, control)
             _wait_for(lambda: bool(_passwords(_fields(driver))), FORM_WAIT_S)
+    sign_in_fields = None  # type: Optional[List[ext.Field]]
+    known = bool(settings.company_site_password) and has_account(settings, host)
+    # Workday opens on its sign-up form; where the bot already made an account,
+    # the way in is the Sign In link. Its dialog is added on top of the sign-up
+    # form, so the boxes to type in are the ones that were not there before.
+    if known and len(_passwords(_fields(driver))) >= 2:
+        control = _control(driver, _SIGN_IN_LINK)
+        if control is not None:
+            before = {item.element for item in _fields(driver)}
+            ext._click(driver, control)
+
+            def dialog() -> List[ext.Field]:
+                return [item for item in _fields(driver) if item.element not in before]
+
+            if _wait_for(lambda: len(_passwords(dialog())) == 1, FORM_WAIT_S):
+                sign_in_fields = dialog()
+    elif len(_passwords(_fields(driver))) == 1:
+        sign_in_fields = _fields(driver)
 
     tried = ""
-    if len(_passwords(_fields(driver))) == 1 and settings.company_site_password:
-        state, detail = _submit_sign_in(driver, email, settings.company_site_password)
+    if sign_in_fields is not None and settings.company_site_password:
+        state, detail = _submit_sign_in(driver, email, settings.company_site_password, sign_in_fields)
         if state == "in":
             record_account(settings, host, email, "signed in")
             return True, "signed in as %s" % email
@@ -296,6 +328,11 @@ def sign_in(driver: Any, settings: Settings, profile: Profile, dry_run: bool) ->
         if state == "verify":
             return False, "%s wants the email %s verified first; click the link it sent, then apply again" % (host, email)
         tried = detail or state
+        if known:
+            return False, (
+                "the account on %s for %s did not take the saved password (%s); sign in there once by hand"
+                % (host, email, tried)
+            )
         logger.info("      company site: sign-in on %s did not work (%s); creating an account", host, tried)
 
     # One password box is a sign-in form; the sign-up form behind its link asks twice.
@@ -303,7 +340,15 @@ def sign_in(driver: Any, settings: Settings, profile: Profile, dry_run: bool) ->
         control = _control(driver, _CREATE_LINK)
         if control is not None:
             ext._click(driver, control)
-            _wait_for(lambda: len(_passwords(_fields(driver))) >= 2, FORM_WAIT_S)
+            _wait_for(
+                lambda: len(_passwords(_fields(driver))) >= 2 or _control(driver, _SEND_CODE) is not None,
+                FORM_WAIT_S,
+            )
+    if _control(driver, _SEND_CODE) is not None:
+        return False, (
+            "signing up on %s needs a code it emails to %s; sign up there once by hand with the "
+            "password saved as COMPANY_SITE_PASSWORD in .env, and the bot signs in after that" % (host, email)
+        )
     if not _passwords(_fields(driver)):
         if tried:
             return False, "sign-in on %s failed (%s) and there is no way to create an account" % (host, tried)

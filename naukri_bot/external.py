@@ -14,10 +14,10 @@ import logging
 import re
 import sys
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 
 from selenium.common.exceptions import (
@@ -28,9 +28,10 @@ from selenium.common.exceptions import (
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 
-from .answers import match_option
+from . import browser_agent
+from .answers import _NOT_FOR_JUDGEMENT, match_option
 from .browser import human_pause, human_type, safe_get
-from .models import ApplyResult, ApplyStatus, JobPosting, Profile, Settings
+from .models import AnswerMode, ApplyResult, ApplyStatus, JobPosting, Profile, Settings
 
 
 logger = logging.getLogger(__name__)
@@ -43,8 +44,14 @@ GOOGLE_WAIT_S = 30.0
 MANUAL_LOGIN_TIMEOUT_S = 300
 POLL_S = 0.5
 OPTION_WAIT_S = 3.0
+# How long a page that has drawn its buttons but no form gets to draw the form.
+SETTLE_S = 2.0
+# How long a form's field count must hold still before it counts as drawn.
+STEADY_S = 1.5
 
 DRY_RUN = "dry_run"
+# The posting was removed: nothing for you to finish, so it never reaches your list.
+GONE = "gone"
 
 ATS_HOSTS = (
     ("greenhouse.io", "greenhouse"),
@@ -74,7 +81,8 @@ _FIELD_RULES = (
     (re.compile(r"\blast\s*name\b|\bsurname\b|\bfamily\s*name\b", re.I), "last_name"),
     (re.compile(r"\bfull\s*name\b|\blegal\s*name\b|\byour\s*name\b|^\W*name\W*$", re.I), "full_name"),
     (re.compile(r"e-?mail", re.I), "email"),
-    (re.compile(r"\bphone|\bmobile|\bcontact\s*(number|no)|\btelephone|\bcell\b", re.I), "phone"),
+    (re.compile(r"^(?!.*\b(extension|ext|country( phone)? code|device type)\b).*"
+                r"(\bphone|\bmobile|\bcontact\s*(number|no)|\btelephone|\bcell\b)", re.I), "phone"),
     (re.compile(r"linkedin", re.I), "linkedin_url"),
     (re.compile(r"github", re.I), "github_url"),
     (re.compile(r"portfolio|personal\s*(web)?site|\bwebsite\b|\bblog\b", re.I), "portfolio_url"),
@@ -127,6 +135,12 @@ _SUBMIT_TEXT = re.compile(
 _NEXT_TEXT = re.compile(
     r"^(next|continue|save (and|&) continue|save and next|proceed|next step|continue to next step)$", re.I
 )
+_SEARCH_WIDGET = re.compile(
+    r"search|keyword|job (number|id|title|code)|requisition|location|city|country"
+    r"|category|department|sort|filter|distance|radius",
+    re.I,
+)
+_APPLICANT_FIELD = re.compile(r"name|e-?mail|phone|mobile|resume|\bcv\b|linkedin", re.I)
 _SIGN_IN = re.compile(r"\bsign in\b|\blog in\b|\blogin\b|\bcreate (an )?account\b|\bregister\b", re.I)
 _CONFIRMED = (
     "thank you for applying",
@@ -153,7 +167,9 @@ _GOOGLE_BUTTON_XPATH = "%s[contains(%s,'google')]" % (_CLICKABLE_XPATH, _LOWER)
 # One round trip returns every usable control with the text a person would read
 # as its label, so the Python side never has to walk the DOM element by element.
 _FIELDS_SCRIPT = r"""
-const controls = Array.from(document.querySelectorAll('input, select, textarea'));
+// Workday's dropdowns are buttons that open a listbox; they are questions too.
+const controls = Array.from(document.querySelectorAll('input, select, textarea, button[aria-haspopup="listbox"]'));
+const PLACEHOLDER = /^(select one|select\.*|choose\.*|please select\.*|none selected)$/i;
 function visible(el) {
   const r = el.getBoundingClientRect(); const s = getComputedStyle(el);
   return s.display !== 'none' && s.visibility !== 'hidden' && (r.width > 0 || r.height > 0);
@@ -190,6 +206,12 @@ function labelFor(el) {
   if (!t) t = (el.name || '').replace(/[\[\]_\-.]+/g, ' ').trim();
   return t;
 }
+function pillOf(el) {
+  // Workday shows a chosen item ("India (+91)") as a chip beside an empty search box.
+  const box = el.closest('[data-automation-id^="formField"]');
+  const pill = box && box.querySelector('[data-automation-id="selectedItem"]');
+  return pill ? text(pill) : '';
+}
 function requiredOf(el, label) {
   if (el.required || el.getAttribute('aria-required') === 'true') return true;
   if (/^\*|\*\s*$/.test(label)) return true;
@@ -223,6 +245,7 @@ function groupOf(el) {
   return '';
 }
 return controls.filter(el => {
+  if (el.tagName === 'BUTTON') return !el.disabled && visible(el);
   const type = (el.type || '').toLowerCase();
   if (['hidden', 'submit', 'button', 'image', 'reset'].includes(type) || el.disabled) return false;
   if (type === 'file') return true;
@@ -230,13 +253,16 @@ return controls.filter(el => {
   return el.getAttribute('aria-hidden') !== 'true' && visible(el);
 }).map(el => {
   const tag = el.tagName.toLowerCase();
-  const kind = tag === 'input' ? (el.type || 'text').toLowerCase() : tag;
+  const listbox = tag === 'button';
+  const kind = listbox ? 'text' : tag === 'input' ? (el.type || 'text').toLowerCase() : tag;
   const label = labelFor(el);
+  const shown = listbox ? text(el) : '';
   return {
     el: el, kind: kind, name: el.name || '', label: label, required: requiredOf(el, label),
-    group: groupOf(el), value: tag === 'select' ? '' : (el.value || ''),
+    group: groupOf(el),
+    value: listbox ? (PLACEHOLDER.test(shown) ? '' : shown) : tag === 'select' ? '' : (el.value || pillOf(el)),
     options: tag === 'select' ? Array.from(el.options).map(o => o.text.trim()) : [],
-    role: el.getAttribute('role') || '', autocomplete: el.getAttribute('aria-autocomplete') || '',
+    role: listbox ? 'listbox' : (el.getAttribute('role') || ''), autocomplete: el.getAttribute('aria-autocomplete') || '',
     checked: !!el.checked, accept: el.getAttribute('accept') || '', ident: el.id || ''
   };
 });
@@ -313,7 +339,7 @@ class Field:
 
     @property
     def is_combobox(self) -> bool:
-        return self.kind == "text" and (self.role == "combobox" or bool(self.autocomplete))
+        return self.kind == "text" and (self.role in ("combobox", "listbox") or bool(self.autocomplete))
 
 
 @dataclass
@@ -343,6 +369,8 @@ class ExternalResult:
             status = self.status
         elif self.status == DRY_RUN:
             status = ApplyStatus.EXTERNAL_SKIPPED
+        elif self.status == GONE:
+            status = ApplyStatus.NO_APPLY_BUTTON
         else:
             status = ApplyStatus.ERROR
         detail = "%s | %s" % (self.url or self.ats or "company site", self.detail)
@@ -618,7 +646,7 @@ def combobox_options(driver: Any, element: Any) -> List[str]:
     return [text for _, text in shown]
 
 
-def pick_from_combobox(driver: Any, element: Any, value: str) -> bool:
+def pick_from_combobox(driver: Any, element: Any, value: str, typed: bool = True) -> bool:
     """Type into a custom dropdown, click the option that names `value`, and confirm it shows.
 
     The search box keeps whatever was typed until focus leaves, so its text is
@@ -627,8 +655,9 @@ def pick_from_combobox(driver: Any, element: Any, value: str) -> bool:
     before = _control_shows(driver, element)
     try:
         _click(driver, element)
-        _clear(element)
-        human_type(element, value)
+        if typed:
+            _clear(element)
+            human_type(element, value)
         shown = _shown_options(driver, OPTION_WAIT_S)
         texts = [text for _, text in shown]
         chosen = match_option(value, texts) if texts else None
@@ -714,9 +743,35 @@ def return_to(driver: Any, handle: str, keep: List[str]) -> None:
         logger.warning("Could not get back to the Naukri tab (%s): %s", type(exc).__name__, exc)
 
 
-def reveal_form(driver: Any) -> List[Field]:
+def _settled_fields(driver: Any, settle_s: Optional[float] = None) -> List[Field]:
+    """discover_fields, once the page has drawn something.
+
+    Workday builds its page with script after the address changes. Looking the
+    moment the tab opened found no fields and no buttons, and the Fidelity
+    posting went to you as "no application form found (controls: none)".
+    """
+    settle_s = SETTLE_S if settle_s is None else settle_s
+    deadline = time.monotonic() + FORM_WAIT_S
+    drawn_at: Optional[float] = None
+    counted, steady_since = -1, 0.0
+    while True:
+        fields = discover_fields(driver)
+        now = time.monotonic()
+        if len(fields) != counted:
+            counted, steady_since = len(fields), now
+        # Workday draws a form in stages; the phone box came after the address.
+        if (len(fields) >= 2 and now - steady_since >= STEADY_S) or now >= deadline:
+            return fields
+        if drawn_at is None and _visible_controls(driver):
+            drawn_at = now
+        if drawn_at is not None and now - drawn_at >= settle_s:
+            return fields
+        time.sleep(POLL_S)
+
+
+def reveal_form(driver: Any, settle_s: Optional[float] = None) -> List[Field]:
     """The form's fields, clicking through an 'Apply' button or two when the page starts with the posting."""
-    fields = discover_fields(driver)
+    fields = _settled_fields(driver, settle_s)
     if len(fields) >= 2:
         return fields
     for _ in range(2):
@@ -742,7 +797,71 @@ def reveal_form(driver: Any) -> List[Field]:
     return discover_fields(driver)
 
 
+def application_fields(fields: List[Field]) -> List[Field]:
+    """`fields`, or [] when they are only a job-search box: a keyword and a city are not an application."""
+    for item in fields:
+        label = item.question or item.name or ""
+        if item.kind in ("file", "textarea", "email", "tel") or _APPLICANT_FIELD.search(label):
+            return fields
+        if not _SEARCH_WIDGET.search(label):
+            return fields
+    return []
+
+
+def find_form_with_help(
+    driver: Any, job: JobPosting, settings: Settings, answer_engine: Any
+) -> Tuple[List[Field], str]:
+    """(fields, why there are none) for a page that shows no form.
+
+    A removed posting is named from its text, a human check is screenshotted
+    and left to you, and otherwise the page brain may click one control at a
+    time, up to page_brain.MAX_STEPS.
+    """
+    from . import page_brain
+
+    client = getattr(answer_engine, "client", None)
+    for _ in range(page_brain.MAX_STEPS):
+        text = _page_text(driver)
+        gone = page_brain.dead_reason(text)
+        if gone:
+            return [], "the posting is gone: %s" % gone
+        if challenge_shown(driver) or page_brain.human_check(text):
+            shot = page_brain.save_screenshot(driver, settings, "check")
+            return [], "the site shows a check only a person may answer (screenshot: %s)" % shot
+        if not settings.judge_answers or client is None or not client.available():
+            return [], ""
+        controls = [(control, _control_text(control)) for control in _visible_controls(driver)]
+        controls = [(control, label) for control, label in controls if label]
+        if not controls:
+            return [], ""
+        shot = page_brain.save_screenshot(driver, settings, "stuck")
+        step = page_brain.next_step(client, shot, _current_url(driver), text, [label for _, label in controls], job)
+        if step is None:
+            return [], "the page brain gave no usable answer (screenshot: %s)" % shot
+        if step.action == "dead":
+            return [], "the posting is gone: %s" % step.reason
+        if step.action == "stop":
+            return [], "no way to the form: %s (screenshot: %s)" % (step.reason, shot)
+        element, label = controls[step.control - 1]
+        if re.search(r"linkedin|indeed", label, re.I):
+            return [], "the only way in is %r, which needs you (screenshot: %s)" % (label, shot)
+        logger.info("      page brain: clicking %r (%s)", label, step.reason)
+        before = set(driver.window_handles)
+        _click(driver, element)
+        human_pause(2.0, 4.0)
+        new = [handle for handle in driver.window_handles if handle not in before]
+        if new:
+            driver.switch_to.window(new[-1])
+        fields = application_fields(reveal_form(driver))
+        if len(fields) >= 2 or wants_account(driver, fields):
+            return fields, ""
+    return [], "the page brain clicked %d time(s) and still found no form on %s" % (page_brain.MAX_STEPS, _current_url(driver))
+
+
 def wants_account(driver: Any, fields: List[Field]) -> bool:
+    """A sign-in wall: no form but a sign-in control, or a password box with nowhere to attach a resume."""
+    if any(item.kind == "password" for item in fields):
+        return not any(item.kind == "file" for item in fields)
     if len(fields) >= 2:
         return False
     texts = " | ".join(_control_text(control) for control in _visible_controls(driver))
@@ -850,7 +969,8 @@ def _choose(driver: Any, item: Field, option: str) -> bool:
         return select_option(driver, item.element, option)
     # A Greenhouse dropdown once dropped a "No" that the same page took on every
     # later try; one more attempt costs seconds, a missed one costs the application.
-    return pick_from_combobox(driver, item.element, option) or pick_from_combobox(driver, item.element, option)
+    typed = item.role != "listbox"
+    return pick_from_combobox(driver, item.element, option, typed) or pick_from_combobox(driver, item.element, option, typed)
 
 
 def _note_mismatch(answer_engine: Any, question: str, value: str, options: List[str]) -> None:
@@ -860,18 +980,61 @@ def _note_mismatch(answer_engine: Any, question: str, value: str, options: List[
         note(question, value, options)
 
 
-def _own_words(answer_engine: Any, question: str, required: bool) -> Optional[str]:
-    """Long answers come only from answers.txt: a paragraph a model wrote reads like one.
+Writer = Callable[[str], Optional[str]]
 
-    A required one that is not there yet is added to the file for you to write.
+
+def _own_words(answer_engine: Any, question: str, required: bool, writer: Optional[Writer] = None) -> Optional[str]:
+    """A long answer: yours from answers.txt first, else (when required or marked per job) one written for this job.
+
+    A required one that neither gives is added to the file for you to write.
     """
     book = getattr(answer_engine, "book", None)
-    if book is None:
-        return None
-    answer = book.answer_for(question)
-    if answer is None and required:
+    answer = book.answer_for(question) if book is not None else None
+    per_job = book is not None and book.per_job(question)
+    if answer is None and (required or per_job) and writer is not None:
+        answer = writer(question)
+    if answer is None and required and book is not None:
         book.add_blank(question, "long answers are yours to write", None, getattr(answer_engine, "job_context", None))
     return answer
+
+
+def long_answer_writer(settings: Settings, answer_engine: Any, job: JobPosting) -> Optional[Writer]:
+    """Writes a form's long answer from the resume and posting; each one is kept in the job's resume folder."""
+    client = getattr(answer_engine, "client", None)
+    if not settings.judge_answers or settings.answer_mode != AnswerMode.AUTO:
+        return None
+    if client is None or not client.available():
+        return None
+    from . import assist
+    from . import resume as resume_module
+
+    try:
+        base = resume_module.load_base(settings.resume_path)
+    except resume_module.ResumeError as exc:
+        logger.info("      long answers stay yours: %s", exc)
+        return None
+
+    def write(question: str) -> Optional[str]:
+        if _NOT_FOR_JUDGEMENT.search(question):
+            return None
+        answer = resume_module.write_long_answer(client, base, job, question)
+        if answer is None:
+            return None
+        folder = resume_module.tailored_dir(settings, job)
+        kept = folder / "answers.md"
+        try:
+            folder.mkdir(parents=True, exist_ok=True)
+            with kept.open("a", encoding="utf-8") as handle:
+                handle.write("## %s\n\n%s\n\n" % (" ".join(question.split()), answer))
+            assist.record_change(settings, assist.Change(
+                file=str(kept), item=" ".join(question.split()), value=answer,
+                source="resume and posting", evidence="", kind="written"))
+        except OSError as exc:
+            logger.warning("Could not keep the long answer in %s: %s", kept, exc)
+        logger.info("      wrote a long answer for %r (kept in %s)", question, kept)
+        return answer
+
+    return write
 
 
 def _fill_choice(
@@ -911,9 +1074,31 @@ def type_place(driver: Any, element: Any, value: str, country: str) -> bool:
         return False
 
 
+def _fresh(driver: Any, item: Field) -> Optional[Any]:
+    """The field as the page has it now: Workday redraws a box once something is typed in it."""
+    for by, key in ((By.ID, item.ident), (By.NAME, item.name)):
+        if not key:
+            continue
+        try:
+            found = driver.find_elements(by, key)
+        except WebDriverException:
+            continue
+        if len(found) == 1:
+            return found[0]
+    return None
+
+
+def _kept(driver: Any, item: Field, value: str) -> bool:
+    element = _fresh(driver, item)
+    try:
+        return element is not None and _norm(element.get_attribute("value") or "") == _norm(value)
+    except WebDriverException:
+        return False
+
+
 def _fill_place(driver: Any, item: Field, value: str, country: str, outcome: FormOutcome) -> None:
     label = item.question or item.name
-    if type_place(driver, item.element, value, country):
+    if type_place(driver, item.element, value, country) or _kept(driver, item, value):
         outcome.filled.append(label)
     elif item.required:
         outcome.missing.append(label)
@@ -921,7 +1106,7 @@ def _fill_place(driver: Any, item: Field, value: str, country: str, outcome: For
         outcome.skipped.append(label)
 
 
-def _recheck(fields: List[Field], outcome: FormOutcome) -> None:
+def _recheck(driver: Any, fields: List[Field], outcome: FormOutcome) -> None:
     """Some sites clear a field once focus moves on; a value that vanished was never filled."""
     for item in fields:
         label = item.question or item.name
@@ -930,7 +1115,13 @@ def _recheck(fields: List[Field], outcome: FormOutcome) -> None:
         try:
             value = item.element.get_attribute("value") or ""
         except WebDriverException:
-            continue
+            element = _fresh(driver, item)
+            if element is None:
+                continue
+            try:
+                value = element.get_attribute("value") or ""
+            except WebDriverException:
+                continue
         if not value.strip():
             outcome.filled.remove(label)
             (outcome.missing if item.required else outcome.skipped).append(label)
@@ -938,7 +1129,13 @@ def _recheck(fields: List[Field], outcome: FormOutcome) -> None:
 
 def _fill_text(driver: Any, item: Field, value: str, outcome: FormOutcome) -> None:
     label = item.question or item.name
-    done = pick_from_combobox(driver, item.element, value) if item.is_combobox else set_text(driver, item.element, value)
+    done = (
+        pick_from_combobox(driver, item.element, value, item.role != "listbox")
+        if item.is_combobox
+        else set_text(driver, item.element, value)
+    )
+    if not done and not item.is_combobox:
+        done = _kept(driver, item, value)
     if done:
         outcome.filled.append(label)
     elif item.required:
@@ -1002,7 +1199,8 @@ def _fill_single_checkbox(driver: Any, item: Field, answer_engine: Any, outcome:
         elif item.required:
             outcome.missing.append(label)
         return
-    if _OPTIONAL_NOISE.search(label) and not item.required:
+    # "Remember me", "Show password", job alerts: an optional box never blocks a submit.
+    if not item.required:
         outcome.skipped.append(label)
         return
     answer = _resolve(answer_engine, label, ["Yes", "No"])
@@ -1020,6 +1218,7 @@ def fill_form(
     profile: Profile,
     answer_engine: Any,
     resume_pdf: Optional[Path],
+    writer: Optional[Writer] = None,
 ) -> FormOutcome:
     """Fill every control the bot can answer for; name the required ones it cannot."""
     outcome = FormOutcome()
@@ -1062,7 +1261,7 @@ def fill_form(
         if item.value and item.kind != "select":
             outcome.skipped.append(label)
             continue
-        if _COVER.search(label):
+        if _COVER.search(label) and item.kind != "textarea":
             (outcome.missing if item.required else outcome.skipped).append(label)
             continue
         options = real_options(combobox_options(driver, item.element) if item.is_combobox else item.options)
@@ -1076,7 +1275,7 @@ def fill_form(
         key = classify_label(label)
         value = values.get(key or "", "")
         if not value and item.kind == "textarea":
-            value = _own_words(answer_engine, label, item.required) or ""
+            value = _own_words(answer_engine, label, item.required, writer) or ""
         elif not value and item.required:
             value = _resolve(answer_engine, label, options or None) or ""
         elif not value:
@@ -1094,7 +1293,7 @@ def fill_form(
         else:
             _fill_text(driver, item, value, outcome)
 
-    _recheck(fields, outcome)
+    _recheck(driver, fields, outcome)
     for group in radios.values():
         _fill_radio_group(driver, group, answer_engine, outcome)
     for group in checkboxes.values():
@@ -1224,15 +1423,35 @@ def apply_here(
         result.detail = "%s applications need a %s session; finish this one by hand" % (ats, ats)
         return result
 
-    fields = reveal_form(driver)
-    if wants_account(driver, fields):
+    from .page_brain import dead_reason
+
+    fields = application_fields(reveal_form(driver))
+    stuck = ""
+    if len(fields) < 2:
+        gone = dead_reason(_page_text(driver))
+        if gone:
+            result.status, result.detail = GONE, "the posting is gone: %s" % gone
+            return result
+        if not wants_account(driver, fields):
+            fields, stuck = find_form_with_help(driver, job, settings, answer_engine)
+            if stuck.startswith("the posting is gone"):
+                result.status, result.detail = GONE, stuck
+                return result
+    # Workday asks for a new account's password once more right after creating it.
+    for _ in range(2):
+        if not wants_account(driver, fields):
+            break
         ok, how = sign_in(driver, settings, profile, dry_run)
         if not ok:
             result.detail = "the site asks for an account: %s" % how
             return result
         logger.info("      company site: %s", how)
         human_pause(1.5, 3.0)
-        fields = reveal_form(driver)
+        # After a sign-in Workday draws its header at once and the form seconds later.
+        fields = application_fields(reveal_form(driver, settle_s=FORM_WAIT_S))
+    if len(fields) < 2 and stuck:
+        result.detail = stuck
+        return result
     if len(fields) < 2:
         labels = [_control_text(control) for control in _visible_controls(driver)]
         result.detail = "no application form found on %s (controls: %s)" % (
@@ -1241,9 +1460,10 @@ def apply_here(
         )
         return result
 
+    writer = long_answer_writer(settings, answer_engine, job)
     saw_file_input = False
     for page in range(1, MAX_PAGES + 1):
-        outcome = fill_form(driver, fields, profile, answer_engine, resume_pdf)
+        outcome = fill_form(driver, fields, profile, answer_engine, resume_pdf, writer)
         result.filled += outcome.filled
         result.missing = outcome.missing
         saw_file_input = saw_file_input or any(item.kind == "file" for item in fields)
@@ -1286,6 +1506,10 @@ def apply_here(
 
     _click(driver, submit)
     confirmed, detail = wait_for_confirmation(driver, CONFIRM_WAIT_S)
+    if not confirmed and not detail.startswith("the site reported"):
+        quote = _confirmed_by_brain(driver, job, settings, answer_engine)
+        if quote:
+            confirmed, detail = True, "the site says (read by the page brain): %s" % quote
     if confirmed:
         result.status = ApplyStatus.APPLIED_EXTERNAL
         result.detail = detail
@@ -1293,6 +1517,22 @@ def apply_here(
     result.status = ApplyStatus.ERROR
     result.detail = "Submit was clicked but %s" % detail
     return result
+
+
+def _confirmed_by_brain(driver: Any, job: JobPosting, settings: Settings, answer_engine: Any) -> str:
+    """After a Submit with no confirmation it knows, let the page brain read the page; "" when it cannot tell."""
+    from . import page_brain
+
+    client = getattr(answer_engine, "client", None)
+    if not settings.judge_answers or client is None or not client.available():
+        return ""
+    text = _page_text(driver)
+    if challenge_shown(driver) or page_brain.human_check(text):
+        return ""
+    shot = page_brain.save_screenshot(driver, settings, "submitted")
+    quote = page_brain.confirmation(client, shot, _current_url(driver), text, job)
+    logger.info("      page brain on the submitted page: %s", quote or "no confirmation it can quote")
+    return quote
 
 
 def apply_on_company_site(
@@ -1320,11 +1560,12 @@ def apply_on_company_site(
             return ExternalResult(status=ApplyStatus.ERROR, url=job.url, detail="the company-site link did not leave Naukri")
         logger.info("      company site: %s (%s)", site, detect_ats(site))
         result = apply_here(driver, job, profile, answer_engine, settings, resume_pdf, settings.dry_run)
+        result = browser_agent.take_over(driver, job, profile, settings, resume_pdf, settings.dry_run, result)
     except (StaleElementReferenceException, WebDriverException) as exc:
         result = ExternalResult(status=ApplyStatus.ERROR, url=_current_url(driver), detail="%s: %s" % (type(exc).__name__, exc))
     finally:
         return_to(driver, naukri_handle, keep)
-    if result.status == ApplyStatus.APPLIED_EXTERNAL:
+    if result.status in (ApplyStatus.APPLIED_EXTERNAL, GONE):
         forget_company_site(settings, job)
     elif result.status != DRY_RUN:
         record_company_site(settings, job, result)
@@ -1426,6 +1667,83 @@ def pending_company_sites(settings: Settings) -> List[Dict[str, str]]:
     return entries
 
 
+# Entries waiting on something only you can give: your answers, a code from your
+# inbox, a password you set by hand. Trying them again changes nothing. One where
+# Submit was already clicked may have gone through, and a retry would apply twice.
+_WAITS_ON_YOU = re.compile(
+    r"^needs you for(?!: password\*?$)|^submit was clicked|needs a code it emails|already exists on|verified first"
+    r"|sent a verification email"
+    r"|did not take the saved password|captcha|a check only a person|browser agent did not report",
+    re.I,
+)
+
+
+def retryable(entry: Dict[str, str]) -> bool:
+    """Whether a company_sites.md entry stopped on the bot's side, so another try can get further."""
+    return bool(entry.get("site")) and not _WAITS_ON_YOU.search(entry.get("why", ""))
+
+
+def job_from_entry(entry: Dict[str, str]) -> JobPosting:
+    naukri = entry.get("naukri", "")
+    number = re.search(r"(\d{9,})/?$", naukri)
+    return JobPosting(
+        job_id=number.group(1) if number else naukri or entry.get("site", ""),
+        url=naukri or entry.get("site", ""),
+        title=entry.get("title", ""),
+        company=entry.get("company", ""),
+    )
+
+
+def retry_pending(
+    driver: Any, settings: Settings, profile: Profile, answer_engine: Any, ledger: Any,
+    base_pdf: Optional[Path], dry_run: bool,
+) -> Dict[str, int]:
+    """Work through data/company_sites.md again; counts of what became of each entry tried."""
+    counts = {"tried": 0, "applied": 0, "gone": 0, "still waiting": 0}
+    walls = {}  # type: Dict[str, ExternalResult]
+    home = driver.current_window_handle
+    for entry in [entry for entry in pending_company_sites(settings) if retryable(entry)]:
+        company = (entry.get("company") or "").casefold()
+        job = job_from_entry(entry)
+        if company in walls:
+            # Same company, same wall: the entry gets today's reason without another visit.
+            record_company_site(settings, job, replace(walls[company], url=entry["site"]))
+            continue
+        sent = Path(entry.get("resume to send", ""))
+        resume_pdf = sent if entry.get("resume to send") and sent.is_file() else base_pdf
+        logger.info("[retry %d] %s @ %s: %s", counts["tried"] + 1, job.title, job.company, entry["site"])
+        counts["tried"] += 1
+        set_context = getattr(answer_engine, "set_job_context", None)
+        if callable(set_context):
+            set_context(job)
+        try:
+            if not safe_get(driver, entry["site"]):
+                logger.info("      -> could not open the site")
+                continue
+            human_pause(1.5, 3.0)
+            result = apply_here(driver, job, profile, answer_engine, settings, resume_pdf, dry_run)
+            result = browser_agent.take_over(driver, job, profile, settings, resume_pdf, dry_run, result)
+        except WebDriverException as exc:
+            logger.warning("      -> browser error: %s", " ".join(str(exc).split())[:200])
+            continue
+        finally:
+            return_to(driver, home, [home])
+        logger.info("      -> %s (%s)", result.status, result.detail[:300])
+        if result.status == ApplyStatus.APPLIED_EXTERNAL:
+            counts["applied"] += 1
+            forget_company_site(settings, job)
+            ledger.record_attempt(result.to_apply_result(job), title=job.title, company=job.company)
+        elif result.status == GONE:
+            counts["gone"] += 1
+            forget_company_site(settings, job)
+        elif result.status in (ApplyStatus.EXTERNAL_MANUAL, ApplyStatus.ERROR):
+            counts["still waiting"] += 1
+            record_company_site(settings, job, result)
+            if "the site asks for an account" in result.detail:
+                walls[company] = result
+    return counts
+
+
 # ---------------------------------------------------------------------------
 # Command line
 # ---------------------------------------------------------------------------
@@ -1440,6 +1758,11 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         ),
     )
     parser.add_argument("--url", help="the application page to work on (a company_sites.md Site link)")
+    parser.add_argument(
+        "--retry-pending",
+        action="store_true",
+        help="try data/company_sites.md again, skipping entries that wait on your answers or a code from your inbox",
+    )
     parser.add_argument("--title", default="", help="job title, for the tailored resume and the records")
     parser.add_argument("--company", default="", help="company name, for the tailored resume and the records")
     parser.add_argument("--dry-run", action="store_true", help="fill the form and find Submit, but never click it")
@@ -1471,8 +1794,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     except Exception as exc:
         logger.error("Could not load settings: %s", exc)
         return EXIT_CONFIG
-    if not args.url and not args.google_login:
-        logger.error("Give --url (an application page) or --google-login.")
+    if not args.url and not args.google_login and not args.retry_pending:
+        logger.error("Give --url (an application page), --retry-pending or --google-login.")
         return EXIT_CONFIG
     keep_log(settings, "company-site")
 
@@ -1492,6 +1815,26 @@ def main(argv: Optional[List[str]] = None) -> int:
     except profile_module.ProfileError as exc:
         logger.error("Could not load your profile: %s", exc)
         return EXIT_CONFIG
+    if args.retry_pending:
+        from . import report
+
+        ledger = ledger_module.open_ledger(settings)
+        engine = AnswerEngine(ledger, llm.build_client(settings), profile, settings)
+        try:
+            base_pdf = resume_module.build_base_pdf(settings)  # type: Optional[Path]
+        except resume_module.ResumeError as exc:
+            logger.warning("No resume PDF to attach (%s)", exc)
+            base_pdf = None
+        driver = browser.create_driver(settings)
+        try:
+            counts = retry_pending(driver, settings, profile, engine, ledger, base_pdf, args.dry_run)
+        finally:
+            driver.quit()
+            ledger.close()
+        logger.info("Company sites tried again: %s", ", ".join("%s %d" % item for item in counts.items()))
+        if not args.dry_run:
+            report.update_quietly(settings)
+        return EXIT_OK
     job = JobPosting(
         job_id="manual-%s" % datetime.now().strftime("%Y%m%d-%H%M%S"),
         url=args.url,
@@ -1520,6 +1863,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             return EXIT_FAILED
         human_pause(1.5, 3.0)
         result = apply_here(driver, job, profile, engine, settings, resume_pdf, args.dry_run)
+        result = browser_agent.take_over(driver, job, profile, settings, resume_pdf, args.dry_run, result)
     finally:
         driver.quit()
         ledger.close()
@@ -1532,6 +1876,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     if result.status == ApplyStatus.EXTERNAL_MANUAL:
         path = record_company_site(settings, job, result)
         logger.info("Recorded in %s", path)
+        return EXIT_FAILED
+    if result.status == GONE:
+        forget_company_site(settings, job)
         return EXIT_FAILED
     if result.status == ApplyStatus.ERROR:
         return EXIT_FAILED
