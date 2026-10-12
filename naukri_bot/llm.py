@@ -122,11 +122,12 @@ class ClaudeCLIClient(LLMClient):
             "Reply with ONE valid JSON object and nothing else."
         ) % (prompt, schema_hint)
         # Read is the only tool it may use, and only inside the screenshot's folder.
-        extra: Dict[str, Any] = {}
+        # Without a closed stdin the CLI waits 3 seconds for piped input on every call.
+        extra: Dict[str, Any] = {"stdin": subprocess.DEVNULL}
         tool_args: List[str] = []
         if image is not None:
             tool_args = ["--allowedTools=Read", "--add-dir=%s" % image.parent]
-            extra = {"cwd": str(image.parent), "stdin": subprocess.DEVNULL}
+            extra["cwd"] = str(image.parent)
         for attempt in range(2):
             request = full_prompt
             if attempt:
