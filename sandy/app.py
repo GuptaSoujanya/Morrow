@@ -35,30 +35,39 @@ from textual.widgets import (
     TextArea,
     Tree,
 )
+from textual.widgets import _markdown
 from textual.widgets.option_list import Option
 from textual.widgets.tree import TreeNode
 
 from . import state
 from .state import Command, Module
 
+# Every symbol on screen is one that Zed's terminal font (Lilex), macOS Terminal's (SF Mono)
+# and Menlo all have; a terminal draws a missing one from another font, at another size.
+# These replace the ones Textual uses by default (▶ ▼ for trees and dropdowns, ▪ ‣ ⭑ ◦ for
+# nested bullets, Ⅰ–Ⅵ for heading levels in a table of contents, ⭘ in the header).
+Tree.ICON_NODE, Tree.ICON_NODE_EXPANDED = "+ ", "− "
+Markdown.BULLETS = ["• ", "– ", "· ", "– ", "· "]
+_markdown.NUMERALS = " 123456"
+
 SECTIONS = [
-    ("today", "⌂", "Today"),
-    ("naukri", "▶", "Apply on Naukri"),
-    ("sites", "◫", "Company sites"),
-    ("profile", "↻", "Naukri profile"),
-    ("linkedin", "✦", "LinkedIn post"),
-    ("resume", "✎", "Tailor resume"),
-    ("reports", "▤", "Reports"),
-    ("study", "◉", "Study"),
-    ("todo", "✓", "Your to-dos"),
-    ("setup", "≡", "Setup"),
+    ("today", "Today"),
+    ("naukri", "Apply on Naukri"),
+    ("sites", "Company sites"),
+    ("profile", "Naukri profile"),
+    ("linkedin", "LinkedIn post"),
+    ("resume", "Tailor resume"),
+    ("reports", "Reports"),
+    ("study", "Study"),
+    ("todo", "Your to-dos"),
+    ("setup", "Setup"),
 ]
 
 ANSWER_MODES = [
     ("As set in .env", ""),
-    ("auto - submit answers grounded in your files", "auto"),
-    ("propose - log the answers, submit none", "propose"),
-    ("ask - skip LLM answers, leave them for you", "ask"),
+    ("auto: submit answers grounded in your files", "auto"),
+    ("propose: log the answers, submit none", "propose"),
+    ("ask: skip LLM answers, leave them for you", "ask"),
 ]
 
 LINKEDIN_CHOICES = [
@@ -92,6 +101,14 @@ def heading(title: str, about: str) -> Tuple[Static, Static]:
 def elapsed(seconds: float) -> str:
     minutes, seconds = divmod(int(seconds), 60)
     return f"{minutes}:{seconds:02d}"
+
+
+def counted(n: int, noun: str) -> str:
+    return f"{n} {noun}{'' if n == 1 else 's'}"
+
+
+def long_date(day: dt.date) -> str:
+    return f"{day:%A}, {day.day} {day:%B %Y}"
 
 
 def bullet_list(items: List[str], empty: str, more: int = 0) -> Text:
@@ -132,10 +149,7 @@ class EditorScreen(Screen):
 
     def compose(self) -> ComposeResult:
         name = str(self.path.relative_to(state.APPLY)) if state.APPLY in self.path.parents else str(self.path)
-        yield Static(
-            Text.assemble(("✎  ", "bold"), (name, "bold"), ("      ctrl+s save  ·  esc close", "dim")),
-            id="editor-title",
-        )
+        yield Static(Text.assemble((name, "bold"), (" · ctrl+s save · esc close", "dim")), id="editor-title")
         yield TextArea(self.saved, id="editor", show_line_numbers=True, soft_wrap=True)
         yield Footer()
 
@@ -173,7 +187,7 @@ class ReaderScreen(Screen):
         self.markdown = markdown
 
     def compose(self) -> ComposeResult:
-        yield Static(Text.assemble(("▤  ", "bold"), (self.title_text, "bold"), ("      esc close", "dim")), id="reader-title")
+        yield Static(Text.assemble((self.title_text, "bold"), (" · esc close", "dim")), id="reader-title")
         yield MarkdownViewer(self.markdown, show_table_of_contents=True, id="reader")
         yield Footer()
 
@@ -228,17 +242,17 @@ class StudyScreen(Screen):
 
     def show_title(self, loading: bool = False) -> None:
         module = self.module
-        text = Text("◉  ", style="bold")
+        text = Text()
         if module:
             read = module.path in state.studied()
-            text.append(f"{module.track}  ›  ", style="dim")
+            text.append(f"{module.track} › ", style="dim")
             text.append(module.title, style="bold")
-            text.append(f"    {self.modules.index(module) + 1} of {len(self.modules)}", style="dim")
-            text.append("    ✓ read" if read else "    ○ not read yet", style="bold green" if read else "dim")
+            text.append(f" · {self.modules.index(module) + 1} of {len(self.modules)} · ", style="dim")
+            text.append("✓ read" if read else "○ not read yet", style="bold green" if read else "dim")
         else:
             text.append(self.page.name, style="bold")
         if loading:
-            text.append("    loading…", style="italic dim")
+            text.append(" · loading…", style="italic dim")
         self.query_one("#study-title", Static).update(text)
 
     def go(self, path: Path, anchor: str = "", remember: bool = True) -> None:
@@ -351,7 +365,7 @@ class SandyApp(App):
         Binding("escape", "focus_nav", "Menu", show=False),
         *[
             Binding(str((i + 1) % 10), f"goto('{key}')", title, show=False)
-            for i, (key, _, title) in enumerate(SECTIONS)
+            for i, (key, title) in enumerate(SECTIONS)
         ],
     ]
 
@@ -374,12 +388,18 @@ class SandyApp(App):
     # --- layout -----------------------------------------------------------------
 
     def compose(self) -> ComposeResult:
-        yield Header(show_clock=True)
+        yield Header(show_clock=True, icon="○")
         with Horizontal(id="pills"):
             for pill in ("pill-report", "pill-questions", "pill-site", "pill-run"):
                 yield Static("", id=pill, classes="pill")
         with Horizontal(id="body"):
-            yield OptionList(*[Option(f" {icon}  {title}", id=key) for key, icon, title in SECTIONS], id="nav")
+            yield OptionList(
+                *[
+                    Option(Text.assemble((f" {(i + 1) % 10}", "dim"), f"  {title}"), id=key)
+                    for i, (key, title) in enumerate(SECTIONS)
+                ],
+                id="nav",
+            )
             with Vertical(id="main"):
                 with ContentSwitcher(initial="p-today", id="panels"):
                     yield from self.today_panel()
@@ -401,16 +421,16 @@ class SandyApp(App):
             yield Static("", id="today-summary", classes="card")
             yield Static("Quick start", classes="section")
             with Grid(id="quick"):
-                yield Button("▶  Apply now", id="go-apply", variant="success")
-                yield Button("◌  Practice run", id="go-practice", variant="primary")
-                yield Button("▤  Today's report", id="go-report")
-                yield Button("✎  Answer questions", id="go-answer", variant="warning")
-                yield Button("◉  Study today's module", id="go-study")
-                yield Button("✦  Draft LinkedIn post", id="go-linkedin")
+                yield Button("Apply now", id="go-apply", variant="success")
+                yield Button("Practice run", id="go-practice", variant="primary")
+                yield Button("Today's report", id="go-report")
+                yield Button("Answer questions", id="go-answer", variant="warning")
+                yield Button("Study today's module", id="go-study")
+                yield Button("Draft LinkedIn post", id="go-linkedin")
             yield Static(
                 "Apply now searches Naukri, applies to the best fresh matches and company sites, "
                 "then writes today's report. Practice run does the same ranking but never clicks Apply.\n"
-                "Keys: 1-9 and 0 jump between sections, x stops a run, o makes the output big, q quits.",
+                "Keys: 1–9 and 0 jump between sections, x stops a run, o makes the output big, q quits.",
                 classes="hint",
             )
 
@@ -428,10 +448,10 @@ class SandyApp(App):
             yield toggle("nk-headless", "Hide the browser window (login is challenged more often)")
             yield field("Apply to at most", Input(placeholder="as many as today's quota allows", type="integer", id="nk-limit"))
             yield field("Screening answers", Select(ANSWER_MODES, value="", allow_blank=False, id="nk-mode"))
-            yield field("Keywords", Input(placeholder="from your resume  (e.g. GenAI, LLM, Python)", id="nk-keywords"))
+            yield field("Keywords", Input(placeholder="from your resume (e.g. GenAI, LLM, Python)", id="nk-keywords"))
             yield field("Location", Input(placeholder="from .env", id="nk-location"))
             yield Static("", id="nk-preview", classes="preview")
-            yield buttons(Button("▶  Run", id="run-naukri", variant="success"))
+            yield buttons(Button("Run", id="run-naukri", variant="success"))
 
     def sites_panel(self) -> ComposeResult:
         with Panel(id="p-sites", classes="panel"):
@@ -444,18 +464,18 @@ class SandyApp(App):
             yield Static("", id="sites-list", classes="card")
             yield toggle("cs-assist-dry", "Preview only: show what would be filled, change nothing")
             yield buttons(
-                Button("▶  Fill waiting forms", id="run-assist", variant="success"),
-                Button("✎  Open the list", id="edit-sites"),
+                Button("Fill waiting forms", id="run-assist", variant="success"),
+                Button("Open the list", id="edit-sites"),
             )
             yield Static("Apply on one page", classes="section")
-            yield field("Application link", Input(placeholder="https://...", id="cs-url"))
+            yield field("Application link", Input(placeholder="https://…", id="cs-url"))
             yield field("Job title", Input(placeholder="for the tailored resume", id="cs-title"))
             yield field("Company", Input(id="cs-company"))
             yield toggle("cs-dry", "Fill the form but do not press Submit")
             yield toggle("cs-no-tailor", "Send the base resume instead of a tailored one")
             yield toggle("cs-headless", "Hide the browser window")
             yield Static("", id="cs-preview", classes="preview")
-            yield buttons(Button("▶  Apply on this page", id="run-external", variant="success"))
+            yield buttons(Button("Apply on this page", id="run-external", variant="success"))
 
     def profile_panel(self) -> ComposeResult:
         with Panel(id="p-profile", classes="panel"):
@@ -469,7 +489,7 @@ class SandyApp(App):
             yield toggle("pf-headless", "Hide the browser window")
             yield Static("", id="pf-preview", classes="preview")
             yield buttons(
-                Button("▶  Refresh now", id="run-profile", variant="success"),
+                Button("Refresh now", id="run-profile", variant="success"),
                 Button("Schedule status", id="profile-status"),
                 Button("Turn on daily schedule", id="profile-install"),
             )
@@ -486,7 +506,7 @@ class SandyApp(App):
             yield toggle("li-headless", "Hide the browser window")
             yield Static("", id="li-preview", classes="preview")
             yield buttons(
-                Button("▶  Run", id="run-linkedin", variant="success"),
+                Button("Run", id="run-linkedin", variant="success"),
                 Button("Schedule status", id="li-status"),
                 Button("Turn on daily schedule", id="li-install"),
             )
@@ -506,7 +526,7 @@ class SandyApp(App):
             yield toggle("rs-headless", "Hide the browser window")
             yield Static("", id="rs-preview", classes="preview")
             yield buttons(
-                Button("▶  Tailor", id="run-resume", variant="success"),
+                Button("Tailor", id="run-resume", variant="success"),
                 Button("Open the resume folder", id="open-resumes"),
             )
 
@@ -520,8 +540,8 @@ class SandyApp(App):
             yield Static("", id="report-days", classes="card")
             yield Static("", id="rp-preview", classes="preview")
             yield buttons(
-                Button("▤  Read", id="read-report", variant="primary"),
-                Button("↻  Build / rebuild", id="run-report"),
+                Button("Read", id="read-report", variant="primary"),
+                Button("Build", id="run-report"),
                 Button("Open in an app", id="open-report"),
             )
 
@@ -530,12 +550,12 @@ class SandyApp(App):
             yield from heading(
                 "Study",
                 "PrepForge, your interview course, right here. In a module: n and p turn the page, "
-                "m marks it read, t hides its contents, w opens it on the study site, where the "
-                "diagrams are drawn (here they show as text).",
+                "m marks it read, t shows or hides its contents, b goes back, w opens it on the "
+                "study site, where the diagrams are drawn (here they show as text).",
             )
             yield Static("", id="study-today", classes="card")
-            yield buttons(Button("▤  Read today's module", id="study-read-today", variant="primary"))
-            yield Static("Every module  ·  enter opens one", classes="section")
+            yield buttons(Button("Read today's module", id="study-read-today", variant="primary"))
+            yield Static("Every module · enter opens one", classes="section")
             tree: Tree[Module] = Tree("Course", id="course-tree")
             tree.show_root = False
             yield tree
@@ -548,9 +568,9 @@ class SandyApp(App):
             yield field("Port", Input(value=str(state.DEFAULT_PORT), type="integer", id="ss-port"))
             yield Static("", id="study-status", classes="card")
             yield buttons(
-                Button("▶  Start", id="study-start", variant="success"),
+                Button("Start", id="study-start", variant="success"),
                 Button("Open in browser", id="study-open", variant="primary"),
-                Button("■  Stop", id="study-stop", variant="error"),
+                Button("Stop", id="study-stop", variant="error"),
             )
 
     def todo_panel(self) -> ComposeResult:
@@ -559,30 +579,30 @@ class SandyApp(App):
                 "Your to-dos",
                 "Things only you can do. Whatever you fill in here is used on the next run.",
             )
-            yield Static("Questions employers asked  ·  data/inputs/answers.txt", classes="section")
+            yield Static("Questions employers asked · data/inputs/answers.txt", classes="section")
             yield Static("", id="todo-questions", classes="card")
-            yield buttons(Button("✎  Answer them", id="edit-answers", variant="warning"))
-            yield Static("Facts left blank  ·  data/inputs/profile.yaml", classes="section")
+            yield buttons(Button("Answer them", id="edit-answers", variant="warning"))
+            yield Static("Facts left blank · data/inputs/profile.yaml", classes="section")
             yield Static("", id="todo-facts", classes="card")
-            yield buttons(Button("✎  Fill them in", id="edit-profile", variant="warning"))
-            yield Static("Company-site applications  ·  data/inputs/company_sites.md", classes="section")
+            yield buttons(Button("Fill them in", id="edit-profile", variant="warning"))
+            yield Static("Company-site applications · data/inputs/company_sites.md", classes="section")
             yield Static("", id="todo-sites", classes="card")
             yield buttons(
-                Button("✎  Open the list", id="edit-sites-2"),
-                Button("▶  Fill waiting forms", id="run-assist-2", variant="success"),
+                Button("Open the list", id="edit-sites-2"),
+                Button("Fill waiting forms", id="run-assist-2", variant="success"),
             )
 
     def setup_panel(self) -> ComposeResult:
         with Panel(id="p-setup", classes="panel"):
             yield from heading("Setup", "One-time things, and checks when something looks wrong.")
             yield Static(
-                "Sign in to Google once in the bot's browser, so 'Sign in with Google' works on company sites. "
-                "Quit that Chrome window (Cmd+Q) when you are done.",
+                "Sign in to Google once in the bot's browser, so “Sign in with Google” works on company sites. "
+                "Quit that Chrome window (cmd+q) when you are done.",
                 classes="hint",
             )
             yield buttons(Button("Sign in to Google", id="setup-google", variant="primary"))
             yield Static("Settings: logins, search, schedule times (.env, which git never commits).", classes="hint")
-            yield buttons(Button("✎  Edit settings (.env)", id="edit-env"))
+            yield buttons(Button("Edit settings (.env)", id="edit-env"))
             yield Static("Install or update what the bots need, and check that everything still works.", classes="hint")
             yield buttons(
                 Button("Install requirements", id="setup-install"),
@@ -596,11 +616,15 @@ class SandyApp(App):
         if "tokyo-night" in self.available_themes:
             self.theme = "tokyo-night"
         self.query_one("#output").border_title = "Output"
+        for arrow in self.query("SelectCurrent .down-arrow").results(Static):
+            arrow.update("↓")
+        for arrow in self.query("SelectCurrent .up-arrow").results(Static):
+            arrow.update("↑")
         nav = self.query_one("#nav", OptionList)
         nav.highlighted = 0
         nav.focus()
         log = self.query_one("#log", RichLog)
-        log.write(Text("Pick a task on the left (or press 1-9, 0), set its options and press Run.", style="bold"))
+        log.write(Text("Pick a task on the left (or press its number), set its options and press Run.", style="bold"))
         log.write(Text("Its output streams here. Every command is the same one you could type in apply/.", style="dim"))
         self.build_course_tree()
         self.refresh_previews()
@@ -736,15 +760,16 @@ class SandyApp(App):
                   "pill ok" if report_ready else "pill off")
         count = len(questions)
         self.show("pill-questions",
-                  f"! {count} question{'s' if count != 1 else ''} need you" if count else "✓ No questions waiting",
+                  f"! {counted(count, 'question')} need{'s' if count == 1 else ''} you" if count
+                  else "✓ No questions waiting",
                   "pill warn" if count else "pill ok")
-        self.show("pill-site", f"◉ Study site on :{port}" if site_on else "○ Study site off",
+        self.show("pill-site", f"● Study site on :{port}" if site_on else "○ Study site off",
                   "pill ok" if site_on else "pill off")
         if self.running:
             self.show("pill-run", f"● {self.running.label}  {elapsed(time.monotonic() - self.started)}", "pill busy")
             self.find("#output").border_subtitle = "x to stop"
         else:
-            self.show("pill-run", "Idle", "pill off")
+            self.show("pill-run", "○ Nothing running", "pill off")
             self.find("#output").border_subtitle = ""
 
         self.show("today-summary", self.summary(report_ready, questions, facts, sites, site_on, port))
@@ -759,23 +784,25 @@ class SandyApp(App):
         days = state.report_days()[:7]
         self.show("report-days", Text.assemble(("Reports on file  ", "bold"), ", ".join(days) or "none yet"))
         self.show("study-status", Text.assemble(
-            ("◉ Running  ", "bold green"), (state.site_url(port), "underline")) if site_on
+            ("● Running  ", "bold green"), (state.site_url(port), "underline")) if site_on
             else Text("○ Not running. Press Start.", style="dim"))
 
     def summary(self, report_ready, questions, facts, sites, site_on, port) -> Text:
         name = state.first_name()
         text = Text()
         text.append(f"{state.greeting()}{', ' + name if name else ''}.\n", style="bold")
-        text.append(f"{dt.date.today():%A, %d %B %Y}\n\n", style="dim")
+        text.append(f"{long_date(dt.date.today())}\n\n", style="dim")
+        one_question, one_fact = len(questions) == 1, len(facts) == 1
         rows = [
             (report_ready, "Today's report is ready: press Today's report to read it.",
              "No report yet today. Apply now writes one."),
             (not questions, "No questions are waiting for you.",
-             f"{len(questions)} questions wait for your answer; jobs that ask them are skipped."),
+             f"{counted(len(questions), 'question')} {'waits' if one_question else 'wait'} for your answer; "
+             f"jobs that ask {'it' if one_question else 'them'} are skipped."),
             (not sites, "No company-site applications are waiting.",
-             f"{len(sites)} company-site applications stopped short of submitting."),
+             f"{counted(len(sites), 'company-site application')} stopped short of submitting."),
             (not facts, "Your profile facts are all filled in.",
-             f"{len(facts)} facts are blank in profile.yaml."),
+             f"{counted(len(facts), 'fact')} {'is' if one_fact else 'are'} blank in data/inputs/profile.yaml."),
             (site_on, f"The study site is running at {state.site_url(port)}.", "The study site is off."),
         ]
         for i, (good, yes, no) in enumerate(rows):
@@ -788,9 +815,9 @@ class SandyApp(App):
             if i < len(rows) - 1:
                 text.append("\n")
         if self.plan:
-            text.append("\n  ◉  ", style="bold cyan")
+            text.append("\n  →  ", style="bold cyan")
             text.append(f"Study today: {self.plan.module.title}")
-            text.append(f"  (day {self.plan.number} of {self.plan.total})", style="dim")
+            text.append(f" (day {self.plan.number} of {self.plan.total})", style="dim")
         return text
 
     # --- the course ---------------------------------------------------------------------------
@@ -812,9 +839,9 @@ class SandyApp(App):
         card = Text()
         if self.plan:
             card.append("Revise" if self.plan.revising else "Today", style="bold cyan")
-            card.append(f"  ·  day {self.plan.number} of {self.plan.total} in the 8-week plan\n", style="dim")
+            card.append(f" · day {self.plan.number} of {self.plan.total} in the 8-week plan\n", style="dim")
             card.append(f"{self.plan.module.title}\n", style="bold")
-            card.append(f"{self.plan.module.track}   ·   tomorrow: {self.plan.tomorrow.title}\n\n", style="dim")
+            card.append(f"{self.plan.module.track} · tomorrow: {self.plan.tomorrow.title}\n\n", style="dim")
         else:
             card.append("Pick any module below.\n\n", style="dim")
         card.append_text(progress(len(read & set(self.module_nodes)), len(self.modules)))
@@ -827,7 +854,7 @@ class SandyApp(App):
         for track, node in self.track_nodes.items():
             paths = [m.path for m in self.modules if m.track == track]
             done = sum(p in read for p in paths)
-            node.set_label(Text.assemble((track, "bold"), (f"   {done}/{len(paths)}", "green" if done == len(paths) else "dim")))
+            node.set_label(Text.assemble((track, "bold"), (f"  {done}/{len(paths)}", "green" if done == len(paths) else "dim")))
             if today and today.track == track:
                 node.expand()
         for path, node in self.module_nodes.items():
@@ -835,7 +862,7 @@ class SandyApp(App):
             node.set_label(Text.assemble(
                 ("✓ ", "bold green") if path in read else ("○ ", "dim"),
                 (module.title, ""),
-                ("   ◉ today", "bold cyan") if module == today else ("", ""),
+                ("  ← today", "bold cyan") if module == today else ("", ""),
             ))
 
     def study(self, module: Module) -> None:
@@ -861,7 +888,7 @@ class SandyApp(App):
         self.screen.focus_next()
 
     def action_goto(self, key: str) -> None:
-        keys = [k for k, _, _ in SECTIONS]
+        keys = [k for k, _ in SECTIONS]
         if self.screen is self.home and key in keys:
             nav = self.find("#nav", OptionList)
             nav.highlighted = keys.index(key)
@@ -1031,7 +1058,7 @@ class SandyApp(App):
     def read_report(self, day: dt.date, build_if_missing: bool = False) -> None:
         path = state.report_path(day)
         if path.is_file():
-            self.push_screen(ReaderScreen(f"Report for {day:%A, %d %B %Y}", path.read_text(encoding="utf-8")))
+            self.push_screen(ReaderScreen(f"Report for {long_date(day)}", path.read_text(encoding="utf-8")))
         elif build_if_missing:
             self.run_command(state.report_command(day=day.isoformat()), then=lambda: self.read_report(day))
         else:
@@ -1063,7 +1090,7 @@ class SandyApp(App):
 
     async def stream(self, command: Command, then: Optional[Callable[[], None]]) -> None:
         log = self.find("#log", RichLog)
-        log.write(Text.assemble(("\n▶ ", "bold cyan"), (command.label, "bold"), ("    $ " + command.shown, "dim")))
+        log.write(Text.assemble(("\n→ ", "bold cyan"), (command.label, "bold"), ("  $ " + command.shown, "dim")))
         code: Optional[int] = None
         try:
             self.proc = await asyncio.create_subprocess_exec(
@@ -1084,15 +1111,15 @@ class SandyApp(App):
                 log.write(Text.from_ansi(line.decode("utf-8", "replace").rstrip("\r\n")))
             code = await self.proc.wait()
         except OSError as exc:
-            log.write(Text(f"✗ Could not start: {exc}", style="bold red"))
+            log.write(Text(f"× Could not start: {exc}", style="bold red"))
         finally:
             took = elapsed(time.monotonic() - self.started)
             if code == 0:
                 log.write(Text(f"✓ {command.label}: done in {took}", style="bold green"))
             elif code is not None and self.stopping:
-                log.write(Text(f"■ {command.label}: stopped after {took}", style="bold yellow"))
+                log.write(Text(f"○ {command.label}: stopped after {took}", style="bold yellow"))
             elif code is not None:
-                log.write(Text(f"✗ {command.label}: failed (exit {code}) after {took}", style="bold red"))
+                log.write(Text(f"× {command.label}: failed (exit {code}) after {took}", style="bold red"))
             self.proc = None
             self.running = None
             self.quit_armed = False
