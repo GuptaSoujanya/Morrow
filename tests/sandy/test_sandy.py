@@ -70,7 +70,7 @@ def test_reads_what_is_waiting_for_you(tmp_path):
 
     sites = tmp_path / "company_sites.md"
     sites.write_text("# Applications\n\n## 2026-10-10 22:05 | Dscout | Applied AI Engineer\n- Status: needs you\n")
-    assert state.waiting_company_sites(sites) == ["Dscout - Applied AI Engineer"]
+    assert state.waiting_company_sites(sites) == ["Dscout · Applied AI Engineer"]
 
 
 def test_screen_starts_and_moves_between_sections():

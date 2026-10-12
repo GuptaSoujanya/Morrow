@@ -249,12 +249,12 @@ def blank_facts(path: Path = PROFILE) -> List[Tuple[int, str]]:
 
 
 def waiting_company_sites(path: Path = COMPANY_SITES) -> List[str]:
-    """'Company - Title' for each company-site application that still needs you."""
+    """'Company · Title' for each company-site application that still needs you."""
     entries = []
     for line in _read(path).splitlines():
         if line.startswith("## "):
             parts = [p.strip() for p in line[3:].split("|")]
-            entries.append(" - ".join(parts[1:]) if len(parts) > 2 else line[3:].strip())
+            entries.append(" · ".join(parts[1:]) if len(parts) > 2 else line[3:].strip())
     return entries
 
 
