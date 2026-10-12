@@ -733,12 +733,21 @@ def open_company_site(driver: Any, button: Any) -> str:
 
 
 def return_to(driver: Any, handle: str, keep: List[str]) -> None:
+    """Close the tabs this job opened and go back to `handle`.
+
+    Never the last tab: chromedriver quits Chrome with it. When a site or the
+    browser agent had closed the tab we started in, the run lost its browser here.
+    """
     try:
-        for other in list(driver.window_handles):
-            if other not in keep:
-                driver.switch_to.window(other)
-                driver.close()
-        driver.switch_to.window(handle)
+        handles = list(driver.window_handles)
+        extra = [other for other in handles if other not in keep]
+        if len(extra) == len(handles):
+            extra = extra[1:]
+        for other in extra:
+            driver.switch_to.window(other)
+            driver.close()
+        left = [other for other in handles if other not in extra]
+        driver.switch_to.window(handle if handle in left else left[0])
     except WebDriverException as exc:
         logger.warning("Could not get back to the Naukri tab (%s): %s", type(exc).__name__, exc)
 

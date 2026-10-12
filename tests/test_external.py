@@ -2073,3 +2073,36 @@ def test_a_workday_list_button_is_answered_by_clicking_an_option_without_typing(
 @pytest.mark.parametrize("label", ["Phone Extension", "Ext.", "Phone Device Type*"])
 def test_the_boxes_beside_a_phone_number_never_get_the_number(label):
     assert ext.classify_label(label) is None
+
+
+class _Tabs:
+    """window_handles, switch_to.window and close() over a list of tab names."""
+
+    def __init__(self, handles, current):
+        self.window_handles = list(handles)
+        self.current = current
+        self.closed = []
+        tabs = self
+
+        class _Switch:
+            def window(self, handle):
+                assert handle in tabs.window_handles
+                tabs.current = handle
+
+        self.switch_to = _Switch()
+
+    def close(self):
+        self.closed.append(self.current)
+        self.window_handles.remove(self.current)
+
+
+def test_return_to_closes_the_tabs_a_job_opened():
+    tabs = _Tabs(["home", "resume", "site"], "site")
+    ext.return_to(tabs, "home", ["home", "resume"])
+    assert tabs.closed == ["site"] and tabs.current == "home"
+
+
+def test_return_to_never_closes_the_last_tab_when_the_first_one_is_gone():
+    tabs = _Tabs(["popup", "form"], "form")
+    ext.return_to(tabs, "home", ["home"])
+    assert tabs.window_handles == ["popup"] and tabs.current == "popup"
