@@ -196,11 +196,11 @@ def already_written(records: Iterable[Dict[str, Any]], email: str, now: Optional
     return False
 
 
-def _record(settings: Settings, lead: Lead, subject: str, eml: Path, gmail: bool) -> None:
+def _record(settings: Settings, lead: Lead, subject: str, eml: Path, gmail: bool, now: datetime) -> None:
     path = records_path(settings)
     path.parent.mkdir(parents=True, exist_ok=True)
     entry = dict(asdict(lead), subject=subject, eml=str(eml), gmail_draft=gmail,
-                 drafted_at=datetime.now().isoformat(timespec="seconds"))
+                 drafted_at=now.isoformat(timespec="seconds"))
     entry.pop("posting", None)
     with path.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
@@ -398,7 +398,7 @@ def draft_all(settings: Settings, profile: Profile, client: Any, leads: List[Lea
             counts["in gmail"] += 1
         elif settings.gmail_app_password:
             logger.warning("Gmail draft not made for %s: %s (the .eml is saved)", lead.email, problem)
-        _record(settings, lead, subject, eml, not problem)
+        _record(settings, lead, subject, eml, not problem, now)
         counts["drafted"] += 1
         logger.info("Draft to %s about %s at %s: %s", lead.email, lead.title or "a role", lead.company or "?", eml)
     return counts
