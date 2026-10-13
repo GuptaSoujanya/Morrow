@@ -3,7 +3,7 @@
 // The control site's page: one hash route per section, everything else comes from /api.
 
 const SECTIONS = [
-  ['today', 'Today', 'home'],
+  ['overview', 'Overview', 'grid'],
   ['naukri', 'Apply on Naukri', 'send'],
   ['sites', 'Company sites', 'globe'],
   ['profile', 'Naukri profile', 'refresh'],
@@ -16,7 +16,7 @@ const SECTIONS = [
 ];
 
 const ICONS = {
-  home: ['M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z'],
+  grid: ['M4 4h6.5v6.5H4z', 'M13.5 4H20v6.5h-6.5z', 'M4 13.5h6.5V20H4z', 'M13.5 13.5H20V20h-6.5z'],
   send: ['M21 3 10 14', 'M21 3l-6.5 18-3.5-7-7-3.5z'],
   globe: ['M12 3a9 9 0 1 0 0 18 9 9 0 1 0 0-18z', 'M3 12h18', 'M12 3c2.4 2.6 3.6 5.6 3.6 9s-1.2 6.4-3.6 9c-2.4-2.6-3.6-5.6-3.6-9S9.6 5.6 12 3z'],
   refresh: ['M20 11a8 8 0 0 0-14.6-4.4L4 8', 'M4 3.5V8h4.5', 'M4 13a8 8 0 0 0 14.6 4.4L20 16', 'M20 20.5V16h-4.5'],
@@ -45,7 +45,12 @@ const S = {
   meta: null,
   status: null,
   course: null,
-  route: { name: 'today', arg: '' },
+  route: { name: 'overview', arg: '' },
+  overview: null,
+  overviewDays: [7, 14, 30, 0].includes(Number(localStorage.getItem('overview-days') ?? 14)) ? Number(localStorage.getItem('overview-days') ?? 14) : 14,
+  overviewLoading: null,
+  funnelGroup: 'all',
+  searchesOpen: false,
   forms: {},
   drafts: {},
   previews: {},
@@ -117,8 +122,9 @@ function localDay(iso) {
   return new Date(y, m - 1, d);
 }
 
+// en-GB writes September as "Sept"; every other month keeps three letters.
 function shortDate(iso) {
-  return localDay(iso).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
+  return localDay(iso).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' }).replace('Sept', 'Sep');
 }
 
 function longDate(iso) {
@@ -456,11 +462,369 @@ function openPath(path) {
   api('/api/open', { what: 'path', path }).catch((error) => toast(error.message, 'error'));
 }
 
+// --- charts --------------------------------------------------------------------------------------
+
+const SVG_NS = 'http://www.w3.org/2000/svg';
+
+function svg(tag, attrs, ...children) {
+  const el = document.createElementNS(SVG_NS, tag);
+  for (const [key, value] of Object.entries(attrs || {})) {
+    if (value === null || value === undefined || value === false) continue;
+    if (key === 'text') el.textContent = value;
+    else el.setAttribute(key, value);
+  }
+  for (const child of children.flat(Infinity)) if (child) el.append(child);
+  return el;
+}
+
+function num(n) {
+  return Number(n || 0).toLocaleString('en-IN');
+}
+
+function share(part, whole) {
+  if (!whole) return '–';
+  const percent = (part / whole) * 100;
+  return percent > 0 && percent < 1 ? '<1%' : `${Math.round(percent)}%`;
+}
+
+function duration(seconds) {
+  if (seconds < 60) return `${seconds} s`;
+  if (seconds < 3600) return `${Math.round(seconds / 60)} min`;
+  return `${Math.floor(seconds / 3600)} h ${Math.round((seconds % 3600) / 60)} min`;
+}
+
+// Gridlines at 1, 2 or 5 times a power of ten, whole numbers only, the top one at or above max.
+function niceTicks(max, count = 4) {
+  const raw = Math.max(1, max) / count;
+  const magnitude = 10 ** Math.floor(Math.log10(raw));
+  const step = Math.max(1, [1, 2, 5, 10].map((m) => m * magnitude).find((s) => s >= raw));
+  const ticks = [];
+  for (let tick = 0; tick < max + step; tick += step) ticks.push(tick);
+  return ticks.length > 1 ? ticks : [0, step];
+}
+
+// Charts are drawn at their real pixel width so text never scales; they redraw when the box resizes.
+function chartBox({ height, label, draw }) {
+  const box = h('div', { class: 'chart', role: 'img', 'aria-label': label, style: `height: ${height}px` });
+  let drawn = 0;
+  const observer = new ResizeObserver(() => {
+    if (!box.isConnected) {
+      observer.disconnect();
+      return;
+    }
+    const width = Math.floor(box.clientWidth);
+    if (!width || width === drawn) return;
+    drawn = width;
+    box.replaceChildren();
+    draw(box, width, height);
+  });
+  observer.observe(box);
+  return box;
+}
+
+function chartTip(box) {
+  const tip = h('div', { class: 'chart-tip', 'aria-hidden': 'true', hidden: true });
+  box.append(tip);
+  return {
+    show(left, right, children) {
+      tip.replaceChildren(...children.filter(Boolean));
+      tip.hidden = false;
+      const width = tip.offsetWidth;
+      tip.style.left = `${right + 10 + width <= box.clientWidth ? right + 10 : Math.max(0, left - 10 - width)}px`;
+    },
+    hide() { tip.hidden = true; },
+  };
+}
+
+function tipTitle(text) {
+  return h('div', { class: 'tip-title', text });
+}
+
+function tipRow(text, value, swatch) {
+  return h('div', { class: 'tip-row' }, h('span', { class: `swatch ${swatch || 'swatch-none'}` }), h('span', { text }), h('span', { class: 'tip-value tabular', text: value }));
+}
+
+function yAxis(root, ticks, y, left, right) {
+  for (const tick of ticks) {
+    root.append(svg('line', { class: tick ? 'chart-grid' : 'chart-axis', x1: left, x2: right, y1: y(tick), y2: y(tick) }));
+    root.append(svg('text', { class: 'chart-label', x: left - 8, y: y(tick), 'text-anchor': 'end', 'dominant-baseline': 'middle', text: num(tick) }));
+  }
+}
+
+// Stacked columns, one per row: rows [{...}], series [{key, label, cls}], tip(row, total) -> nodes.
+function columnsChart({ rows, series, label, xLabel, tip, height = 230 }) {
+  return chartBox({ height, label, draw(box, width) {
+    const pad = { top: 10, right: 4, bottom: 26, left: 34 };
+    const inner = { w: width - pad.left - pad.right, h: height - pad.top - pad.bottom };
+    const totals = rows.map((r) => series.reduce((sum, s) => sum + (r[s.key] || 0), 0));
+    const ticks = niceTicks(Math.max(0, ...totals));
+    const top = ticks[ticks.length - 1];
+    const y = (v) => pad.top + inner.h - (v / top) * inner.h;
+    const band = inner.w / rows.length;
+    const bar = Math.max(2, Math.min(34, band * 0.62));
+    const every = Math.max(1, Math.ceil(rows.length / Math.max(1, Math.floor(inner.w / 56))));
+    const root = svg('svg', { class: 'chart-svg', width, height, viewBox: `0 0 ${width} ${height}` });
+    const hover = svg('rect', { class: 'chart-hover', x: -1000, y: pad.top, width: band, height: inner.h, rx: 4 });
+    root.append(hover);
+    yAxis(root, ticks, y, pad.left, width - pad.right);
+    box.append(root);
+    const tipper = chartTip(box);
+    rows.forEach((r, i) => {
+      const x0 = pad.left + i * band;
+      const x = x0 + (band - bar) / 2;
+      let base = 0;
+      for (const s of series) {
+        const value = r[s.key] || 0;
+        if (!value) continue;
+        const top1 = y(base + value);
+        const gap = base ? 1 : 0;
+        root.append(svg('rect', { class: `bar ${s.cls}`, x, y: top1, width: bar, height: Math.max(1, y(base) - top1 - gap), rx: Math.min(2, bar / 4) }));
+        base += value;
+      }
+      if ((rows.length - 1 - i) % every === 0) {
+        root.append(svg('text', { class: 'chart-label', x: x0 + band / 2, y: height - 7, 'text-anchor': 'middle', text: xLabel(r) }));
+      }
+      const hit = svg('rect', { class: 'chart-hit', x: x0, y: 0, width: band, height });
+      hit.addEventListener('pointerenter', () => {
+        hover.setAttribute('x', x0);
+        tipper.show(x0, x0 + band, tip(r, totals[i]));
+      });
+      root.append(hit);
+    });
+    root.addEventListener('pointerleave', () => {
+      hover.setAttribute('x', -1000);
+      tipper.hide();
+    });
+  } });
+}
+
+// Five-point score buckets on a 0–100 axis, with the minimum score marked where it falls.
+function scoreKind(bin, minimum) {
+  return bin.from >= minimum ? 'over' : bin.to <= minimum ? 'under' : 'mixed';
+}
+
+function scoreRange(bin) {
+  return bin.to === 100 ? `${bin.from} to 100` : `${bin.from} to under ${bin.to}`;
+}
+
+function scoresChart(bins, minimum, over) {
+  const scored = bins.reduce((sum, b) => sum + b.count, 0);
+  return chartBox({
+    height: 210,
+    label: `Match scores of ${num(scored)} scored jobs in five-point buckets; ${num(over)} scored ${minimum} or more.`,
+    draw(box, width, height) {
+      const pad = { top: 22, right: 10, bottom: 26, left: 34 };
+      const inner = { w: width - pad.left - pad.right, h: height - pad.top - pad.bottom };
+      const ticks = niceTicks(Math.max(0, ...bins.map((b) => b.count)));
+      const top = ticks[ticks.length - 1];
+      const y = (v) => pad.top + inner.h - (v / top) * inner.h;
+      const x = (score) => pad.left + (score / 100) * inner.w;
+      const root = svg('svg', { class: 'chart-svg', width, height, viewBox: `0 0 ${width} ${height}` });
+      const hover = svg('rect', { class: 'chart-hover', x: -1000, y: pad.top, width: x(5) - x(0), height: inner.h, rx: 3 });
+      root.append(hover);
+      yAxis(root, ticks, y, pad.left, width - pad.right);
+      box.append(root);
+      const tipper = chartTip(box);
+      for (let score = 0; score <= 100; score += 10) {
+        root.append(svg('text', { class: 'chart-label', x: x(score), y: height - 7, 'text-anchor': 'middle', text: String(score) }));
+      }
+      const notes = { over: `At or above the minimum of ${minimum}`, under: `Below the minimum of ${minimum}`, mixed: `The minimum of ${minimum} falls inside this bucket` };
+      for (const bin of bins) {
+        const x0 = x(bin.from);
+        const x1 = x(bin.to);
+        const kind = scoreKind(bin, minimum);
+        if (bin.count) {
+          root.append(svg('rect', { class: `bar score-${kind}`, x: x0 + 1.5, y: y(bin.count), width: Math.max(1, x1 - x0 - 3), height: Math.max(1, y(0) - y(bin.count)), rx: 2 }));
+        }
+        const hit = svg('rect', { class: 'chart-hit', x: x0, y: 0, width: x1 - x0, height });
+        hit.addEventListener('pointerenter', () => {
+          hover.setAttribute('x', x0);
+          tipper.show(x0, x1, [tipTitle(`Score ${scoreRange(bin)}`), tipRow(counted(bin.count, 'job'), share(bin.count, scored), `score-${kind}`), h('div', { class: 'tip-note', text: notes[kind] })]);
+        });
+        root.append(hit);
+      }
+      const mx = x(minimum);
+      root.append(svg('line', { class: 'chart-marker', x1: mx, x2: mx, y1: pad.top - 6, y2: pad.top + inner.h }));
+      const flip = mx > width - 200;
+      root.append(svg('text', { class: 'chart-marker-label', x: flip ? mx - 6 : mx + 6, y: pad.top - 9, 'text-anchor': flip ? 'end' : 'start', text: `Minimum ${minimum} · ${num(over)} at or above` }));
+      root.addEventListener('pointerleave', () => {
+        hover.setAttribute('x', -1000);
+        tipper.hide();
+      });
+    },
+  });
+}
+
+function sparkline(values) {
+  const width = 120;
+  const height = 34;
+  const max = Math.max(1, ...values);
+  const step = values.length > 1 ? width / (values.length - 1) : 0;
+  const points = values.map((v, i) => [values.length > 1 ? i * step : width / 2, height - 2 - (v / max) * (height - 6)]);
+  const line = points.map(([px, py], i) => `${i ? 'L' : 'M'}${px.toFixed(1)},${py.toFixed(1)}`).join('');
+  const area = `${line}L${points[points.length - 1][0].toFixed(1)},${height}L${points[0][0].toFixed(1)},${height}Z`;
+  return svg('svg', { class: 'spark', viewBox: `0 0 ${width} ${height}`, preserveAspectRatio: 'none', 'aria-hidden': 'true' },
+    svg('path', { class: 'spark-area', d: area }),
+    svg('path', { class: 'spark-line', d: line, 'vector-effect': 'non-scaling-stroke' }));
+}
+
+function meter(fraction, cls = '') {
+  const percent = Math.max(0, Math.min(100, fraction * 100));
+  return h('span', { class: 'meter', 'aria-hidden': 'true' }, h('span', { class: cls, style: `width: ${percent}%` }));
+}
+
+function segmented(label, choices, value, onChange) {
+  return h('div', { class: 'segmented', role: 'radiogroup', 'aria-label': label },
+    choices.map(([key, text]) => h('button', {
+      type: 'button',
+      role: 'radio',
+      class: key === value ? 'on' : '',
+      'aria-checked': key === value ? 'true' : 'false',
+      onclick: () => { if (key !== value) onChange(key); },
+      text,
+    })));
+}
+
+function panel(title, { sub, tools, cls } = {}, ...body) {
+  return h('section', { class: `panel ${cls || ''}` },
+    h('header', { class: 'panel-head' },
+      h('div', { class: 'panel-heading' }, h('h2', { class: 'panel-title', text: title }), sub ? h('p', { class: 'panel-sub', text: sub }) : null),
+      tools || null),
+    body);
+}
+
+function dataTable(columns, rows) {
+  return h('div', { class: 'table-wrap' }, h('table', { class: 'data-table' },
+    h('thead', {}, h('tr', {}, columns.map(([text, cls]) => h('th', { class: cls || '', scope: 'col', text })))),
+    h('tbody', {}, rows)));
+}
+
 // --- sections ------------------------------------------------------------------------------------
 
 const VIEWS = {};
 
-VIEWS.today = () => {
+// --- overview ------------------------------------------------------------------------------------
+
+const RANGES = [[7, '7 days'], [14, '14 days'], [30, '30 days'], [0, 'All time']];
+const CHANNELS = [
+  { key: 'naukri', label: 'Naukri', cls: 's-naukri' },
+  { key: 'boards', label: 'Job boards', cls: 's-boards' },
+  { key: 'company', label: 'Company sites', cls: 's-company' },
+];
+const KINDS = [
+  ['sent', 'Sent'],
+  ['waiting', 'Needs you'],
+  ['skipped', 'Not tried'],
+  ['failed', 'Failed'],
+];
+const NOT_SENT = {
+  waiting: (n) => `${num(n)} ${n === 1 ? 'needs' : 'need'} you`,
+  skipped: (n) => `${num(n)} not tried`,
+  failed: (n) => `${num(n)} failed`,
+};
+const FUNNELS = [['all', 'All'], ['naukri', 'Naukri'], ['boards', 'Job boards']];
+
+async function loadOverview() {
+  const days = S.overviewDays;
+  if (S.overviewLoading === days) return;
+  S.overviewLoading = days;
+  try {
+    const data = await api(`/api/overview?days=${days}`);
+    if (days === S.overviewDays) S.overview = { days, data, at: Date.now(), error: '' };
+  } catch (error) {
+    if (days === S.overviewDays) S.overview = { ...(S.overview || {}), days, at: Date.now(), error: error.message };
+  } finally {
+    if (S.overviewLoading === days) S.overviewLoading = null;
+  }
+  if (S.route.name === 'overview') maybeRender();
+}
+
+function setRange(days) {
+  S.overviewDays = days;
+  localStorage.setItem('overview-days', String(days));
+  loadOverview();
+  render(false);
+}
+
+function rangeText(d) {
+  if (!d.days) return d.first ? `Since ${shortDate(d.first)}` : 'Nothing recorded yet';
+  return `${shortDate(d.start)} – ${shortDate(d.end)}`;
+}
+
+function changeFrom(now, earlier, days) {
+  if (earlier === null || earlier === undefined || (!now && !earlier)) return null;
+  const diff = now - earlier;
+  const text = diff === 0 ? `Same as the ${days} days before` : `${num(Math.abs(diff))} ${diff > 0 ? 'more' : 'fewer'} than the ${days} days before`;
+  return h('span', { class: 'kpi-change', text });
+}
+
+function kpi({ label, value, unit, sub, change, extra, href }) {
+  return h(href ? 'a' : 'div', { class: `kpi ${href ? 'kpi-link' : ''}`, href },
+    h('span', { class: 'kpi-label', text: label }),
+    h('span', { class: 'kpi-value' }, h('span', { class: 'tabular', text: value }), unit ? h('span', { class: 'kpi-unit', text: unit }) : null),
+    sub ? h('span', { class: 'kpi-sub', text: sub }) : null,
+    change || null,
+    extra || null);
+}
+
+function kpis(d) {
+  const st = S.status;
+  const period = d.days ? `in the last ${d.days} days` : 'since the first run';
+  const waiting = st.questions.length + st.facts.length + st.sites.length;
+  const quota = d.quota;
+  return h('div', { class: 'kpis' },
+    kpi({
+      label: `Sent ${period}`,
+      value: num(d.sent.total),
+      sub: `${num(d.sent.naukri)} on Naukri · ${num(d.sent.boards)} on job boards · ${num(d.sent.company)} on company sites`,
+      change: changeFrom(d.sent.total, d.sent.before, d.days),
+      extra: sparkline(d.daily.map((r) => r.naukri + r.boards + r.company)),
+    }),
+    kpi({
+      label: 'Naukri’s daily limit',
+      value: num(quota.used),
+      unit: `of ${num(quota.limit)}`,
+      sub: `Used in the last 24 hours; ${num(Math.max(0, quota.limit - quota.used))} left`,
+      extra: meter(quota.limit ? quota.used / quota.limit : 0, quota.used >= quota.limit ? 'meter-full' : ''),
+    }),
+    kpi({
+      label: `Jobs found ${period}`,
+      value: num(d.found.total),
+      sub: `${num(d.found.over)} scored ${d.min_score} or more`,
+      change: changeFrom(d.found.total, d.found.before, d.days),
+      extra: meter(d.found.total ? d.found.over / d.found.total : 0),
+    }),
+    kpi({
+      label: 'Waiting for you',
+      value: num(waiting),
+      sub: [counted(st.questions.length, 'question'), counted(st.facts.length, 'blank fact'), counted(st.sites.length, 'company site')].join(' · '),
+      href: st.questions.length + st.facts.length ? '#/todo' : '#/sites',
+    }));
+}
+
+function sentPanel(d) {
+  const rows = d.daily;
+  const short = rows.length <= 8;
+  const xLabel = (r) => localDay(r.day).toLocaleDateString('en-GB', short ? { weekday: 'short', day: 'numeric' } : { day: 'numeric', month: 'short' }).replace('Sept', 'Sep');
+  const tip = (r, total) => {
+    const unsent = Object.entries(NOT_SENT).filter(([key]) => r[key]).map(([key, phrase]) => phrase(r[key]));
+    return [
+      tipTitle(longDate(r.day)),
+      ...CHANNELS.map((c) => tipRow(c.label, num(r[c.key]), c.cls)),
+      tipRow('Sent', num(total)),
+      unsent.length ? h('div', { class: 'tip-note', text: `Not sent: ${unsent.join(', ')}.` }) : null,
+    ];
+  };
+  const best = rows.reduce((top, r) => (r.naukri + r.boards + r.company > top.n ? { n: r.naukri + r.boards + r.company, day: r.day } : top), { n: 0, day: '' });
+  const label = `Applications sent per day, ${rangeText(d)}: ${num(d.sent.total)} in all${best.n ? `, most on ${longDate(best.day)} (${num(best.n)})` : ''}.`;
+  return panel('Applications sent per day', {
+    sub: best.n ? `Busiest day: ${shortDate(best.day)}, ${counted(best.n, 'application')}` : 'Nothing sent in this period',
+    tools: h('div', { class: 'legend' }, CHANNELS.map((c) => h('span', { class: 'legend-item' }, h('span', { class: `swatch ${c.cls}` }), c.label))),
+    cls: 'span-8',
+  }, columnsChart({ rows, series: CHANNELS, label, xLabel, tip }));
+}
+
+function todayPanel() {
   const st = S.status;
   const questions = st.questions.length;
   const facts = st.facts.length;
@@ -468,32 +832,211 @@ VIEWS.today = () => {
   const items = [];
   items.push(st.report.ready
     ? statusItem('ok', 'Today’s report is ready.', link('#/reports', 'Read it'))
-    : statusItem('idle', 'No report yet today. Each run writes one at the end, or build it now.', link('#/reports', 'Reports')));
+    : statusItem('idle', 'No report yet today. Each run writes one at the end.', link('#/reports', 'Reports')));
   if (questions) items.push(statusItem('warn', `${counted(questions, 'question')} ${questions === 1 ? 'waits' : 'wait'} for your answer; jobs that ask ${questions === 1 ? 'it' : 'them'} are skipped.`, link('#/todo', 'Answer')));
-  if (facts) items.push(statusItem('warn', `${counted(facts, 'fact')} in data/inputs/profile.yaml ${facts === 1 ? 'is' : 'are'} blank; forms that need ${facts === 1 ? 'it' : 'them'} are left for you.`, link('#/todo', 'Fill in')));
+  if (facts) items.push(statusItem('warn', `${counted(facts, 'fact')} in your profile ${facts === 1 ? 'is' : 'are'} blank; forms that need ${facts === 1 ? 'it' : 'them'} are left for you.`, link('#/todo', 'Fill in')));
   if (sites) items.push(statusItem('warn', `${counted(sites, 'company-site application')} ${sites === 1 ? 'waits' : 'wait'} for you.`, link('#/sites', 'See them')));
   const today = st.study.today;
-  if (today) items.push(statusItem('study', `Study ${today.title} · day ${today.number} of ${today.total}${today.revising ? ' (revision)' : ''}.`, h('a', { class: 'link', href: readerHref(today.path), text: 'Read' })));
-  if (!questions && !facts && !sites) items.push(statusItem('ok', 'Nothing waits for you. Nice.'));
+  if (today) items.push(statusItem('study', `Study ${today.title}, day ${today.number} of ${today.total}${today.revising ? ' (revision)' : ''}.`, h('a', { class: 'link', href: readerHref(today.path), text: 'Read' })));
+  if (!questions && !facts && !sites) items.push(statusItem('ok', 'Nothing else waits for you.'));
+  return panel('Today', { cls: 'span-4' },
+    h('ul', { class: 'status-list' }, items),
+    h('div', { class: 'panel-foot' },
+      quickButton('report', 'Build today’s report', {}, { tone: 'sm' }),
+      quickButton('linkedin', 'Draft a LinkedIn post', { mode: 'dry-run' }, { tone: 'sm' })));
+}
 
-  const tile = (title, text, onclick, tone) => h('button', { class: `tile ${tone ? `tile-${tone}` : ''}`, type: 'button', onclick },
-    h('span', { class: 'tile-title', text: title }), h('span', { class: 'tile-text', text }));
+function funnelBody(group, d) {
+  const f = d.funnel[group];
+  const out = d.funnel.left_out;
+  const skipped = [
+    out.practice ? counted(out.practice, 'practice run') : '',
+    out.older ? `${counted(out.older, 'older run')} that didn’t record these steps` : '',
+    out.unfinished ? `${counted(out.unfinished, 'run')} with no end recorded` : '',
+  ].filter(Boolean);
+  const note = skipped.length ? h('p', { class: 'panel-note', text: `Left out: ${skipped.join(', ')}.` }) : null;
+  if (!f.runs) return [h('p', { class: 'panel-empty', text: 'No finished real runs in this period.' }), note];
+  const first = f.steps[0].count;
+  const rows = f.steps.map((step, i) => h('div', { class: 'funnel-row' },
+    h('span', { class: 'funnel-label', text: step.label }),
+    h('span', { class: 'funnel-track' }, h('span', { class: `funnel-bar step-${step.key}`, style: `width: ${first ? (step.count / first) * 100 : 0}%` })),
+    h('span', { class: 'funnel-count tabular', text: num(step.count) }),
+    h('span', { class: 'funnel-kept tabular', text: i ? share(step.count, f.steps[i - 1].count) : '' })));
+  const reasons = (title, list) => (list.length ? h('p', { class: 'funnel-why' },
+    h('span', { class: 'funnel-why-title', text: title }),
+    list.map((r) => h('span', { class: 'chip-soft' }, `${r.label} `, h('b', { class: 'tabular', text: num(r.count) })))) : null);
+  return [
+    h('div', { class: 'funnel' },
+      h('div', { class: 'funnel-row funnel-head' }, h('span', {}), h('span', {}), h('span', { text: 'Jobs' }), h('span', { text: 'Kept' })),
+      rows),
+    reasons('Dropped before Eligible', f.dropped),
+    reasons('Tried but not sent', f.unsent),
+    h('p', { class: 'panel-note', text: `From ${counted(f.runs, 'finished real run')}. “Kept” is the share of the step above.` }),
+    note,
+  ];
+}
 
-  return h('div', { class: 'page' },
-    h('header', { class: 'page-head hello' },
+function funnelPanel(d) {
+  const body = h('div', { class: 'panel-body' });
+  const tools = h('div', {});
+  const draw = (group) => {
+    S.funnelGroup = group;
+    tools.replaceChildren(segmented('Which runs', FUNNELS, group, draw));
+    body.replaceChildren(...funnelBody(group, d));
+  };
+  draw(S.funnelGroup || 'all');
+  return panel('Where the jobs went', { sub: 'Each run’s steps, added up', tools, cls: 'span-6' }, body);
+}
+
+function outcomesPanel(d) {
+  const total = d.attempts;
+  if (!total) return panel('What happened to each attempt', { cls: 'span-6' }, h('p', { class: 'panel-empty', text: 'No attempts in this period.' }));
+  const byKind = Object.fromEntries(KINDS.map(([key]) => [key, d.outcomes.filter((o) => o.kind === key).reduce((sum, o) => sum + o.count, 0)]));
+  const present = KINDS.filter(([key]) => byKind[key]);
+  return panel('What happened to each attempt', { sub: `${counted(total, 'attempt')} in this period`, cls: 'span-6' },
+    h('div', { class: 'stackbar', role: 'img', 'aria-label': present.map(([key, text]) => `${text}: ${num(byKind[key])}`).join(', ') },
+      present.map(([key, text]) => h('span', { class: `kind-${key}`, style: `flex-grow: ${byKind[key]}`, title: `${text}: ${num(byKind[key])} (${share(byKind[key], total)})` }))),
+    h('div', { class: 'legend legend-wide' }, present.map(([key, text]) => h('span', { class: 'legend-item' },
+      h('span', { class: `swatch kind-${key}` }), `${text} `, h('b', { class: 'tabular', text: num(byKind[key]) }), h('span', { class: 'muted tabular', text: ` ${share(byKind[key], total)}` })))),
+    h('ul', { class: 'outcomes' }, d.outcomes.map((o) => h('li', { class: 'outcome' },
+      h('span', { class: `swatch kind-${o.kind}` }),
+      h('span', { class: 'outcome-label', text: o.label }),
+      meter(o.count / total, `kind-${o.kind}`),
+      h('span', { class: 'outcome-count tabular', text: num(o.count) })))));
+}
+
+function scoresPanel(d) {
+  const scored = d.scores.reduce((sum, b) => sum + b.count, 0);
+  if (!scored) return panel('Match scores', { cls: 'span-6' }, h('p', { class: 'panel-empty', text: 'No scored jobs in this period.' }));
+  return panel('Match scores', {
+    sub: `${num(scored)} jobs scored${d.found.unscored ? `; ${num(d.found.unscored)} were never scored` : ''}`,
+    cls: 'span-6',
+  },
+  scoresChart(d.scores, d.min_score, d.found.over),
+  h('div', { class: 'legend' },
+    h('span', { class: 'legend-item' }, h('span', { class: 'swatch score-over' }), `${d.min_score} or more`),
+    d.scores.some((b) => b.count && scoreKind(b, d.min_score) === 'mixed')
+      ? h('span', { class: 'legend-item' }, h('span', { class: 'swatch score-mixed' }), `Bucket with ${d.min_score} in it`) : null,
+    h('span', { class: 'legend-item' }, h('span', { class: 'swatch score-under' }), `Under ${d.min_score}`)));
+}
+
+function overCell(item) {
+  return h('td', {}, h('div', { class: 'cell-meter' },
+    meter(item.found ? item.over / item.found : 0, 'score-over'),
+    h('span', { class: 'tabular', text: num(item.over) }),
+    h('span', { class: 'muted tabular', text: share(item.over, item.found) })));
+}
+
+function boardsPanel(d) {
+  if (!d.boards.length) return panel('Job boards', { cls: 'span-6' }, h('p', { class: 'panel-empty', text: 'No jobs found in this period.' }));
+  return panel('Job boards', { sub: 'Jobs first seen in this period, and what was sent from them', cls: 'span-6' },
+    dataTable([['Board'], ['Found', 'num'], [`Scored ${d.min_score}+`], ['Average', 'num'], ['Sent', 'num']],
+      d.boards.map((b) => h('tr', {},
+        h('th', { scope: 'row', text: b.name }),
+        h('td', { class: 'num tabular', text: num(b.found) }),
+        overCell(b),
+        h('td', { class: 'num tabular', text: b.average === null ? '–' : b.average.toFixed(1) }),
+        h('td', { class: 'num tabular', text: num(b.sent) })))));
+}
+
+function searchesPanel(d) {
+  const all = d.searches;
+  if (!all.length) return panel('Searches', { cls: 'span-8' }, h('p', { class: 'panel-empty', text: 'No jobs found in this period.' }));
+  const body = h('div', {});
+  const draw = (open) => {
+    S.searchesOpen = open;
+    const shown = open ? all : all.slice(0, 8);
+    body.replaceChildren(
+      dataTable([['Search or feed'], ['Found', 'num'], [`Scored ${d.min_score}+`], ['Average', 'num']],
+        shown.map((s) => h('tr', {},
+          h('th', { scope: 'row' }, h('span', { class: 'search-name', text: s.search }), h('span', { class: 'search-boards', text: s.boards.join(' · ') })),
+          h('td', { class: 'num tabular', text: num(s.found) }),
+          overCell(s),
+          h('td', { class: 'num tabular', text: s.average === null ? '–' : s.average.toFixed(1) })))),
+      all.length > 8 ? h('button', { class: 'btn btn-ghost btn-sm more', type: 'button', onclick: () => draw(!open), text: open ? 'Show the top 8' : `Show all ${all.length}` }) : null);
+  };
+  draw(!!S.searchesOpen);
+  return panel('Searches that find matches', { sub: `Sorted by how many jobs scored ${d.min_score} or more`, cls: 'span-8' }, body);
+}
+
+function studyPanel() {
+  const c = S.course;
+  const today = c.today;
+  return panel('Study', { sub: `${c.read} of ${counted(c.total, 'module')} read`, cls: 'span-4' },
+    today ? h('a', { class: 'study-today', href: readerHref(today.path) },
+      h('span', { class: 'study-day', text: `Today · day ${today.number} of ${today.total}${today.revising ? ' · revision' : ''}` }),
+      h('span', { class: 'study-title', text: today.title }),
+      h('span', { class: 'study-next', text: `Tomorrow: ${today.tomorrow.title}` })) : null,
+    h('ul', { class: 'tracks-mini' }, c.tracks.map((t) => {
+      const read = t.modules.filter((m) => m.read).length;
+      return h('li', {},
+        h('span', { class: 'track-name', title: t.name, text: t.name }),
+        meter(read / t.modules.length, 'study'),
+        h('span', { class: 'tabular muted', text: `${read}/${t.modules.length}` }));
+    })),
+    h('div', { class: 'panel-foot' }, link('#/study', 'Open Study')));
+}
+
+function runsPanel(d) {
+  if (!d.runs.length) return panel('Recent runs', { cls: 'span-12' }, h('p', { class: 'panel-empty', text: 'No runs in this period.' }));
+  const cell = (value) => h('td', { class: 'num tabular', text: value === null || value === undefined ? '–' : num(value) });
+  return panel('Recent runs', { sub: `The last ${counted(d.runs.length, 'run')} in this period, newest first`, cls: 'span-12' },
+    dataTable([['Started'], ['Bot'], ['Kind'], ['Took'], ['Found', 'num'], ['Eligible', 'num'], ['Tried', 'num'], ['Sent', 'num']],
+      d.runs.map((r) => h('tr', { class: r.finished ? '' : 'row-faint' },
+        h('th', { scope: 'row', class: 'tabular', text: `${shortDate(r.day)}, ${r.time}` }),
+        h('td', { text: r.bot }),
+        h('td', {}, r.practice ? h('span', { class: 'pill pill-accent', text: 'Practice' }) : h('span', { class: 'muted', text: 'Real' })),
+        h('td', { class: 'tabular', text: r.finished ? duration(r.seconds) : 'No end recorded' }),
+        cell(r.found), cell(r.eligible), cell(r.tried), cell(r.sent)))));
+}
+
+VIEWS.overview = () => {
+  const st = S.status;
+  const ov = S.overview;
+  if (!ov || ov.days !== S.overviewDays || Date.now() - ov.at > 60000) loadOverview();
+  const d = ov && ov.data;
+  const head = h('header', { class: 'page-head hello overview-head' },
+    h('div', {},
       h('h1', { text: `${st.greeting}${st.name ? `, ${st.name}` : ''}.` }),
       h('p', { class: 'lead', text: st.date_long })),
-    card(h('ul', { class: 'status-list' }, items)),
-    section('Quick start',
-      h('div', { class: 'tiles' },
-        tile('Apply now', 'Search Naukri, apply to the best fresh matches and company sites, then write today’s report.',
-          () => run('naukri', {}, { confirm: applyConfirm() }), 'primary'),
-        tile('Practice run', 'Rank today’s jobs and write the report. Never clicks Apply.', () => run('naukri', { dry_run: true })),
-        tile('Today’s report', 'What was applied to and what is left for you.', () => { location.hash = '#/reports'; }),
-        tile('Answer questions', questions ? `${counted(questions, 'question')} from employers wait for you.` : 'No questions wait for you.', () => { location.hash = '#/todo'; }),
-        tile('Study today’s module', today ? today.title : 'Open the course.', () => { location.hash = today ? readerHref(today.path) : '#/study'; }),
-        tile('Draft a LinkedIn post', 'Write today’s post without saving or publishing it.', () => run('linkedin', { mode: 'dry-run' })))));
+    h('div', { class: 'head-actions' },
+      quickButton('naukri', 'Practice run', { dry_run: true }),
+      quickButton('naukri', 'Apply now', {}, { tone: 'primary', confirm: applyConfirm() })));
+  const bar = h('div', { class: 'range-bar' },
+    h('p', { class: 'range-text' }, d ? rangeText(d) : 'Loading…', ov && ov.days !== S.overviewDays ? h('span', { class: 'muted', text: ' · updating…' }) : null),
+    segmented('Period', RANGES, S.overviewDays, setRange));
+  if (!d) {
+    const failed = ov && ov.error;
+    return h('div', { class: 'page page-wide overview' }, head, bar,
+      h('div', { class: 'dash' },
+        panel('The numbers', { cls: 'span-8' }, failed
+          ? h('div', { class: 'panel-empty' }, h('p', { text: failed }), h('button', { class: 'btn btn-sm', type: 'button', onclick: loadOverview, text: 'Try again' }))
+          : h('p', { class: 'panel-empty', text: 'Reading the bots’ database…' })),
+        todayPanel()));
+  }
+  const stale = ov.days !== S.overviewDays;
+  if (!d.first) {
+    return h('div', { class: 'page page-wide overview' }, head, bar,
+      h('div', { class: 'dash' },
+        panel('Nothing to chart yet', { cls: 'span-8' },
+          h('p', { class: 'panel-empty', text: 'The charts fill in once a bot has run. Press Practice run to rank today’s jobs without applying anything.' })),
+        todayPanel(),
+        studyPanel()));
+  }
+  return h('div', { class: `page page-wide overview ${stale ? 'is-stale' : ''}` }, head, bar,
+    kpis(d),
+    h('div', { class: 'dash' },
+      sentPanel(d),
+      todayPanel(),
+      funnelPanel(d),
+      outcomesPanel(d),
+      scoresPanel(d),
+      boardsPanel(d),
+      searchesPanel(d),
+      studyPanel(),
+      runsPanel(d)));
 };
+
 
 function statusItem(tone, text, action) {
   return h('li', { class: `status status-${tone}` }, h('span', { class: 'status-dot', 'aria-hidden': 'true' }), h('span', { class: 'status-text', text }), action || null);
@@ -911,16 +1454,18 @@ VIEWS.setup = () => {
 
 function parseRoute() {
   const raw = decodeURIComponent(location.hash.replace(/^#\/?/, ''));
-  const [name, ...rest] = raw.split('/');
+  const [first, ...rest] = raw.split('/');
+  const name = first === 'today' ? 'overview' : first;
   const known = SECTIONS.some(([key]) => key === name);
-  return { name: known ? name : 'today', arg: known ? rest.join('/') : '' };
+  return { name: known ? name : 'overview', arg: known ? rest.join('/') : '' };
 }
 
 function signatureFor(name) {
   const st = S.status;
   if (!st) return '';
   const parts = {
-    today: [st.date, st.report.ready, st.questions, st.facts, st.sites, st.study, st.greeting],
+    overview: [st.date, st.report.ready, st.questions, st.facts, st.sites, st.study, st.greeting, S.overviewDays,
+      S.overview && [S.overview.days, S.overview.data, S.overview.error], S.course],
     sites: [st.sites],
     todo: [st.questions, st.facts, st.sites.length],
     reports: [st.date, st.report.days],
@@ -1145,6 +1690,7 @@ function handleLast(last) {
   if (last.action === 'report' || last.action === 'naukri') S.reports = {};
   refreshStatus();
   refreshCourse();
+  loadOverview();
   if (last.action === 'report' && last.exit === 0 && last.day) {
     const target = `#/reports/${last.day}`;
     if (location.hash === target) render(false);
@@ -1198,8 +1744,15 @@ setInterval(() => {
   renderConsoleStatus();
 }, 1000);
 
-setInterval(() => { if (!document.hidden) refreshStatus(); }, 5000);
-window.addEventListener('focus', refreshStatus);
+setInterval(() => {
+  if (document.hidden) return;
+  refreshStatus();
+  if (S.route.name === 'overview' && S.overview && Date.now() - S.overview.at > 60000) loadOverview();
+}, 5000);
+window.addEventListener('focus', () => {
+  refreshStatus();
+  if (S.route.name === 'overview' && (!S.overview || Date.now() - S.overview.at > 15000)) loadOverview();
+});
 
 // --- keys ----------------------------------------------------------------------------------------
 
