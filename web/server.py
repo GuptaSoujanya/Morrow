@@ -13,6 +13,7 @@ import mimetypes
 import os
 import re
 import signal
+import sqlite3
 import subprocess
 import sys
 import threading
@@ -334,6 +335,14 @@ def status_json(runner: Runner) -> Dict[str, Any]:
     }
 
 
+def overview_json(days_text: str) -> Dict[str, Any]:
+    try:
+        days = int(days_text or 14)
+    except ValueError:
+        raise ValueError(f"days must be a whole number, not {days_text!r}") from None
+    return state.overview(days)
+
+
 def report_json(day_text: str) -> Dict[str, Any]:
     day = state.parse_day(day_text)
     exists = state.report_path(day).is_file()
@@ -503,6 +512,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.json(self.server.runner.snapshot(after=after))
             elif route == "/api/course":
                 self.json(course_json())
+            elif route == "/api/overview":
+                self.json(overview_json(query.get("days", "")))
             elif route == "/api/report":
                 self.json(report_json(query.get("day", "")))
             elif route == "/api/file":
@@ -511,6 +522,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.error(HTTPStatus.NOT_FOUND, "not found")
         except ValueError as exc:
             self.error(HTTPStatus.BAD_REQUEST, str(exc))
+        except sqlite3.Error as exc:
+            self.error(HTTPStatus.INTERNAL_SERVER_ERROR, f"can’t read the bots’ database: {exc}")
 
     def do_POST(self) -> None:
         if not self.host_ok() or not self.change_ok():

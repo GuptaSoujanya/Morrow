@@ -3,6 +3,7 @@ import datetime as dt
 import http.client
 import json
 import os
+import sqlite3
 import sys
 import threading
 import time
@@ -196,6 +197,114 @@ def test_report_links_point_at_its_saved_files(tmp_path, monkeypatch):
     assert "<table>" in html and "<b>" not in html
 
 
+
+def at(day, hour):
+    """A ledger timestamp (UTC, like the bots write) for a local day and hour."""
+    return dt.datetime(2026, 10, day, hour).astimezone().astimezone(dt.timezone.utc).isoformat()
+
+
+def make_ledger(path):
+    from common.ledger import Ledger
+
+    Ledger(str(path)).close()
+    connection = sqlite3.connect(path)
+    connection.executemany(
+        "INSERT INTO applications(job_id, status, quota_consumed, at) VALUES (?, ?, ?, ?)",
+        [
+            ("111", "applied", 1, at(12, 11)),
+            ("hirist:5", "applied_platform", 0, at(12, 12)),
+            ("222", "external_manual", 0, at(12, 12)),
+            ("333", "abstained", 0, at(12, 12)),
+            ("444", "naukri_refused", 0, at(12, 12)),
+            ("555", "applied", 1, at(13, 9)),
+            ("666", "applied", 1, at(6, 9)),
+        ],
+    )
+    connection.executemany(
+        "INSERT INTO jobs_seen(job_id, source, first_seen, score) VALUES (?, ?, ?, ?)",
+        [
+            ("1", "search:AI Engineer", at(12, 10), 50.0),
+            ("2", "hirist:search:AI Engineer", at(12, 10), 30.0),
+            ("3", "recommended:similar_jobs", at(13, 8), None),
+            ("4", "cutshort:feed", at(13, 8), 95.0),
+            ("5", "search:AI Engineer", at(6, 8), 70.0),
+            ("6", "search:AI Engineer", at(1, 8), 20.0),
+        ],
+    )
+    naukri = {"collected": 10, "too_old": 2, "ranked": 8, "below_score": 5, "eligible": 3, "attempted": 2,
+              "applied": 1, "external_manual": 1, "dry_run": False}
+    connection.executemany(
+        "INSERT INTO runs(started_at, finished_at, summary_json) VALUES (?, ?, ?)",
+        [
+            (at(12, 10), at(12, 11), json.dumps(naukri)),
+            (at(12, 14), at(12, 15), json.dumps({"board": "hirist", "dry_run": True, "collected": 4, "eligible": 1})),
+            (at(13, 8), None, None),
+        ],
+    )
+    connection.commit()
+    connection.close()
+    return path
+
+
+def test_source_names_the_board_and_the_search():
+    assert state.source_parts("search:AI Engineer") == ("naukri", "AI Engineer")
+    assert state.source_parts("hirist:search:LLM: evals") == ("hirist", "LLM: evals")
+    assert state.source_parts("recommended:similar_jobs") == ("naukri", "Recommended: similar jobs")
+    assert state.source_parts("cutshort:feed") == ("cutshort", "Cutshort feed")
+
+
+def test_overview_counts_what_the_ledger_holds(tmp_path, monkeypatch):
+    for key in ("MIN_SCORE", "DAILY_QUOTA", "DB_PATH"):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setattr(state, "APPLY", tmp_path)
+    (tmp_path / ".env").write_text("MIN_SCORE=45\nDAILY_QUOTA=40\n")
+    db = make_ledger(tmp_path / "ledger.db")
+    now = dt.datetime(2026, 10, 13, 12).astimezone()
+    data = state.overview(7, today=dt.date(2026, 10, 13), now=now, db=db)
+
+    assert (data["start"], data["end"], data["first"], data["min_score"]) == ("2026-10-07", "2026-10-13", "2026-10-01", 45)
+    days = {d["day"]: d for d in data["daily"]}
+    assert len(days) == 7
+    assert days["2026-10-12"] == {"day": "2026-10-12", "naukri": 1, "boards": 1, "company": 0, "waiting": 2,
+                                  "skipped": 0, "failed": 1}
+    assert days["2026-10-13"]["naukri"] == 1
+    # The ledger starts on 1 October, inside the 7 days before, so there is nothing fair to compare with.
+    assert data["sent"] == {"total": 3, "naukri": 2, "boards": 1, "company": 0, "before": None}
+    assert data["quota"] == {"used": 1, "limit": 40}
+    assert data["attempts"] == 6
+    assert data["outcomes"][0] == {"status": "applied", "label": "Applied on Naukri", "kind": "sent", "count": 2}
+    assert {o["status"]: o["kind"] for o in data["outcomes"]}["naukri_refused"] == "failed"
+
+    assert data["found"] == {"total": 4, "over": 2, "unscored": 1, "before": None}
+    assert [n for n, b in enumerate(data["scores"]) if b["count"]] == [6, 10, 19]
+    assert data["scores"][9] == {"from": 45, "to": 50, "count": 0} and data["scores"][-1]["to"] == 100
+    boards = {b["key"]: b for b in data["boards"]}
+    assert boards["naukri"] == {"key": "naukri", "name": "Naukri", "sent": 2, "found": 2, "over": 1, "average": 50.0}
+    assert boards["hirist"]["sent"] == 1 and boards["cutshort"]["over"] == 1
+    assert data["searches"][0] == {"search": "AI Engineer", "boards": ["Hirist", "Naukri"], "found": 2, "over": 1,
+                                   "average": 40.0}
+
+    funnel = data["funnel"]["naukri"]
+    assert funnel["runs"] == 1 and data["funnel"]["boards"]["runs"] == 0
+    assert [s["count"] for s in funnel["steps"]] == [10, 8, 3, 2, 1]
+    assert funnel["dropped"] == [{"label": "Too old", "count": 2}, {"label": "Under the minimum score", "count": 5}]
+    assert funnel["unsent"] == [{"label": "Left for you on a company site", "count": 1}]
+    assert data["funnel"]["all"]["steps"] == funnel["steps"]
+    assert data["funnel"]["left_out"] == {"practice": 1, "older": 0, "unfinished": 1}
+
+    runs = data["runs"]
+    assert [r["bot"] for r in runs] == ["Naukri", "Hirist", "Naukri"]
+    assert runs[0]["finished"] is False and runs[0]["sent"] is None
+    assert runs[1]["practice"] is True and runs[2]["seconds"] == 3600 and runs[2]["sent"] == 1
+
+    five = state.overview(5, today=dt.date(2026, 10, 13), now=now, db=db)
+    assert five["sent"]["before"] == 1 and five["found"]["before"] == 1
+    everything = state.overview(0, today=dt.date(2026, 10, 13), now=now, db=db)
+    assert everything["start"] == "2026-10-01" and everything["sent"]["total"] == 4 and everything["sent"]["before"] is None
+    assert state.overview(7, db=tmp_path / "missing.db")["sent"]["total"] == 0
+    with pytest.raises(ValueError):
+        state.overview(-1, db=db)
+
 # --- the server ---------------------------------------------------------------------
 
 
@@ -210,6 +319,7 @@ def site(tmp_path, monkeypatch):
     monkeypatch.setattr(state, "REPORTS", data / "reports")
     monkeypatch.setattr(state, "STUDIED", data / "reports" / "studied.json")
     monkeypatch.setattr(state, "COURSE", make_course(tmp_path / "course"))
+    monkeypatch.delenv("DB_PATH", raising=False)
     state.ANSWERS.write_text("Q: Country*\nA:\n")
     state.PROFILE.write_text('first_name: "Sam"\npin: null  # FILL\n')
     (tmp_path / ".env").write_text("SECRET=1\n")
@@ -285,6 +395,16 @@ def test_preview_explains_what_is_missing(site):
     assert status == 200 and data["shown"] == "venv/bin/python -m naukri_bot --dry-run --limit 3"
     status, data = call(site, "POST", "/api/preview", {"action": "external", "options": {}})
     assert status == 200 and data["needed"] == "paste the application page link"
+
+
+def test_overview_reads_the_ledger_for_the_days_asked(site):
+    make_ledger(state.database())
+    status, data = call(site, "GET", "/api/overview?days=30")
+    assert status == 200 and data["days"] == 30 and len(data["daily"]) == 30 and data["first"] == "2026-10-01"
+    assert call(site, "GET", "/api/overview")[1]["days"] == 14
+    status, data = call(site, "GET", "/api/overview?days=week")
+    assert status == 400 and "whole number" in data["error"]
+    assert call(site, "GET", "/api/overview?days=-3")[0] == 400
 
 
 def test_marking_a_module_read(site):

@@ -10,12 +10,15 @@ import json
 import os
 import re
 import shlex
+import sqlite3
 import sys
+from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
-from common.report import course_modules as plan_order
+from common.models import ApplyStatus, Settings
+from common.report import OUTCOMES, course_modules as plan_order
 
 APPLY = Path(__file__).resolve().parent.parent
 COURSE = APPLY / "course"
@@ -462,3 +465,282 @@ def greeting(now: Optional[dt.datetime] = None) -> str:
     hour = (now or dt.datetime.now()).hour
     return "Good morning" if hour < 12 else "Good afternoon" if hour < 17 else "Good evening"
 
+
+
+# --- the overview -------------------------------------------------------------
+
+#: How the Overview groups ledger outcomes; anything not listed (refusals, limits, sign-outs, errors) failed.
+_KINDS = {
+    ApplyStatus.APPLIED: "sent",
+    ApplyStatus.APPLIED_PLATFORM: "sent",
+    ApplyStatus.APPLIED_EXTERNAL: "sent",
+    ApplyStatus.EXTERNAL_MANUAL: "waiting",
+    ApplyStatus.ABSTAINED: "waiting",
+    ApplyStatus.ALREADY_APPLIED: "skipped",
+    ApplyStatus.EXTERNAL_SKIPPED: "skipped",
+    ApplyStatus.NO_APPLY_BUTTON: "skipped",
+}
+_CHANNELS = {
+    ApplyStatus.APPLIED: "naukri",
+    ApplyStatus.APPLIED_PLATFORM: "boards",
+    ApplyStatus.APPLIED_EXTERNAL: "company",
+}
+#: Naukri's own job sources carry no board prefix ("search:AI Engineer", "recommended:profile").
+_NAUKRI_SOURCES = {"search", "recommended"}
+_RUN_FIELDS = (
+    "collected", "too_old", "not_ranked", "ranked", "below_score", "already_applied", "held_back",
+    "eligible", "attempted", "applied", "applied_external", "external_manual", "skipped_abstained", "errors",
+)
+
+
+def database() -> Path:
+    """The bots' ledger: DB_PATH from .env, else the bots' own default."""
+    path = Path(_setting("DB_PATH") or Settings.db_path).expanduser()
+    return path if path.is_absolute() else APPLY / path
+
+
+def _setting_number(key: str, default: float) -> float:
+    try:
+        return float(_setting(key))
+    except ValueError:
+        return default
+
+
+def _query(path: Path, sql: str) -> List[Dict[str, Any]]:
+    """Rows from the ledger, opened read-only so the site never changes it while a bot writes."""
+    if not path.is_file():
+        return []
+    connection = sqlite3.connect(f"{path.as_uri()}?mode=ro", uri=True)
+    connection.row_factory = sqlite3.Row
+    try:
+        return [dict(row) for row in connection.execute(sql)]
+    finally:
+        connection.close()
+
+
+def _moment(stamp: Any) -> Optional[dt.datetime]:
+    try:
+        return dt.datetime.fromisoformat(str(stamp)).astimezone()
+    except ValueError:
+        return None
+
+
+def board_name(key: str) -> str:
+    return "Naukri" if key == "naukri" else key.capitalize()
+
+
+def _board_of_job(job_id: Any) -> str:
+    """Job boards prefix their ids ("hirist:1677523"); Naukri's ids are bare numbers."""
+    text = str(job_id or "")
+    return text.split(":", 1)[0] if ":" in text else "naukri"
+
+
+def source_parts(source: str) -> Tuple[str, str]:
+    """('hirist', 'AI Engineer') for 'hirist:search:AI Engineer': the board and the search that found the job."""
+    parts = (source or "").split(":")
+    board = "naukri" if len(parts) < 2 or parts[0] in _NAUKRI_SOURCES else parts.pop(0)
+    kind, rest = parts[0], ":".join(parts[1:]).strip()
+    if kind == "search" and rest:
+        return board, rest
+    if kind == "recommended":
+        return board, f"Recommended: {rest.replace('_', ' ')}".rstrip(": ")
+    return board, f"{board_name(board)} {kind.replace('_', ' ')}".strip()
+
+
+def _funnel(totals: Counter, runs: int) -> Dict[str, Any]:
+    """One group of real runs: how many jobs each step kept, and why the rest dropped out."""
+    def counts(pairs: Tuple[Tuple[str, int], ...]) -> List[Dict[str, Any]]:
+        return [{"label": label, "count": count} for label, count in pairs if count]
+
+    return {
+        "runs": runs,
+        "steps": [
+            {"key": "found", "label": "Found", "count": totals["collected"]},
+            {"key": "scored", "label": "Scored", "count": totals["ranked"]},
+            {"key": "eligible", "label": "Eligible", "count": totals["eligible"]},
+            {"key": "tried", "label": "Tried", "count": totals["attempted"]},
+            {"key": "sent", "label": "Sent", "count": totals["applied"] + totals["applied_external"]},
+        ],
+        "dropped": counts((
+            ("Too old", totals["too_old"]),
+            ("Not scored", totals["not_ranked"]),
+            ("Under the minimum score", totals["below_score"]),
+            ("Applied before", totals["already_applied"]),
+            ("Held for your answers", totals["held_back"]),
+        )),
+        "unsent": counts((
+            ("Left for you on a company site", totals["external_manual"]),
+            ("A question had no answer", totals["skipped_abstained"]),
+            ("Errors", totals["errors"]),
+        )),
+    }
+
+
+def overview(
+    days: int = 14,
+    today: Optional[dt.date] = None,
+    now: Optional[dt.datetime] = None,
+    db: Optional[Path] = None,
+) -> Dict[str, Any]:
+    """Everything the Overview draws, for the last `days` days counting today (0 means since the first run)."""
+    if days < 0:
+        raise ValueError("days can't be negative")
+    today = today or dt.date.today()
+    now = now or dt.datetime.now(dt.timezone.utc)
+    db = db or database()
+    min_score = _setting_number("MIN_SCORE", Settings.min_score)
+
+    applications = _query(db, "SELECT job_id, status, quota_consumed, at FROM applications ORDER BY at, id")
+    seen = _query(db, "SELECT source, first_seen, score FROM jobs_seen")
+    runs = _query(db, "SELECT id, started_at, finished_at, summary_json FROM runs ORDER BY started_at, id")
+    for rows, column in ((applications, "at"), (seen, "first_seen"), (runs, "started_at")):
+        for row in rows:
+            moment = _moment(row[column])
+            row["moment"], row["day"] = moment, (moment.date() if moment else None)
+
+    known = [row["day"] for row in applications + seen + runs if row["day"]]
+    first = min(known) if known else None
+    start = min(first or today, today) if days == 0 else today - dt.timedelta(days=days - 1)
+    # The period before is compared only when the ledger covers all of it.
+    before = start - dt.timedelta(days=days) if days and first and first <= start - dt.timedelta(days=days) else None
+
+    def within(day: Optional[dt.date]) -> bool:
+        return day is not None and start <= day <= today
+
+    def earlier(day: Optional[dt.date]) -> bool:
+        return before is not None and day is not None and before <= day < start
+
+    daily = {
+        start + dt.timedelta(days=n): {"day": (start + dt.timedelta(days=n)).isoformat(), "naukri": 0, "boards": 0,
+                                       "company": 0, "waiting": 0, "skipped": 0, "failed": 0}
+        for n in range((today - start).days + 1)
+    }
+    outcomes, sent_by_board, sent = Counter(), Counter(), Counter()
+    for row in applications:
+        kind = _KINDS.get(row["status"], "failed")
+        if within(row["day"]):
+            daily[row["day"]][_CHANNELS.get(row["status"], kind)] += 1
+            outcomes[row["status"]] += 1
+            if kind == "sent":
+                sent[_CHANNELS[row["status"]]] += 1
+                sent_by_board[_board_of_job(row["job_id"])] += 1
+        elif earlier(row["day"]) and kind == "sent":
+            sent["before"] += 1
+
+    bins, found = [0] * 20, Counter()
+    boards: Dict[str, Counter] = {}
+    searches: Dict[str, Dict[str, Any]] = {}
+    for row in seen:
+        if earlier(row["day"]):
+            found["before"] += 1
+        if not within(row["day"]):
+            continue
+        board, search = source_parts(row["source"])
+        entry = searches.setdefault(search, {"tally": Counter(), "boards": set()})
+        entry["boards"].add(board)
+        score = row["score"]
+        for tally in (found, boards.setdefault(board, Counter()), entry["tally"]):
+            tally["found"] += 1
+            if score is not None:
+                tally["scored"] += 1
+                tally["points"] += score
+                tally["over"] += score >= min_score
+        if score is None:
+            found["unscored"] += 1
+        else:
+            bins[min(19, max(0, int(score // 5)))] += 1
+
+    def averaged(tally: Counter) -> Dict[str, Any]:
+        return {
+            "found": tally["found"],
+            "over": tally["over"],
+            "average": round(tally["points"] / tally["scored"], 1) if tally["scored"] else None,
+        }
+
+    funnels = {"naukri": Counter(), "boards": Counter()}
+    counted_runs = Counter()
+    left_out = Counter()
+    recent = []
+    for row in runs:
+        if not within(row["day"]):
+            continue
+        try:
+            summary = json.loads(row["summary_json"] or "{}")
+        except ValueError:
+            summary = {}
+        finished = _moment(row["finished_at"])
+        recent.append({
+            "id": row["id"],
+            "day": row["day"].isoformat(),
+            "time": row["moment"].strftime("%H:%M"),
+            "bot": board_name(summary.get("board") or "naukri"),
+            "practice": bool(summary.get("dry_run")),
+            "finished": finished is not None,
+            "seconds": round((finished - row["moment"]).total_seconds()) if finished else None,
+            "found": summary.get("collected"),
+            "eligible": summary.get("eligible"),
+            "tried": summary.get("attempted"),
+            "sent": (summary.get("applied") or 0) + (summary.get("applied_external") or 0) if summary else None,
+        })
+        if finished is None:
+            left_out["unfinished"] += 1
+        elif summary.get("dry_run"):
+            left_out["practice"] += 1
+        elif "eligible" not in summary:
+            left_out["older"] += 1
+        else:
+            group = "boards" if summary.get("board") else "naukri"
+            counted_runs[group] += 1
+            funnels[group].update({key: int(summary.get(key) or 0) for key in _RUN_FIELDS})
+
+    cutoff = now - dt.timedelta(hours=24)
+    return {
+        "days": days,
+        "start": start.isoformat(),
+        "end": today.isoformat(),
+        "first": first.isoformat() if first else None,
+        "min_score": min_score,
+        "daily": list(daily.values()),
+        "sent": {
+            "total": sent["naukri"] + sent["boards"] + sent["company"],
+            "naukri": sent["naukri"],
+            "boards": sent["boards"],
+            "company": sent["company"],
+            "before": sent["before"] if before else None,
+        },
+        "found": {
+            "total": found["found"],
+            "over": found["over"],
+            "unscored": found["unscored"],
+            "before": found["before"] if before else None,
+        },
+        "quota": {
+            "used": sum(1 for row in applications if row["quota_consumed"] and row["moment"] and row["moment"] >= cutoff),
+            "limit": int(_setting_number("DAILY_QUOTA", Settings.daily_quota)),
+        },
+        "attempts": sum(outcomes.values()),
+        "outcomes": [
+            {"status": status, "label": OUTCOMES.get(status, status.replace("_", " ").capitalize()),
+             "kind": _KINDS.get(status, "failed"), "count": count}
+            for status, count in outcomes.most_common()
+        ],
+        # Five-point buckets, from inclusive and to exclusive except the last, which ends at 100.
+        "scores": [{"from": n * 5, "to": n * 5 + 5, "count": count} for n, count in enumerate(bins)],
+        "boards": sorted(
+            ({"key": key, "name": board_name(key), "sent": sent_by_board[key], **averaged(boards.get(key, Counter()))}
+             for key in set(boards) | set(sent_by_board)),
+            key=lambda b: (-b["found"], -b["sent"], b["name"]),
+        ),
+        "searches": sorted(
+            ({"search": search, "boards": sorted(board_name(b) for b in entry["boards"]), **averaged(entry["tally"])}
+             for search, entry in searches.items()),
+            key=lambda s: (-s["over"], -s["found"], s["search"]),
+        ),
+        "funnel": {
+            "naukri": _funnel(funnels["naukri"], counted_runs["naukri"]),
+            "boards": _funnel(funnels["boards"], counted_runs["boards"]),
+            "all": _funnel(funnels["naukri"] + funnels["boards"], counted_runs["naukri"] + counted_runs["boards"]),
+            "left_out": {"practice": left_out["practice"], "older": left_out["older"], "unfinished": left_out["unfinished"]},
+        },
+        "runs": recent[::-1][:12],
+    }

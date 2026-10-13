@@ -28,7 +28,7 @@ COURSE_PORT = 8000
 COURSE_TRACK_ORDER = ("02-", "01-", "03-", "04-", "05-")
 MAX_LISTED = 40
 
-_OUTCOMES = {
+OUTCOMES = {
     ApplyStatus.APPLIED: "Applied on Naukri",
     ApplyStatus.APPLIED_EXTERNAL: "Applied on the company site",
     ApplyStatus.APPLIED_PLATFORM: "Applied on another job board",
@@ -382,7 +382,7 @@ def build_report(settings: Settings, day: Optional[date] = None, now: Optional[d
                     _local_clock(row.get("at", "")),
                     _cell(row.get("company") or "-", 60),
                     _cell(row.get("title") or "-", 80),
-                    _OUTCOMES.get(row.get("status"), row.get("status")),
+                    OUTCOMES.get(row.get("status"), row.get("status")),
                     _cell(row.get("detail") or "-"),
                 )
             )
