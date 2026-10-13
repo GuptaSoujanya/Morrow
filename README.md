@@ -125,7 +125,7 @@ The page only listens on this computer and only one command runs at a time.
 
 | Section | What it runs |
 |---|---|
-| Today | What is waiting for you, plus one-press Apply now / Practice run / report / answers / today's study module |
+| Overview | Charts read from the bots' database for the last 7, 14 or 30 days or all time: applications sent per day by channel, jobs found and scored, the funnel from found to sent, outcomes, the score spread against `MIN_SCORE`, each board and search, recent runs and the study plan; plus what waits for you and one-press Apply now / Practice run (`#/today` still opens it) |
 | Apply on Naukri | `python -m naukri_bot` with practice run, limit, answer mode, Early Access, keywords, location (a real run asks first) |
 | Company sites | Every waiting application with links to the form, the Naukri listing and the resume to send; `common.assist` for the waiting forms, `sites_bot.external --url ...` for one page |
 | Naukri profile | `naukri_bot.update_profile`, schedule status, turn on the daily schedule |
