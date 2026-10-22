@@ -1,0 +1,243 @@
+/* Inline-SVG chart primitives: sparkline, columns, funnel, stacked bar, histogram. */
+
+.chart {
+  width: 100%;
+  overflow: visible;
+}
+
+.chart-col {
+  fill: var(--emerald-600);
+}
+
+.chart-col.s-naukri {
+  fill: var(--emerald-600);
+}
+
+.chart-col.s-boards {
+  fill: var(--blue-600);
+}
+
+.chart-col.s-company {
+  fill: var(--amber-600);
+}
+
+.s-naukri {
+  background: var(--emerald-600);
+}
+
+.s-boards {
+  background: var(--blue-600);
+}
+
+.s-company {
+  background: var(--amber-600);
+}
+
+.chart-axis {
+  stroke: var(--border);
+  stroke-width: 1;
+}
+
+.chart-x-label {
+  font-size: 10px;
+  fill: var(--text-400);
+  font-family: var(--font-body);
+}
+
+.sparkline path {
+  fill: none;
+  stroke: var(--emerald-600);
+  stroke-width: 1.6;
+}
+
+.sparkline circle {
+  fill: var(--emerald-600);
+}
+
+/* --- funnel --- */
+
+.funnel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.funnel-row {
+  display: grid;
+  grid-template-columns: 110px 1fr 56px 56px;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.funnel-head span {
+  font-size: 11px;
+  color: var(--text-400);
+  text-transform: uppercase;
+}
+
+.funnel-label {
+  font-size: var(--step--1);
+  color: var(--text-600);
+}
+
+.funnel-track {
+  height: 20px;
+  background: var(--canvas-sunken);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.funnel-bar {
+  display: block;
+  height: 100%;
+  background: var(--emerald-600);
+  border-radius: 6px;
+  transition: width 220ms var(--ease);
+}
+
+.funnel-bar.step-scored {
+  background: var(--emerald-500);
+}
+
+.funnel-bar.step-eligible {
+  background: var(--blue-600);
+}
+
+.funnel-bar.step-tried {
+  background: var(--amber-600);
+}
+
+.funnel-bar.step-sent {
+  background: var(--emerald-700);
+}
+
+.funnel-count {
+  text-align: right;
+}
+
+.funnel-kept {
+  text-align: right;
+  color: var(--text-400);
+}
+
+.funnel-why {
+  margin-top: var(--space-2);
+}
+
+.funnel-why-title {
+  display: block;
+  font-size: 12px;
+  color: var(--text-400);
+  margin-bottom: 4px;
+}
+
+/* --- histogram --- */
+
+.hist-bar.score-over {
+  fill: var(--emerald-600);
+}
+
+.hist-bar.score-under {
+  fill: var(--border-strong);
+}
+
+.hist-bar.score-mixed {
+  fill: var(--amber-600);
+}
+
+.score-over {
+  background: var(--emerald-600);
+}
+
+.score-under {
+  background: var(--border-strong);
+}
+
+.score-mixed {
+  background: var(--amber-600);
+}
+
+/* --- stacked bar (outcomes) --- */
+
+.stackbar {
+  display: flex;
+  height: 14px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--canvas-sunken);
+}
+
+.stackbar > span {
+  display: block;
+  flex-grow: 0;
+}
+
+.kind-sent {
+  background: var(--emerald-600);
+}
+
+.kind-waiting {
+  background: var(--amber-600);
+}
+
+.kind-skipped {
+  background: var(--border-strong);
+}
+
+.kind-failed {
+  background: var(--red-600);
+}
+
+.outcomes {
+  list-style: none;
+  margin: var(--space-4) 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.outcome {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  font-size: var(--step--1);
+}
+
+.outcome-label {
+  flex: 0 0 180px;
+}
+
+.outcome-count {
+  width: 56px;
+  text-align: right;
+}
+
+.tip {
+  background: var(--ink-900);
+  color: var(--ink-100);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2) var(--space-3);
+  font-size: 12px;
+  box-shadow: var(--shadow-card);
+  pointer-events: none;
+  position: absolute;
+  z-index: 20;
+}
+
+.tip-title {
+  font-weight: 700;
+  display: block;
+  margin-bottom: 3px;
+}
+
+.tip-row {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.tip-note {
+  margin-top: 4px;
+  color: var(--text-400);
+}

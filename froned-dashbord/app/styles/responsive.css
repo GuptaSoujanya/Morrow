@@ -1,0 +1,121 @@
+/* Breakpoints: see DESIGN.md §7. Sidebar collapses to a rail, then to a bottom bar;
+   the dashboard grid collapses one span notch, then to a single column. */
+
+@media (max-width: 1279px) {
+  .span-8 {
+    grid-column: span 8;
+  }
+
+  .kpis {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 1023px) {
+  :root {
+    --sidebar-w: var(--sidebar-w-rail);
+  }
+
+  .nav-title,
+  .sidebar-brand span:not(.dot),
+  .sidebar-foot {
+    display: none;
+  }
+
+  .nav-item {
+    justify-content: center;
+  }
+
+  .nav-item .badge {
+    position: absolute;
+    top: 2px;
+    right: 2px;
+  }
+
+  .content {
+    padding: var(--space-5) var(--space-5) var(--space-9);
+  }
+}
+
+@media (max-width: 899px) {
+  .span-4,
+  .span-6,
+  .span-8 {
+    grid-column: span 12;
+  }
+}
+
+@media (max-width: 767px) {
+  .shell {
+    flex-direction: column;
+  }
+
+  .sidebar {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    top: auto;
+    height: 64px;
+    flex-direction: row;
+    align-items: center;
+    overflow-x: auto;
+    overflow-y: hidden;
+    border-right: none;
+    border-top: 1px solid var(--ink-700);
+    z-index: 50;
+    padding: 0 var(--space-2);
+  }
+
+  .sidebar-brand,
+  .sidebar-foot {
+    display: none;
+  }
+
+  .nav-item {
+    flex: none;
+    flex-direction: column;
+    gap: 2px;
+    padding: var(--space-2);
+    min-width: 56px;
+  }
+
+  .content {
+    padding-bottom: calc(64px + var(--space-8));
+  }
+
+  #console-dock {
+    left: 0;
+    bottom: 64px;
+  }
+
+  .console {
+    width: 100%;
+    margin-bottom: 0;
+    border-radius: var(--radius-md) var(--radius-md) 0 0;
+  }
+}
+
+@media (max-width: 639px) {
+  .kpis {
+    grid-template-columns: repeat(2, 1fr);
+    gap: var(--space-3);
+  }
+
+  .form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .content {
+    padding-left: var(--space-4);
+    padding-right: var(--space-4);
+  }
+
+  .page-head {
+    flex-direction: column;
+  }
+
+  .funnel-row {
+    grid-template-columns: 84px 1fr 44px 44px;
+  }
+}

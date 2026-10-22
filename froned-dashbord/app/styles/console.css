@@ -1,0 +1,130 @@
+/* Persistent run console docked above the sidebar/content boundary. */
+
+#console-dock {
+  position: fixed;
+  left: var(--sidebar-w);
+  right: 0;
+  bottom: 0;
+  z-index: 40;
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.console {
+  pointer-events: auto;
+  width: min(900px, calc(100% - var(--space-6)));
+  margin-bottom: var(--space-4);
+  background: var(--ink-900);
+  color: var(--ink-100);
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  box-shadow: var(--shadow-card);
+  overflow: hidden;
+  display: grid;
+  grid-template-rows: auto 0fr;
+  transition: grid-template-rows 180ms var(--ease);
+}
+
+.console[data-size="normal"] {
+  grid-template-rows: auto 220px;
+}
+
+.console[data-size="expanded"] {
+  grid-template-rows: auto min(60vh, 520px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .console {
+    transition: none;
+  }
+}
+
+.console-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-4);
+  border-bottom: 1px solid var(--ink-700);
+}
+
+.console-title {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-400);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.console-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-400);
+}
+
+.console-dot.live {
+  background: var(--emerald-500);
+  animation: pulse 1.4s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .console-dot.live {
+    animation: none;
+  }
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.4;
+  }
+}
+
+.console-label {
+  flex: 1;
+  font-size: 12px;
+  color: var(--ink-100);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.console-actions {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.console-body {
+  overflow: hidden;
+  min-height: 0;
+}
+
+.console-lines {
+  height: 100%;
+  overflow-y: auto;
+  padding: var(--space-3) var(--space-4);
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.console-line {
+  display: block;
+}
+
+.console-jump {
+  position: absolute;
+  bottom: 60px;
+  right: calc(var(--space-6) + 8px);
+}
+
+.console .icon-btn {
+  color: var(--ink-100);
+}

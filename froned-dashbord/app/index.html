@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="dark" />
+  <script>
+    // Start read-only first-screen requests while the stylesheet and app download.
+    // The API wrapper consumes each promise once; subsequent refreshes fetch anew.
+    (() => {
+      let days = 14;
+      try { const saved = localStorage.getItem('overview-days'); if (saved !== null && [7,14,30,0].includes(Number(saved))) days = Number(saved); } catch {}
+      const paths = ['/api/meta','/api/status','/api/course',`/api/overview?days=${days}`,'/api/bots'];
+      window.__orbitInitialRequests = new Map(paths.map(path => {
+        const request = fetch(path);
+        request.catch(() => {});
+        return [path, request];
+      }));
+    })();
+  </script>
+  <title>Launchpad · Orbit</title>
+  <meta name="description" content="Orbit — your personal career workspace. Track applications, run automations, manage your profile and prepare for what’s next." />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'%3E%3Ccircle cx='24' cy='24' r='13' fill='%23b9a5ff'/%3E%3Cellipse cx='24' cy='24' rx='23' ry='9' transform='rotate(-35 24 24)' stroke='%23f2f3f7' fill='none' stroke-width='3'/%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="./styles/index.css" />
+</head>
+<body>
+  <a class="skip-link" href="#content">Skip to content</a>
+  <div id="offline" class="offline-banner" role="alert" hidden>
+    Can&rsquo;t reach the site&rsquo;s server. Trying again&hellip;
+  </div>
+
+  <div class="shell">
+    <nav id="nav" class="sidebar" aria-label="Sections"></nav>
+
+    <main id="content" class="content" tabindex="-1"><p>Opening your workspace…</p></main>
+  </div>
+
+  <aside id="console-dock" aria-label="Run console"></aside>
+
+  <div id="toasts" class="toasts" aria-live="polite"></div>
+
+  <dialog id="confirm" class="confirm-dialog"></dialog>
+  <dialog id="mobile-nav" class="confirm-dialog" aria-label="All sections"></dialog>
+  <noscript>This dashboard needs JavaScript to load your data and run controls.</noscript>
+
+  <script type="module" src="./js/main.js"></script>
+</body>
+</html>
