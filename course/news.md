@@ -34,8 +34,15 @@ This page fetches **fresh headlines from the internet** every time you open it â
     if (s < 86400) return Math.floor(s / 3600) + ' hours ago';
     return Math.floor(s / 86400) + ' days ago';
   }
+  // innerHTML escapes & < > but not quotes, and these strings land in attributes.
   function esc(t) {
-    var d = document.createElement('div'); d.textContent = t || ''; return d.innerHTML;
+    var d = document.createElement('div'); d.textContent = t || '';
+    return d.innerHTML.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+
+  // Feed links only: a javascript: or data: href would run on this origin.
+  function safeUrl(u) {
+    return /^https?:\/\//i.test(u || '') ? u : '#';
   }
 
   function render(items) {
@@ -53,7 +60,7 @@ This page fetches **fresh headlines from the internet** every time you open it â
     }
     list.innerHTML = items.map(function (it) {
       return '<div class="news-card">' +
-        '<a class="title" href="' + esc(it.url) + '" target="_blank" rel="noopener">' + esc(it.title) + '</a>' +
+        '<a class="title" href="' + esc(safeUrl(it.url)) + '" target="_blank" rel="noopener">' + esc(it.title) + '</a>' +
         '<div class="news-meta">' + esc(it.meta) + '</div>' +
       '</div>';
     }).join('');
