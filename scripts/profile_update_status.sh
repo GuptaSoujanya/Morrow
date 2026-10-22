@@ -2,7 +2,7 @@
 # Health check for the scheduled profile updater: agent loaded?, today's slots, last log lines.
 cd "$(dirname "$0")/.."
 LABEL="com.naukri-bot.profile-update"
-STATE="${PROFILE_UPDATE_STATE_PATH:-logs/profile_update.json}"
+STATE="${PROFILE_UPDATE_STATE_PATH:-data/logs/profile_update.json}"
 PYTHON="venv/bin/python"
 [ -x "$PYTHON" ] || PYTHON="python3"
 
@@ -32,5 +32,5 @@ else
   echo "  none yet"
 fi
 
-echo "== Last 8 log lines (logs/profile_update.log)"
+echo "== Last 8 log lines (data/logs/profile_update.log)"
 tail -8 data/logs/profile_update.log 2>/dev/null | cut -c1-150 | sed 's/^/  /' || true

@@ -12,10 +12,12 @@ import re
 import shlex
 import sqlite3
 import sys
+import tempfile
+import threading
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple, TypeVar
 
 from common.models import ApplyStatus, Settings
 from common.report import OUTCOMES, course_modules as plan_order
@@ -277,6 +279,37 @@ def _check_line(lines: List[str], line: int, name: str) -> str:
     return lines[line - 1]
 
 
+T = TypeVar("T")
+
+_EDITS = threading.Lock()
+
+
+def _serialised(edit: Callable[..., T]) -> Callable[..., T]:
+    """One edit at a time: each handler thread reads, changes one line, and writes back."""
+
+    def locked(*args: Any, **kwargs: Any) -> T:
+        with _EDITS:
+            return edit(*args, **kwargs)
+
+    locked.__doc__ = edit.__doc__
+    locked.__name__ = edit.__name__
+    return locked
+
+
+def _replace(path: Path, text: str) -> None:
+    """Write a whole file at once, so a bot reading it never sees it half written."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=f".{path.name}.")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(text)
+        os.replace(tmp, path)
+    except BaseException:
+        Path(tmp).unlink(missing_ok=True)
+        raise
+
+
+@_serialised
 def save_answer(line: int, answer: str, path: Path = ANSWERS) -> None:
     """Write your answer on the empty ``A:`` line the question is waiting on."""
     answer = " ".join(answer.split())
@@ -288,9 +321,10 @@ def save_answer(line: int, answer: str, path: Path = ANSWERS) -> None:
         raise ValueError(f"{path.name} changed since you opened it; reload and try again")
     indent = text[: len(text) - len(text.lstrip())]
     lines[line - 1] = f"{indent}A: {answer}\n"
-    path.write_text("".join(lines), encoding="utf-8")
+    _replace(path, "".join(lines))
 
 
+@_serialised
 def save_fact(line: int, value: str, path: Path = PROFILE) -> None:
     """Fill one blank FILL fact in profile.yaml, keeping its comment."""
     value = " ".join(value.split())
@@ -305,7 +339,7 @@ def save_fact(line: int, value: str, path: Path = PROFILE) -> None:
     shown = value.lower() if _FACT_LITERAL.fullmatch(value) else json.dumps(value, ensure_ascii=False)
     filled = f"{key}: {shown}"
     lines[line - 1] = f"{filled.ljust(len(body) - 1)} #{comment}\n"
-    path.write_text("".join(lines), encoding="utf-8")
+    _replace(path, "".join(lines))
 
 
 def report_path(day: Optional[dt.date] = None) -> Path:
@@ -442,6 +476,7 @@ def studied(path: Optional[Path] = None) -> Set[str]:
     return {p for p in data if isinstance(p, str)} if isinstance(data, list) else set()
 
 
+@_serialised
 def mark_studied(module_path: str, done: bool = True, path: Optional[Path] = None) -> Set[str]:
     path = path or STUDIED
     read = studied(path)
@@ -450,7 +485,7 @@ def mark_studied(module_path: str, done: bool = True, path: Optional[Path] = Non
     else:
         read.discard(module_path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(sorted(read), indent=2) + "\n", encoding="utf-8")
+    _replace(path, json.dumps(sorted(read), indent=2) + "\n")
     return read
 
 

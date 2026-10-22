@@ -23,7 +23,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, unquote, urlsplit
 
 from . import state
 from .state import Command
@@ -56,6 +56,10 @@ def long_date(day: dt.date) -> str:
 # --- running one command at a time ---------------------------------------------------
 
 _ANSI = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07]*\x07")
+
+
+#: How long output may keep coming after the command itself has exited.
+READ_GRACE_S = 1.0
 
 
 class Runner:
@@ -112,12 +116,25 @@ class Runner:
             self.stopping = False
         threading.Thread(target=self._follow, args=(proc, command), daemon=True).start()
 
-    def _follow(self, proc: subprocess.Popen, command: Command) -> None:
+    def _read(self, proc: subprocess.Popen) -> None:
         assert proc.stdout is not None
         for raw in iter(proc.stdout.readline, b""):
             text = _ANSI.sub("", raw.decode("utf-8", "replace").rstrip("\r\n"))
             self.say(text.split("\r")[-1])
+
+    def _follow(self, proc: subprocess.Popen, command: Command) -> None:
+        reader = threading.Thread(target=self._read, args=(proc,), daemon=True)
+        reader.start()
         code = proc.wait()
+        # A child left running in the background keeps the output pipe open, so
+        # the run ends when the command does, and its leftovers are stopped.
+        reader.join(timeout=READ_GRACE_S)
+        if reader.is_alive():
+            try:
+                os.killpg(proc.pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+            reader.join(timeout=READ_GRACE_S)
         with self.lock:
             took = time.monotonic() - self.started
             stopped = self.stopping and code != 0
@@ -335,11 +352,17 @@ def status_json(runner: Runner) -> Dict[str, Any]:
     }
 
 
+# Beyond this a date before year 1 overflows; 0 already means "since the first run".
+MAX_OVERVIEW_DAYS = 36500
+
+
 def overview_json(days_text: str) -> Dict[str, Any]:
     try:
         days = int(days_text or 14)
     except ValueError:
         raise ValueError(f"days must be a whole number, not {days_text!r}") from None
+    if days > MAX_OVERVIEW_DAYS:
+        raise ValueError(f"days can be at most {MAX_OVERVIEW_DAYS}")
     return state.overview(days)
 
 
@@ -403,6 +426,9 @@ def open_outside(target: str) -> None:
 
 
 # --- the server -------------------------------------------------------------------------------------
+
+
+MAX_BODY_BYTES = 10 * 1024 * 1024
 
 
 class ApiError(Exception):
@@ -471,7 +497,12 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def body(self) -> Dict[str, Any]:
-        length = int(self.headers.get("Content-Length") or 0)
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            raise ApiError(HTTPStatus.BAD_REQUEST, "Content-Length is not a number") from None
+        if not 0 <= length <= MAX_BODY_BYTES:
+            raise ApiError(HTTPStatus.BAD_REQUEST, f"Content-Length must be 0 to {MAX_BODY_BYTES}")
         try:
             data = json.loads(self.rfile.read(length) or b"{}")
         except ValueError:
@@ -491,7 +522,8 @@ class Handler(BaseHTTPRequestHandler):
             return
         url = urlsplit(self.path)
         query = {k: v[-1] for k, v in parse_qs(url.query).items()}
-        route = url.path
+        # Links in saved reports are percent-encoded ("my%20file.txt"); inside() still confines them.
+        route = unquote(url.path)
         try:
             if route == "/":
                 self.file(STATIC / "index.html")
@@ -520,7 +552,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.json(file_json(query.get("name", "")))
             else:
                 self.error(HTTPStatus.NOT_FOUND, "not found")
-        except ValueError as exc:
+        except (ValueError, TypeError) as exc:
             self.error(HTTPStatus.BAD_REQUEST, str(exc))
         except sqlite3.Error as exc:
             self.error(HTTPStatus.INTERNAL_SERVER_ERROR, f"can’t read the bots’ database: {exc}")
@@ -579,8 +611,11 @@ class Handler(BaseHTTPRequestHandler):
                 self.error(HTTPStatus.NOT_FOUND, "not found")
         except ApiError as exc:
             self.error(exc.status, str(exc))
-        except ValueError as exc:
+        except (ValueError, TypeError, AttributeError) as exc:
+            # A field of the wrong shape (options as a string, say) is a bad request, not a dropped connection.
             self.error(HTTPStatus.BAD_REQUEST, str(exc))
+        except OSError as exc:
+            self.error(HTTPStatus.INTERNAL_SERVER_ERROR, f"could not save: {exc}")
 
     def open(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """Show a folder or file from data/ in Finder or its own app."""
@@ -618,6 +653,10 @@ def already_running(port: int) -> bool:
         return False
 
 
+def _interrupt(signum: int, frame: Any) -> None:
+    raise KeyboardInterrupt
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m web", description=__doc__.splitlines()[0])
     parser.add_argument("--port", type=int, default=DEFAULT_PORT, help=f"port on this computer (default {DEFAULT_PORT})")
@@ -626,6 +665,10 @@ def main(argv: Optional[List[str]] = None) -> int:
     # Started in the background, ctrl+c is ignored and every command run from here would inherit
     # that, so Stop could not interrupt it. Taking ctrl+c back makes the commands interruptible.
     signal.signal(signal.SIGINT, signal.default_int_handler)
+    # A kill or a closed terminal ends the site the same way ctrl+c does, so the bot it
+    # started is stopped too instead of running on with nobody able to press Stop.
+    for sig in (signal.SIGTERM, signal.SIGHUP):
+        signal.signal(sig, _interrupt)
     url = f"http://localhost:{args.port}"
     try:
         server = ControlServer(args.port)
