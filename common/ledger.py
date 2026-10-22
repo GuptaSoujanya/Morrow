@@ -47,9 +47,14 @@ class Ledger:
                 db_path,
                 detect_types=sqlite3.PARSE_DECLTYPES | sqlite3.PARSE_COLNAMES,
                 check_same_thread=False,
+                # Bots running side by side (pipeline --bots N) wait for each other's writes.
+                timeout=30,
             )
             self._connection.row_factory = sqlite3.Row
-            self._connection.execute("PRAGMA journal_mode=WAL")
+            # WAL by default; LEDGER_JOURNAL_MODE=DELETE when bots in Docker containers share
+            # the file with this machine, where WAL's shared memory does not work.
+            self._set_journal_mode("delete" if os.environ.get("LEDGER_JOURNAL_MODE", "").upper() == "DELETE"
+                                   else "wal")
             self._migrate()
             self._ensure_fingerprint_column()
             self._ensure_facts_column()
@@ -78,6 +83,17 @@ class Ledger:
                 self._connection.execute(
                     "ALTER TABLE applications ADD COLUMN facts_fingerprint TEXT"
                 )
+
+    def _set_journal_mode(self, mode: str) -> None:
+        """Switch the journal mode only when it differs; a switch needs the file to itself, so when
+        another bot has it open, keep the current mode (both are safe) instead of failing."""
+        current = self._connection.execute("PRAGMA journal_mode").fetchone()[0]
+        if current == mode:
+            return
+        try:
+            self._connection.execute("PRAGMA journal_mode=%s" % mode)
+        except sqlite3.OperationalError as exc:
+            logger.info("ledger: keeping journal mode %s (%s)", current, exc)
 
     def _migrate(self) -> None:
         """Create the ledger schema if it does not already exist."""
@@ -128,8 +144,14 @@ class Ledger:
         try:
             with self._lock:
                 row = self._connection.execute(
-                    "SELECT 1 FROM applications WHERE job_id = ? AND status IN (?, ?, ?) LIMIT 1",
-                    (job_id, ApplyStatus.APPLIED, ApplyStatus.APPLIED_EXTERNAL, ApplyStatus.APPLIED_PLATFORM),
+                    "SELECT 1 FROM applications WHERE job_id = ? AND status IN (?, ?, ?, ?) LIMIT 1",
+                    (
+                        job_id,
+                        ApplyStatus.APPLIED,
+                        ApplyStatus.APPLIED_EXTERNAL,
+                        ApplyStatus.APPLIED_PLATFORM,
+                        ApplyStatus.ALREADY_APPLIED,
+                    ),
                 ).fetchone()
             return row is not None
         except sqlite3.Error:

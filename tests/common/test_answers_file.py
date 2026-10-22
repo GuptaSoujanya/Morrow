@@ -57,11 +57,12 @@ def _write(tmp_path, text):
     return path
 
 
-def test_matching_ignores_case_punctuation_and_small_typos(tmp_path):
+def test_matching_ignores_case_and_punctuation_but_not_wording(tmp_path):
     book = AnswerBook(str(_write(tmp_path, SAMPLE)))
     assert book.answer_for("notice period (in days)?") == "30 days"
     assert book.answer_for("NOTICE PERIOD, in days") == "30 days"
-    assert book.answer_for("What is your notice periods?") == "30 days"
+    # No fuzzy matching: a near miss is a different question, so it is unknown.
+    assert book.answer_for("What is your notice periods?") is None
     assert book.answer_for("What is your current CTC?") is None
 
 

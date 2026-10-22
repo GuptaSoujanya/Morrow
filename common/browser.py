@@ -56,13 +56,25 @@ def profile_dir_for(settings: Settings, browser: str) -> Optional[str]:
 
 
 def _add_common_options(options, user_agent: str, headless: bool,
-                        profile: Optional[str] = None) -> None:
+                        profile: Optional[str] = None, background: bool = False) -> None:
     options.add_argument("--disable-blink-features=AutomationControlled")
     options.add_experimental_option("excludeSwitches", ["enable-automation"])
     options.add_experimental_option("useAutomationExtension", False)
     if user_agent:
         options.add_argument("--user-agent=%s" % user_agent)
-    options.add_argument("--start-maximized")
+    if background and not headless:
+        # Moved off-screen once it opens (see _tuck_away), and kept running at
+        # full speed: Chrome otherwise slows a window nobody can see.
+        options.add_argument("--window-size=1440,900")
+        options.add_argument("--disable-backgrounding-occluded-windows")
+        options.add_argument("--disable-renderer-backgrounding")
+        options.add_argument("--disable-background-timer-throttling")
+    elif os.environ.get("CHROME_WINDOW_SIZE"):
+        # A virtual screen (docker/) has no window manager to maximise to, so fill it exactly.
+        options.add_argument("--window-position=0,0")
+        options.add_argument("--window-size=%s" % os.environ["CHROME_WINDOW_SIZE"])
+    else:
+        options.add_argument("--start-maximized")
     options.add_argument("--disable-notifications")
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--no-sandbox")
@@ -79,7 +91,9 @@ def _chrome_options(
     settings: Settings, profile: Optional[str] = None
 ) -> webdriver.ChromeOptions:
     options = webdriver.ChromeOptions()
-    _add_common_options(options, settings.user_agent, settings.headless, profile)
+    if os.environ.get("CHROME_BINARY"):  # set in the Docker image: Debian's chromium
+        options.binary_location = os.environ["CHROME_BINARY"]
+    _add_common_options(options, settings.user_agent, settings.headless, profile, settings.background)
     return options
 
 
@@ -87,7 +101,7 @@ def _edge_options(
     settings: Settings, profile: Optional[str] = None
 ) -> webdriver.EdgeOptions:
     options = webdriver.EdgeOptions()
-    _add_common_options(options, settings.user_agent, settings.headless, profile)
+    _add_common_options(options, settings.user_agent, settings.headless, profile, settings.background)
     return options
 
 
@@ -127,9 +141,9 @@ def create_driver(settings: Settings) -> webdriver.Remote:
     window cannot be reused and must not block the morning run.
     """
     if profile_dir_for(settings, "chrome") is None:
-        return _try_create_driver(settings, use_profile=False)
+        return _tuck_away(_try_create_driver(settings, use_profile=False), settings)
     try:
-        return _try_create_driver(settings, use_profile=True)
+        return _tuck_away(_try_create_driver(settings, use_profile=True), settings)
     except BrowserError as exc:
         logger.warning(
             "Could not start a browser with the persistent profile (%s). Close "
@@ -137,7 +151,21 @@ def create_driver(settings: Settings) -> webdriver.Remote:
             "will log in from scratch.",
             exc,
         )
-        return _try_create_driver(settings, use_profile=False)
+        return _tuck_away(_try_create_driver(settings, use_profile=False), settings)
+
+
+def _tuck_away(driver: webdriver.Remote, settings: Settings) -> webdriver.Remote:
+    """With BACKGROUND, push the window past the screen's bottom-right corner.
+
+    macOS keeps a sliver of any window on screen, so a corner is as far as it
+    goes. Minimising would hide it entirely but tells the page it is hidden.
+    """
+    if settings.background and not settings.headless:
+        try:
+            driver.set_window_position(100000, 100000)
+        except WebDriverException as exc:
+            logger.warning("Could not move the browser window off-screen: %s", exc)
+    return driver
 
 
 def _try_create_driver(settings: Settings, use_profile: bool) -> webdriver.Remote:
@@ -150,7 +178,8 @@ def _try_create_driver(settings: Settings, use_profile: bool) -> webdriver.Remot
     driver = None
     try:
         driver = webdriver.Chrome(
-            service=ChromeService(ChromeDriverManager().install()),
+            # CHROMEDRIVER (the Docker image) skips the download: there is no linux-arm64 build to fetch.
+            service=ChromeService(os.environ.get("CHROMEDRIVER") or ChromeDriverManager().install()),
             options=_chrome_options(
                 settings, profile_dir_for(settings, "chrome") if use_profile else None
             ),

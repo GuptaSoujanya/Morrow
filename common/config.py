@@ -35,8 +35,11 @@ def _env_float(key: str, default: float) -> float:
         return default
 
 
-def _env_bool(key: str, default: bool) -> bool:
-    """Read a conventional boolean environment value."""
+def _env_bool(key: str, default: bool, invalid: Optional[bool] = None) -> bool:
+    """Read a conventional boolean environment value.
+
+    ``invalid`` is used for an unrecognised value; it defaults to ``default``.
+    """
     value = os.getenv(key)
     if value is None:
         return default
@@ -45,8 +48,9 @@ def _env_bool(key: str, default: bool) -> bool:
         return True
     if normalized in ("0", "false", "no", "off"):
         return False
-    logger.warning("Invalid boolean for %s: %r; using default %r", key, value, default)
-    return default
+    fallback = default if invalid is None else invalid
+    logger.warning("Invalid boolean for %s: %r; using %r", key, value, fallback)
+    return fallback
 
 
 def _env_list(key: str, default: List[str]) -> List[str]:
@@ -90,7 +94,7 @@ def load_settings(
         "password": os.getenv("NAUKRI_PASSWORD", defaults.password),
         "profile_path": os.getenv("PROFILE_PATH", defaults.profile_path),
         "resume_path": os.getenv("RESUME_PATH", defaults.resume_path),
-        "db_path": os.getenv("DB_PATH", defaults.db_path),
+        "db_path": os.getenv("DB_PATH") or defaults.db_path,
         "daily_quota": _env_int("DAILY_QUOTA", defaults.daily_quota),
         "target_applications": _env_int(
             "TARGET_APPLICATIONS", defaults.target_applications
@@ -136,7 +140,9 @@ def load_settings(
             "PAGES_PER_KEYWORD", defaults.pages_per_keyword
         ),
         "headless": _env_bool("HEADLESS", defaults.headless),
-        "dry_run": _env_bool("DRY_RUN", defaults.dry_run),
+        "background": _env_bool("BACKGROUND", defaults.background),
+        # A typo must not turn a dry run into a live one.
+        "dry_run": _env_bool("DRY_RUN", defaults.dry_run, invalid=True),
         "llm_backend": os.getenv("LLM_BACKEND", defaults.llm_backend),
         "llm_model": os.getenv("LLM_MODEL", defaults.llm_model),
         "llm_timeout_s": _env_int("LLM_TIMEOUT_S", defaults.llm_timeout_s),

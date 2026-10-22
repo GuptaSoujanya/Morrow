@@ -3,7 +3,6 @@
 import hashlib
 import json
 import logging
-import difflib
 import os
 import re
 from datetime import datetime
@@ -42,7 +41,6 @@ _seen_unanswered = set()
 _unanswered_loaded = False
 
 _ANSWERS_FILE_NAME = "answers.txt"
-_FUZZY_MATCH_RATIO = 0.9
 # An answer written like this in answers.txt is never sent as it stands: the AI
 # writes a fresh one for every posting from the resume and that posting.
 PER_JOB = "[AI writes this for each job]"
@@ -180,16 +178,9 @@ class AnswerBook:
         key = _question_key(question)
         if not key:
             return None
-        answer = self._by_key.get(key)
-        if answer is None:
-            best, best_ratio = "", 0.0
-            for candidate, candidate_answer in self._by_key.items():
-                ratio = difflib.SequenceMatcher(None, key, candidate).ratio()
-                if ratio > best_ratio:
-                    best, best_ratio = candidate_answer, ratio
-            if best_ratio >= _FUZZY_MATCH_RATIO:
-                answer = best
-        return answer or None
+        # Exact normalised key only: a near match ("python" vs "pyspark") would
+        # submit the answer written for a different question.
+        return self._by_key.get(key) or None
 
     def blank_questions(self) -> List[str]:
         return [questions[0] for questions, answer in self.entries if not answer]
@@ -218,11 +209,12 @@ class AnswerBook:
             shown = " | options: %s" % (list(options[:_LISTED_OPTIONS]),)
             if len(options) > _LISTED_OPTIONS:
                 shown += " and %d more" % (len(options) - _LISTED_OPTIONS)
+        # Every part is flattened to one line, so no text can end the comment and start its own Q:/A:.
         block = "\n# %s%s | %s%s\nQ: %s\nA:\n" % (
             datetime.now().strftime("%Y-%m-%d %H:%M"),
-            where,
-            reason,
-            shown,
+            " ".join(str(where).split()),
+            " ".join(str(reason).split()),
+            " ".join(shown.split()),
             " ".join(question.split()),
         )
         try:
@@ -324,6 +316,9 @@ _NOT_FOR_JUDGEMENT = re.compile(
     r"|passport number|ssn|social security|bank|account number)\b",
     re.I,
 )
+
+_PASSPORT_DETAIL = re.compile(r"\b(number|no|id|expir\w*|issu\w*|valid\w*|date)\b")
+_NAMED_SKILL = re.compile(r"\b(total|overall) experience (in|with|on|of) (?!years?\b)\w")
 
 _SKILL_YEARS_RE = re.compile(
     r"(how many years|years of (experience|exp)\b|relevant experience"
@@ -500,7 +495,8 @@ class AnswerEngine:
                 text = ""
             updated = assist.fill_answer(text, question, answer, note) if key in self.book._by_key else None
             if updated is None:
-                updated = text + "\n# %s\nQ: %s\nA: %s\n" % (note, " ".join(question.split()), answer)
+                updated = text + "\n# %s\nQ: %s\nA: %s\n" % (
+                    " ".join(note.split()), " ".join(question.split()), " ".join(answer.split()))
             try:
                 os.makedirs(os.path.dirname(self.book.path) or ".", exist_ok=True)
                 with open(self.book.path, "w", encoding="utf-8") as handle:
@@ -757,6 +753,12 @@ class AnswerEngine:
         ]
         for phrases, field_name, grounding in mappings:
             if not any(phrase in normalised_question for phrase in phrases):
+                continue
+            if field_name == "has_passport" and _PASSPORT_DETAIL.search(normalised_question):
+                # The profile says whether you hold one, not its number or dates.
+                return AnswerResolution.abstain("identity_detail:passport")
+            if field_name == "total_experience_years" and _NAMED_SKILL.search(normalised_question):
+                # "Total experience in Kafka" asks about one skill, not your career.
                 continue
             value = getattr(self.profile, field_name)
             if value is None or value == "":

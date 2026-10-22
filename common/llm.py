@@ -78,8 +78,18 @@ class LLMClient:
 
 
 class ClaudeCLIClient(LLMClient):
+    executable = "claude"
+    label = "Claude CLI"
+
     def __init__(self, settings: Optional[Settings] = None):
         self.settings = settings or Settings()
+
+    def _command(self, request: str, image: Optional[Path]) -> List[str]:
+        # Read is the only tool it may use, and only inside the screenshot's folder.
+        tool_args: List[str] = []
+        if image is not None:
+            tool_args = ["--allowedTools=Read", "--add-dir=%s" % image.parent]
+        return ["claude", "-p", request] + tool_args
 
     def available(self) -> bool:
         """Report whether the claude executable can be found.
@@ -89,10 +99,11 @@ class ClaudeCLIClient(LLMClient):
         scoring. The cause was never identified, so this records what the lookup
         actually saw rather than leaving the next occurrence equally opaque.
         """
-        found = shutil.which("claude")
+        found = shutil.which(self.executable)
         if found is None:
             logger.warning(
-                "claude executable not found; PATH=%s",
+                "%s executable not found; PATH=%s",
+                self.executable,
                 os.environ.get("PATH", "<unset>"),
             )
             return False
@@ -121,12 +132,9 @@ class ClaudeCLIClient(LLMClient):
             "%s\n\nRequired JSON shape:\n%s\n\n"
             "Reply with ONE valid JSON object and nothing else."
         ) % (prompt, schema_hint)
-        # Read is the only tool it may use, and only inside the screenshot's folder.
         # Without a closed stdin the CLI waits 3 seconds for piped input on every call.
         extra: Dict[str, Any] = {"stdin": subprocess.DEVNULL}
-        tool_args: List[str] = []
         if image is not None:
-            tool_args = ["--allowedTools=Read", "--add-dir=%s" % image.parent]
             extra["cwd"] = str(image.parent)
         for attempt in range(2):
             request = full_prompt
@@ -134,7 +142,7 @@ class ClaudeCLIClient(LLMClient):
                 request += "\nYour prior reply could not be parsed. Reply with JSON only."
             try:
                 completed = subprocess.run(
-                    ["claude", "-p", request] + tool_args,
+                    self._command(request, image),
                     capture_output=True,
                     text=True,
                     timeout=self.settings.llm_timeout_s,
@@ -145,17 +153,18 @@ class ClaudeCLIClient(LLMClient):
                 if isinstance(output, bytes):
                     output = output.decode("utf-8", errors="replace")
                 logger.warning(
-                    "Claude CLI timed out; output=%r", _snippet(output)
+                    "%s timed out; output=%r", self.label, _snippet(output)
                 )
                 return None
             except OSError as error:
-                logger.warning("Claude CLI could not be run: %s", error)
+                logger.warning("%s could not be run: %s", self.label, error)
                 return None
 
             combined = completed.stdout or completed.stderr or ""
             if completed.returncode != 0:
                 logger.warning(
-                    "Claude CLI exited with code %s; output=%r",
+                    "%s exited with code %s; output=%r",
+                    self.label,
                     completed.returncode,
                     _snippet(combined),
                 )
@@ -165,11 +174,25 @@ class ClaudeCLIClient(LLMClient):
             if parsed is not None:
                 return parsed
             logger.warning(
-                "Claude CLI returned unparseable JSON (attempt %d); output=%r",
+                "%s returned unparseable JSON (attempt %d); output=%r",
+                self.label,
                 attempt + 1,
                 _snippet(completed.stdout),
             )
         return None
+
+
+class KiroCLIClient(ClaudeCLIClient):
+    executable = "kiro-cli"
+    label = "Kiro CLI"
+
+    def _command(self, request: str, image: Optional[Path]) -> List[str]:
+        # No tools for text-only calls; only file reading when a screenshot is attached.
+        trust = "--trust-tools=fs_read" if image is not None else "--trust-tools="
+        command = ["kiro-cli", "chat", "--no-interactive", trust]
+        if self.settings.llm_model:
+            command += ["--model", self.settings.llm_model]
+        return command + [request]
 
 
 class AnthropicClient(LLMClient):
@@ -263,6 +286,15 @@ def build_client(settings: Settings) -> LLMClient:
             return cli_client
         logger.warning(
             "Requested Claude CLI backend is unavailable; falling back to NullClient"
+        )
+        return NullClient()
+
+    if settings.llm_backend == LLMBackend.KIRO_CLI:
+        kiro_client = KiroCLIClient(settings)
+        if kiro_client.available():
+            return kiro_client
+        logger.warning(
+            "Requested Kiro CLI backend is unavailable; falling back to NullClient"
         )
         return NullClient()
 
@@ -546,7 +578,8 @@ def resolve_answer(
 
     if response.get("can_answer") is not True:
         stated_reason = response.get("answer") or response.get("grounded_in")
-        reason = stated_reason.strip() if isinstance(stated_reason, str) else "llm_abstained"
+        # One line: the reason is written into answers.txt, where a line break could start a fake Q:/A:.
+        reason = " ".join(stated_reason.split()) if isinstance(stated_reason, str) else "llm_abstained"
         return _abstain(question, reason or "llm_abstained")
 
     answer_value = response.get("answer")
@@ -738,6 +771,7 @@ def judge_answer(
 __all__ = [
     "AnthropicClient",
     "ClaudeCLIClient",
+    "KiroCLIClient",
     "LLMClient",
     "NullClient",
     "build_client",

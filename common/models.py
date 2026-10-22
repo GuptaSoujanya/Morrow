@@ -269,6 +269,7 @@ class AnswerMode:
 
 class LLMBackend:
     CLAUDE_CLI = "claude-cli"
+    KIRO_CLI = "kiro-cli"
     ANTHROPIC = "anthropic"
     NONE = "none"
 
@@ -346,6 +347,11 @@ class Settings:
     pages_per_keyword: int = 3
 
     headless: bool = False
+    # A real, visible-to-the-site Chrome window placed off-screen, so a run
+    # works in the background without one popping up. Headless is no
+    # substitute: Naukri never serves its login form to headless Chrome, and
+    # headless Chrome on macOS cannot read the profile's saved sign-ins.
+    background: bool = False
     dry_run: bool = False
 
     llm_backend: str = LLMBackend.CLAUDE_CLI
