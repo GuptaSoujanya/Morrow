@@ -223,7 +223,14 @@ verified login and saved browser session as the apply run. It spends **none** of
 ```bash
 python3 -m naukri_bot.update_profile --dry-run   # log in, open the editor, read it, change nothing
 python3 -m naukri_bot.update_profile             # toggle the dot once, right now
+python3 -m naukri_bot.update_profile --review    # toggle, then the Playwright agent checks the whole profile
+python3 -m linkedin_bot.update_profile --dry-run # LinkedIn: sign in, open the profile, change nothing
+python3 -m linkedin_bot.update_profile           # LinkedIn: the agent brings headline, About, Experience, Skills up to date
 ```
+
+`--review` and the LinkedIn profile bot use the same Playwright browser agent as the job boards:
+it compares the profile with your resume facts, fixes what is missing or out of date (never inventing
+anything), and saves. On LinkedIn it switches off "share with network" first, so nothing is posted.
 
 The first run from a fresh browser profile is the only one that needs you at the keyboard:
 Naukri sends an OTP to your registered mobile or email, and the run keeps the Chrome window open
@@ -476,14 +483,22 @@ python3 -m sites_bot.browser_agent --url "https://careers.acme.com" --task "find
 
 A task needs Node (for `npx @playwright/mcp`) and the `claude` command on `PATH`.
 
-### Other job boards: Hirist, Instahyre
+### Other job boards: Hirist, Instahyre, Cutshort, Wellfound
+
+Each board has its own bot, like `naukri_bot`:
 
 ```bash
-python3 -m sites_bot.platforms --dry-run          # boards in PLATFORMS: collect, rank, open each job, click nothing
-python3 -m sites_bot.platforms --site hirist --limit 10
+python3 -m hirist_bot --dry-run                   # collect, rank, open each job, click nothing
+python3 -m hirist_bot --limit 10                  # apply
+python3 -m hirist_bot.update_profile              # refresh the Hirist profile, apply nowhere
+python3 -m instahyre_bot --update-profile         # refresh the profile, then apply
+python3 -m cutshort_bot.update_profile --create-profile   # no session: sign in or sign up, build the profile
+python3 -m cutshort_bot --dry-run
+python3 -m wellfound_bot --dry-run
+python3 -m sites_bot.platforms --site all --dry-run   # several boards in one run
 ```
 
-One loop serves every board, with the same facts, answers, ranking (`MIN_SCORE`, `MAX_DAYS_OLD`)
+The bots share one loop (`sites_bot/platforms.py`), with the same facts, answers, ranking (`MIN_SCORE`, `MAX_DAYS_OLD`)
 and records as Naukri. It reads the board's own job feed for your profile, then one search page per
 keyword, ranks the cards, opens each chosen job and clicks Apply. A one-click apply, or the board's
 own question form (answered from `data/` like a company site), counts as applied only when the job
@@ -502,8 +517,10 @@ python3 -m sites_bot.browser_agent --url "https://www.instahyre.com/candidate/on
   --task "Complete her candidate profile on this job site from the facts; upload the resume; never invent anything"
 ```
 
-Each board is one `Board` record at the top of `sites_bot/platforms.py`: its feed and search
-addresses, the pattern of its job links, and the words on its Apply and Applied buttons.
+What is board-specific lives in that bot's `board.py` (for example `hirist_bot/board.py`): one `Board`
+record with its feed and search addresses, profile page, the pattern of its job links, and the words on
+its Apply and Applied buttons. A new board is a new `<name>_bot/` package with the same five files, and
+one line in `BOARDS` in `sites_bot/platforms.py`.
 
 ### Cold emails to recruiters (drafts only)
 
@@ -557,11 +574,18 @@ The report itself is not written by a model; the AI's file edits it lists carry 
 ## 💼 LinkedIn: one post a day
 
 `linkedin_bot` finds a fresh article on your topics, writes a short reaction in
-your own words, draws a plain 1200x627 image card, and publishes the two through
-a logged-in Chrome session. One post a day, never two.
+your own words, draws a 1200x627 image card and a swipeable PDF carousel, and
+publishes them through a logged-in Chrome session. One post a day, never two.
+
+The post opens with a one-line hook and ends with a question to readers. The
+carousel (`data/linkedin/drafts/<date>.pdf`, 1080x1350 pages) has a cover, 4 to 7
+slides that explain the idea step by step, and a closing "Your turn" slide with
+that question; it is uploaded as a LinkedIn document. If the upload fails before
+Post is clicked, the image card goes out instead. `LINKEDIN_CAROUSEL=false`
+turns the carousel off.
 
 ```bash
-python3 -m linkedin_bot --dry-run      # article + post + card printed, no browser
+python3 -m linkedin_bot --dry-run      # article + post + card; text saved to data/linkedin/drafts/<date>.txt, no browser
 python3 -m linkedin_bot --propose      # also saves data/linkedin/drafts/<date>.md and sends it on Telegram
 python3 -m linkedin_bot --post         # publish today's draft (or a given file: --post path.md)
 python3 -m linkedin_bot --if-due       # what the launchd agent runs
@@ -620,6 +644,111 @@ does not implement. And LinkedIn changes its markup often: every selector the
 publisher uses lives in the tuples at the top of `linkedin_bot/publisher.py`,
 in the order they are tried, so a breakage is a one-tuple fix.
 
+## 🌅 Morning pipeline: one command for the day
+
+```bash
+python3 -m pipeline              # run (or continue) today's pipeline
+python3 -m pipeline continue     # same; stages done today are skipped, failed ones retried
+python3 -m pipeline status       # today's checkpoint
+python3 -m pipeline learn --done # mark today's study day finished
+python3 -m pipeline check        # check the study material: 90 days, course, resume files, today's briefing, links
+python3 -m pipeline --only learn --only brief --date 2026-10-23   # write the study material for a date
+```
+
+Order: `learn` (today's study day), then `profile:naukri` (headline toggle plus `--review`),
+`profile:linkedin` (`linkedin_bot.update_profile`), `profile:<board>` (each board's own
+`<board>_bot.update_profile --create-profile`, through the Playwright browser agent: a board with
+no session gets its account and profile created first), `apply:naukri`, `apply:<board>`. Next to those browser
+stages, in parallel, the AI agents run (`--agents N` at a time, claude and kiro CLIs with web search):
+`research:resume` and the briefing agents `brief:goal`, `brief:system-design`, `brief:papers`,
+`brief:tech-news`, `brief:companies`. Each agent writes its file into `.research/daily/<date>/`
+the moment it finishes, and the folder's `README.md` (agent status, 90-day progress chart,
+applications-per-day chart) is rewritten after every agent. `.research/TODAY.md` links today's folder.
+
+Each briefing agent is a claude + kiro bridge: both CLIs get the same brief at once and search the
+web on their own, each draft is checked, and claude merges the good drafts into one file, keeping
+the strongest, newest papers, news and companies and dropping duplicates and unconfirmed links. The
+file ends with *Researched by claude and kiro; merged by claude.* If one CLI fails, the other's draft
+is used; if the merge fails its check, claude's draft is kept. `--cli claude` or `--cli kiro` (or
+`PIPELINE_AI_CLI`) uses one CLI only; the study day and resume notes always use one (claude first).
+
+| File | What is in it |
+| --- | --- |
+| `01-goal.md` | today's goal, a mindmap of the concepts, a gantt chart of the 2 hours, key ideas, self-check Q&A |
+| `02-system-design.md` | architecture flowchart, sequence diagram, capacity table, trade-offs, real-company examples |
+| `03-papers.md` | 5 papers from the last 2 years that industry builds on (2 for today's topic, 3 most talked-about), each with problem, idea, results, who uses it, what to read |
+| `04-tech-news.md` | the week's AI / tools / research / infra / jobs news with links and a pie chart |
+| `05-companies.md` | companies hiring that fit the resume, careers links, a mindmap and talking points |
+
+An answer without its graphs or links is rejected and nothing is written, so the stage stays failed.
+Bare URLs and course paths in what the CLI writes are turned into markdown links, and the links in
+`today.md` are moved so they work from its folder. At the end of a run the pipeline checks the day's
+material (`pipeline/content.py`, the same check as `python3 -m pipeline check`) and logs anything
+missing or broken; `tests/research/` runs that check over the real `.research/` files.
+
+The day's notes end with **From the course** (`pipeline/course.py`): the `course/` sections the day
+links, quoted in full (a link to a whole chapter quotes the section closest to that part's topic), so
+the day's reading is in one file. It also names one optional chapter the plan never links (DSA,
+full-stack, behavioural), spread over the 90 days so every course chapter comes up. The check also
+covers the course: every page is in the sidebar, every link and heading anchor works, and every
+system-design and ML/GenAI chapter is used by some week.
+
+`.memory/` is the checkpoint: `progress.json` (readable copy `.memory/<date>.md`) records every stage
+(status, attempts, files written) and the companies applied to that day, each linked to its job.
+`.memory/profiles.json` tracks every board profile the bots created or updated (link, created, last
+updated, history), and each `<date>.md` shows them as a table of links. A stage is done only while
+its files still exist; when every stage is done the day is marked **DONE** with a finish time, and
+another run that day only prints the checkpoint. Options: `--fresh` starts the day over, `--only
+<stage|group>` / `--skip` (groups: `profile`, `apply`, `brief`, `research`, `learn`), `--redo` (run the
+`--only` stages again and keep the rest of the day), `--dry-run`,
+`--cli both|claude|kiro` (or `PIPELINE_AI_CLI`; default both).
+
+### Bots side by side, and in Docker
+
+```bash
+python3 -m pipeline run --bots 4          # up to 4 sites at once on your Mac (or PIPELINE_BOTS=4)
+docker compose build                      # the image every bot's container uses
+python3 -m pipeline run --containers      # every site at once, each in its own container
+```
+
+By default the browser stages run one after another. With `--bots N` (`pipeline/lanes.py`) each
+site is a lane: its profile stage, then its apply stage, and up to N lanes run at the same time while
+the AI agents run next to them. Every stage runs as its own `python3 -m <bot>` process with its own
+Chrome profile: Naukri and LinkedIn keep theirs, each board gets `<BROWSER_PROFILE_DIR>/../lanes/<board>`,
+copied from the Naukri profile the first time. Each line of a lane's output is prefixed with the site.
+
+With `--containers` (or `PIPELINE_CONTAINERS=1`) every site runs at the same time in its own Docker
+container (`docker-compose.yml` has one service per site: naukri, linkedin, hirist, instahyre,
+cutshort, wellfound). Each container has its own Chromium, virtual screen and Chrome profile in
+`data/docker/browser/`. Chrome fills that screen, and the screen is shown in a web page:
+
+| Site | Watch at |
+|---|---|
+| naukri | http://localhost:6081/vnc.html |
+| linkedin | http://localhost:6082/vnc.html |
+| hirist | http://localhost:6083/vnc.html |
+| instahyre | http://localhost:6084/vnc.html |
+| cutshort | http://localhost:6085/vnc.html |
+| wellfound | http://localhost:6086/vnc.html |
+
+The pipeline opens `data/docker/watch.html`, one page with every running bot's screen side by side
+(`--no-watch` skips it). The pipeline itself stays on your Mac, so the briefing agents still use claude
+and kiro and only one process writes `.memory/`. The containers share the ledger with your Mac through
+the mounted repo, so they set `LEDGER_JOURNAL_MODE=DELETE` (SQLite's WAL does not work across Docker's
+file sharing).
+
+A macOS Chrome profile does not open in Linux Chromium, so sign in once per site in its container:
+
+```bash
+docker compose run --rm --service-ports hirist docker/login.sh
+# open http://localhost:6083/vnc.html, sign in, close the window; repeat for each site
+```
+
+The claude CLI in the containers needs `CLAUDE_CODE_OAUTH_TOKEN` (`claude setup-token` on your Mac)
+or `ANTHROPIC_API_KEY`, in your shell or `.env`. kiro-cli is not in the image, so the bots there answer
+screening questions with claude. The older all-in-one container still works:
+`docker compose run --rm --service-ports bots python3 -m pipeline run --bots 4` (screen on port 6080).
+
 ## 🔧 2026 Naukri.com Update
 
 The bot has been updated to work with Naukri.com's 2026 redesign. Key changes:
@@ -640,6 +769,7 @@ Naukri-autoapply-bot/
 ├── .gitignore            # Files to exclude from git
 ├── requirements.txt      # Python dependencies
 ├── README.md             # This file
+├── docker-compose.yml    # one container per bot (docker/: image, virtual screen, noVNC, login)
 │
 ├── common/               # code every bot shares
 │   ├── models.py         #   shared dataclasses; every other module imports from here
@@ -671,10 +801,19 @@ Naukri-autoapply-bot/
 │   ├── accounts.py       #   career-site sign-in / sign-up (Google, then email + password)
 │   ├── page_brain.py     #   no form on a company page: removed posting, or ask the model what to click
 │   ├── browser_agent.py  #   stuck company site: Claude Code drives this Chrome via Playwright MCP
-│   ├── platforms.py      #   other job boards: Hirist, Instahyre (python3 -m sites_bot.platforms)
+│   ├── board.py          #   the Board record each board bot fills in
+│   ├── platforms.py      #   the loop every board bot runs (several at once: python3 -m sites_bot.platforms)
 │   └── cold_email.py     #   recruiter emails as drafts, never sent (python3 -m sites_bot.cold_email)
 │
-├── linkedin_bot/         # one LinkedIn post a day (python3 -m linkedin_bot)
+├── hirist_bot/           # Hirist (python3 -m hirist_bot; .update_profile for the profile only)
+│   ├── board.py          #   Hirist's pages, links and button words
+│   ├── cli.py            #   apply run
+│   └── update_profile.py #   profile refresh through the browser agent
+├── instahyre_bot/        # Instahyre, same layout
+├── cutshort_bot/         # Cutshort, same layout
+├── wellfound_bot/        # Wellfound, same layout
+│
+├── linkedin_bot/         # one LinkedIn post a day (python3 -m linkedin_bot); .update_profile for the profile
 │   ├── config.py         #   LINKEDIN_* keys from the same .env
 │   ├── news.py           #   RSS / Atom / Hacker News, scored by your topics
 │   ├── writer.py         #   your VOICE facts + the slop lint; edit VOICE when your work changes

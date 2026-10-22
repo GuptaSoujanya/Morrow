@@ -71,3 +71,9 @@ reports/
 
 # Agent session continuation state (local tooling, not project code)
 .omo/
+
+# The morning pipeline's day checkpoint (python3 -m pipeline)
+.memory/
+# HOUND volatile scanner artifacts
+hunt/results/
+.kiro/agents/
