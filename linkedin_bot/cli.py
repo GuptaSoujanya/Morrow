@@ -4,17 +4,18 @@ import argparse
 import json
 import logging
 import sys
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Iterator, List, Optional, Tuple
 
 from common.run import EXIT_CONFIG, EXIT_FAILED, EXIT_LOGIN, EXIT_OK, configure_logging, keep_log
 from common.run import send_alert
 
 from . import config as config_module
 from . import publisher
-from .card import render_card
+from .card import render_card, render_carousel
 from .config import LinkedInSettings, parse_post_time
 from .news import pick_article
 from .writer import Draft, render_text, write_post
@@ -37,6 +38,7 @@ class Prepared:
     draft: Draft
     card: Path
     text: str
+    document: Optional[Path] = None
 
 
 # --- state --------------------------------------------------------------------
@@ -45,8 +47,13 @@ class Prepared:
 def load_state(path: Path) -> Dict[str, Any]:
     try:
         state = json.loads(path.read_text(encoding="utf-8"))
-    except (FileNotFoundError, json.JSONDecodeError):
+    except FileNotFoundError:
         state = {}
+    except json.JSONDecodeError as exc:
+        # Reading a damaged file as "nothing posted" would post twice in a day.
+        raise ValueError("%s is not valid JSON (%s); fix or remove it" % (path, exc)) from exc
+    if not isinstance(state, dict):
+        raise ValueError("%s does not hold a JSON object" % path)
     state.setdefault("days", {})
     state.setdefault("posted", [])
     state.setdefault("skipped", [])
@@ -96,13 +103,20 @@ def draft_path(settings: LinkedInSettings, day: str) -> Path:
     return Path(settings.draft_dir) / ("%s.md" % day)
 
 
-def write_draft(path: Path, draft: Draft, card: Path) -> Path:
+def _one_line(value: str) -> str:
+    """Every line break splitlines() knows, carriage returns included, becomes a space."""
+    return " ".join(value.splitlines()).strip()
+
+
+def write_draft(path: Path, draft: Draft, card: Path, document: Optional[Path] = None) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     front = [
         "---",
-        "source_title: %s" % draft.source_title.replace("\n", " "),
-        "source_url: %s" % draft.source_url,
-        "card: %s" % card,
+        "source_title: %s" % _one_line(draft.source_title),
+        "source_url: %s" % _one_line(draft.source_url),
+        "card: %s" % _one_line(str(card)),
+        "document: %s" % _one_line(str(document or "")),
+        "document_title: %s" % _one_line(draft.card_line),
         "generated_at: %s" % datetime.now().isoformat(timespec="seconds"),
         "---",
         "",
@@ -150,12 +164,25 @@ def prepare(settings: LinkedInSettings, day: str) -> Prepared:
     card = render_card(
         draft.card_line, article.source, Path(settings.draft_dir) / ("%s.png" % day)
     )
-    return Prepared(draft=draft, card=card, text=render_text(draft))
+    document = None  # type: Optional[Path]
+    if settings.carousel and draft.slides:
+        document = render_carousel(
+            draft.card_line,
+            draft.slides,
+            draft.question,
+            Path(settings.draft_dir) / ("%s.pdf" % day),
+            subtitle=draft.subtitle,
+        )
+    text = render_text(draft)
+    text_path = Path(settings.draft_dir) / ("%s.txt" % day)
+    text_path.write_text(text + "\n", encoding="utf-8")
+    logger.info("Post text saved to %s", text_path)
+    return Prepared(draft=draft, card=card, text=text, document=document)
 
 
-def post_with_browser(
-    settings: LinkedInSettings, text: str, card: Path
-) -> publisher.PublishResult:
+@contextmanager
+def signed_in_browser(settings: LinkedInSettings) -> Iterator[Any]:
+    """A Chrome signed in to LinkedIn (waiting for a person on a security check); closed after."""
     from common.browser import create_driver
 
     driver = create_driver(settings.naukri)
@@ -178,12 +205,32 @@ def post_with_browser(
                 raise _NeedsHuman(login.reason)
             raise PosterError("login failed: %s" % login.reason)
         logger.info("Login verified.")
-        return publisher.publish(driver, text, str(card), settings.naukri.screenshot_dir)
+        yield driver
     finally:
         try:
             driver.quit()
         except Exception as exc:  # teardown must never mask the real outcome
             logger.debug("Ignoring driver teardown error: %s", exc)
+
+
+def post_with_browser(
+    settings: LinkedInSettings,
+    text: str,
+    card: Path,
+    document: Optional[Path] = None,
+    document_title: str = "",
+) -> publisher.PublishResult:
+    with signed_in_browser(settings) as driver:
+        if document is not None:
+            result = publisher.publish(
+                driver, text, str(card), settings.naukri.screenshot_dir,
+                document_path=str(document), document_title=document_title,
+            )
+            if result.ok or result.stage != "document":
+                return result
+            logger.warning("Carousel upload failed before Post (%s); posting the image card instead", result.detail)
+            publisher.discard_composer(driver)
+        return publisher.publish(driver, text, str(card), settings.naukri.screenshot_dir)
 
 
 def record_posted(
@@ -261,6 +308,8 @@ def _show(prepared: Prepared) -> None:
     print("\n--- draft ---------------------------------------------------------")
     print(prepared.text)
     print("--- card: %s" % prepared.card)
+    if prepared.document is not None:
+        print("--- carousel: %s (%d slides + cover + question)" % (prepared.document, len(prepared.draft.slides)))
     print("--- source: %s\n" % prepared.draft.source_title)
 
 
@@ -272,7 +321,7 @@ def _propose(settings: LinkedInSettings, day: str, save: bool) -> Tuple[int, Opt
         return EXIT_FAILED, None
     _show(prepared)
     if save:
-        path = write_draft(draft_path(settings, day), prepared.draft, prepared.card)
+        path = write_draft(draft_path(settings, day), prepared.draft, prepared.card, prepared.document)
         logger.info("Draft saved to %s", path)
         send_alert(
             settings.naukri,
@@ -295,6 +344,11 @@ def _post(settings: LinkedInSettings, day: str, path_arg: Optional[str]) -> int:
         url = meta.get("source_url", "")
         title = meta.get("source_title", "")
         card = Path(meta.get("card", "")) if meta.get("card") else None
+        document = Path(meta["document"]) if meta.get("document") else None
+        if document is not None and not document.is_file():
+            logger.warning("Carousel %s is missing; posting with the image card", document)
+            document = None
+        document_title = meta.get("document_title", "")
         if not text or card is None or not card.is_file():
             logger.error("Draft %s is missing its text or its card image", source_path)
             return EXIT_FAILED
@@ -306,7 +360,8 @@ def _post(settings: LinkedInSettings, day: str, path_arg: Optional[str]) -> int:
             logger.error("%s", exc)
             return EXIT_FAILED
         _show(prepared)
-        source_path = write_draft(draft_path(settings, day), prepared.draft, prepared.card)
+        source_path = write_draft(draft_path(settings, day), prepared.draft, prepared.card, prepared.document)
+        document, document_title = prepared.document, prepared.draft.card_line
         text, url, title, card = (
             prepared.text,
             prepared.draft.source_url,
@@ -319,7 +374,10 @@ def _post(settings: LinkedInSettings, day: str, path_arg: Optional[str]) -> int:
         return EXIT_FAILED
 
     try:
-        result = post_with_browser(settings, text, card)
+        if document is not None:
+            result = post_with_browser(settings, text, card, document, document_title)
+        else:
+            result = post_with_browser(settings, text, card)
     except _NeedsHuman as exc:
         logger.error("LinkedIn login needs a human: %s", exc)
         send_alert(settings.naukri, "LinkedIn post: login needs a human (%s)" % exc)

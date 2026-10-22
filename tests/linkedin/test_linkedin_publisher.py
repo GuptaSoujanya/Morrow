@@ -232,3 +232,19 @@ def test_manual_wait_ends_when_the_feed_appears_or_the_window_closes():
     assert publisher.wait_for_manual_login(driver, timeout_s=0.01) is True
     driver.window_handles = []
     assert publisher.wait_for_manual_login(driver, timeout_s=5) is False
+
+
+def test_a_missing_carousel_fails_at_the_document_stage_without_clicking_post(card, tmp_path):
+    driver, _, post_button = _browser(confirm="toast")
+    result = publisher.publish(driver, POST, card, document_path=str(tmp_path / "none.pdf"))
+    assert (result.ok, result.stage) == (False, "document")
+    assert post_button.clicks == 0
+
+
+def test_no_document_button_fails_at_the_document_stage_without_clicking_post(card, tmp_path):
+    deck = tmp_path / "deck.pdf"
+    deck.write_bytes(b"%PDF-1.4")
+    driver, _, post_button = _browser(confirm="toast")
+    result = publisher.publish(driver, POST, card, document_path=str(deck))
+    assert (result.ok, result.stage) == (False, "document")
+    assert post_button.clicks == 0

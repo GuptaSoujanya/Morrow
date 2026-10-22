@@ -1,9 +1,10 @@
 """Find something worth reacting to: RSS, Atom and Hacker News, scored by topic."""
 
+import ipaddress
 import json
 import logging
 import re
-import xml.etree.ElementTree as ET
+import socket
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
@@ -12,6 +13,8 @@ from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 import requests
 from bs4 import BeautifulSoup
+# Feeds are untrusted XML: defusedxml refuses entity expansion and external DTDs.
+from defusedxml import ElementTree as ET
 
 from .config import LinkedInSettings
 
@@ -24,6 +27,8 @@ USER_AGENT = (
 FEED_TIMEOUT_S = 15
 ARTICLE_TIMEOUT_S = 20
 MAX_TEXT_CHARS = 6000
+# Article pages are read only up to this size.
+MAX_ARTICLE_BYTES = 2 * 1024 * 1024
 MIN_TEXT_CHARS = 600
 MAX_FETCHES = 5
 
@@ -83,7 +88,7 @@ def _strip_html(value: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
-def _text(node: Optional[ET.Element]) -> str:
+def _text(node: Optional[Any]) -> str:
     return (node.text or "").strip() if node is not None else ""
 
 
@@ -141,7 +146,10 @@ def parse_atom(body: str) -> List[Article]:
 
 def parse_hn(payload: Dict[str, Any]) -> List[Article]:
     articles = []  # type: List[Article]
-    for hit in payload.get("hits", []):
+    hits = payload.get("hits") if isinstance(payload, dict) else None
+    for hit in hits if isinstance(hits, list) else []:
+        if not isinstance(hit, dict):
+            continue
         url = (hit.get("url") or "").strip()
         title = (hit.get("title") or "").strip()
         if not url or not title:
@@ -232,27 +240,61 @@ def fetch_candidates(
             logger.warning("Skipping feed %s (%s): %s", feed_url, type(exc).__name__, exc)
             continue
         for article in items:
-            key = normalise_url(article.url)
+            try:
+                key = normalise_url(article.url)
+            except ValueError as exc:
+                # One malformed link (say "http://[::1") must not drop every feed.
+                logger.warning("Skipping item with bad URL %r: %s", article.url, exc)
+                continue
             if not key or key in seen:
                 continue
-            if article.published is not None and article.published < oldest:
+            # An item with no date cannot be shown to be fresh, so it is not.
+            if article.published is None or article.published < oldest:
                 continue
             seen.add(key)
             article.url = key
             article.score = score_article(article, settings.topics, now)
             candidates.append(article)
-    candidates.sort(key=lambda a: (a.score, a.published or oldest), reverse=True)
+    candidates.sort(key=lambda a: (a.score, a.published), reverse=True)
     return candidates
+
+
+def _public_web_url(url: str) -> bool:
+    """http(s) to a host that is not this machine or the local network."""
+    try:
+        parts = urlparse(url)
+    except ValueError:
+        return False
+    if parts.scheme not in ("http", "https") or not parts.hostname:
+        return False
+    try:
+        addresses = {info[4][0] for info in socket.getaddrinfo(parts.hostname, None)}
+    except (OSError, UnicodeError):
+        return False
+    for address in addresses:
+        ip = ipaddress.ip_address(address.split("%")[0])
+        if not ip.is_global:
+            return False
+    return True
 
 
 def fetch_article_text(url: str) -> Tuple[str, str]:
     """(body text, site name); ("", "") when the page cannot be read."""
+    if not _public_web_url(url):
+        logger.warning("Not reading %s: only public http(s) pages are fetched", url)
+        return "", ""
     try:
-        response = requests.get(
-            url, timeout=ARTICLE_TIMEOUT_S, headers={"User-Agent": USER_AGENT}
-        )
-        response.raise_for_status()
-        soup = BeautifulSoup(response.text, "lxml")
+        with requests.get(
+            url, timeout=ARTICLE_TIMEOUT_S, headers={"User-Agent": USER_AGENT}, stream=True
+        ) as response:
+            response.raise_for_status()
+            # A redirect may point somewhere private; check where it landed too.
+            if not _public_web_url(response.url):
+                raise ValueError("redirected to %s" % response.url)
+            body = response.raw.read(MAX_ARTICLE_BYTES + 1, decode_content=True)
+            if len(body) > MAX_ARTICLE_BYTES:
+                raise ValueError("the page is over %d bytes" % MAX_ARTICLE_BYTES)
+        soup = BeautifulSoup(body, "lxml")
     except (requests.RequestException, ValueError) as exc:
         logger.warning("Could not read %s (%s): %s", url, type(exc).__name__, exc)
         return "", ""

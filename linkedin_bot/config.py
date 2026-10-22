@@ -45,6 +45,7 @@ class LinkedInSettings:
     feeds: List[str] = field(default_factory=list)
     post_time: str = "09:30"
     auto_post: bool = False
+    carousel: bool = True
     max_age_days: int = 3
     state_path: str = "data/linkedin/state.json"
     draft_dir: str = "data/linkedin/drafts"
@@ -108,6 +109,7 @@ def load_settings(
         "feeds": feeds,
         "post_time": os.getenv("LINKEDIN_POST_TIME", defaults.post_time).strip(),
         "auto_post": naukri_config._env_bool("LINKEDIN_AUTO_POST", defaults.auto_post),
+        "carousel": naukri_config._env_bool("LINKEDIN_CAROUSEL", defaults.carousel),
         "max_age_days": naukri_config._env_int(
             "LINKEDIN_MAX_AGE_DAYS", defaults.max_age_days
         ),

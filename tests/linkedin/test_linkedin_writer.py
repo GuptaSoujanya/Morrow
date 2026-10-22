@@ -18,6 +18,7 @@ ARTICLE = Article(
 )
 
 CLEAN = (
+    "Forty percent is a lot of disagreement for a grading system.\n\n"
     "I spent the morning with this study on grading agent runs, mostly because the "
     "numbers in it line up with a problem I have been chasing for months.\n\n"
     "The part that stuck: agreement between the judges dropped by about forty percent "
@@ -70,11 +71,11 @@ def test_headline_parrot_is_detected():
     assert not writer.parrots_headline(CLEAN, ARTICLE.title)
 
 
-def test_render_text_appends_hashtags_only_when_present():
+def test_render_text_puts_hashtags_above_the_url():
     draft = writer.Draft(text="body\n\nhttps://x.y", card_line="c", hashtags=[])
     assert writer.render_text(draft) == "body\n\nhttps://x.y"
     draft.hashtags = ["evals", "#agents"]
-    assert writer.render_text(draft).endswith("\n\n#evals #agents")
+    assert writer.render_text(draft) == "body\n\n#evals #agents\n\nhttps://x.y"
 
 
 class _Client:
@@ -130,3 +131,31 @@ def test_the_prompt_lists_the_rules_and_the_article():
     prompt = writer.build_prompt(ARTICLE, writer.VOICE)
     for needle in ("Never use", "em dashes", "game-changer", "card_line", ARTICLE.url, "WildClawBench"):
         assert needle in prompt
+
+
+GOOD_SLIDES = [{"title": "Point %d in a sentence" % i, "body": "One plain sentence about point %d." % i} for i in range(1, 6)]
+
+
+def _visual(**over):
+    fields = dict(text=CLEAN, card_line="c", slides=GOOD_SLIDES, question="How do you grade long runs?", subtitle="")
+    fields.update(over)
+    return writer.Draft(**fields)
+
+
+def test_good_slides_pass_the_visual_checks():
+    assert writer.check_visuals(_visual()) == []
+
+
+@pytest.mark.parametrize("over", [
+    {"slides": GOOD_SLIDES[:2]},
+    {"slides": [{"title": "A \u2014 dash", "body": "b"}] + GOOD_SLIDES[1:]},
+    {"question": "No question mark"},
+])
+def test_bad_slides_or_question_are_reported(over):
+    assert writer.check_visuals(_visual(**over))
+
+
+def test_a_post_with_bad_slides_falls_back_to_text_only():
+    client = _Client([{"post": CLEAN, "card_line": "Three judges beat one.", "slides": [], "question": ""}])
+    draft = writer.write_post(client, ARTICLE)
+    assert draft is not None and draft.slides == []

@@ -13,7 +13,7 @@ from linkedin_bot import cli
 from linkedin_bot.config import LinkedInSettings
 from linkedin_bot.writer import Draft
 
-TEXT = "A post.\n\nWith two paragraphs.\n\nhttps://example.com/a\n\n#evals"
+TEXT = "A post.\n\nWith two paragraphs.\n\n#evals\n\nhttps://example.com/a"
 
 
 def test_due_only_after_post_time_and_at_most_twice():

@@ -72,6 +72,32 @@ POST_BUTTON = (
     (By.CSS_SELECTOR, "button.share-actions__primary-action"),
     (By.XPATH, "//div[@role='dialog']//button[.//span[normalize-space()='Post']]"),
 )  # type: Tuple[Selector, ...]
+DOC_MORE = (
+    (By.CSS_SELECTOR, "button[aria-label='More']"),
+    (By.XPATH, ".//button[.//span[normalize-space()='More']]"),
+)  # type: Tuple[Selector, ...]
+DOC_ADD = (
+    (By.CSS_SELECTOR, "button[aria-label='Add a document']"),
+    (By.XPATH, ".//button[contains(@aria-label, 'document')]"),
+    (By.XPATH, ".//button[.//span[contains(normalize-space(), 'Add a document')]]"),
+)  # type: Tuple[Selector, ...]
+DOC_FILE_INPUT = (
+    (By.CSS_SELECTOR, "input[type='file'][accept*='pdf']"),
+    (By.CSS_SELECTOR, "input[type='file'][accept*='application']"),
+    (By.CSS_SELECTOR, "input[type='file']"),
+)  # type: Tuple[Selector, ...]
+DOC_TITLE = (
+    (By.CSS_SELECTOR, "input[id*='document-title']"),
+    (By.CSS_SELECTOR, "input[placeholder*='title' i]"),
+    (By.CSS_SELECTOR, "input[aria-label*='title' i]"),
+)  # type: Tuple[Selector, ...]
+DOC_DONE = (
+    (By.XPATH, "//div[@role='dialog']//button[.//span[normalize-space()='Done']]"),
+    (By.CSS_SELECTOR, "button[aria-label='Done']"),
+)  # type: Tuple[Selector, ...]
+DISCARD = (
+    (By.XPATH, "//button[.//span[normalize-space()='Discard']]"),
+)  # type: Tuple[Selector, ...]
 SUCCESS_TOAST = (
     (By.CSS_SELECTOR, "[data-test-artdeco-toast-item-type='success']"),
     (By.CSS_SELECTOR, ".artdeco-toast-item__message"),
@@ -90,6 +116,7 @@ LOGIN_WAIT_S = 45.0
 MANUAL_LOGIN_TIMEOUT_S = 300.0
 EDITOR_WAIT_S = 20.0
 IMAGE_WAIT_S = 30.0
+DOCUMENT_WAIT_S = 60.0
 VERIFY_WAIT_S = 30.0
 POLL_S = 2.0
 
@@ -274,19 +301,84 @@ def screenshot(driver: Any, directory: str = "data/screenshots") -> Optional[Pat
 
 
 def publish(
-    driver: Any, text: str, image_path: str, screenshot_dir: str = "data/screenshots"
+    driver: Any,
+    text: str,
+    image_path: str,
+    screenshot_dir: str = "data/screenshots",
+    document_path: str = "",
+    document_title: str = "",
 ) -> PublishResult:
-    """Compose, attach the image, post, and confirm. Never clicks Post twice."""
-    result = _publish(driver, text, image_path)
+    """Compose, attach the PDF carousel (or the image), post, and confirm.
+
+    Never clicks Post twice. A failure with stage "document" happened before
+    Post was clicked, so the caller may safely retry with the image instead.
+    """
+    result = _publish(driver, text, image_path, document_path, document_title)
     if not result.ok:
         logger.error("Publishing stopped at stage %r: %s", result.stage, result.detail)
         screenshot(driver, screenshot_dir)
     return result
 
 
-def _publish(driver: Any, text: str, image_path: str) -> PublishResult:
+def discard_composer(driver: Any) -> None:
+    """Close an unposted composer so the next attempt starts from a clean feed."""
+    try:
+        driver.switch_to.active_element.send_keys(Keys.ESCAPE)
+    except WebDriverException as exc:
+        logger.debug("Escape did not reach the composer: %s", exc)
+    human_pause(0.5, 1.0)
+    button = _find(driver, DISCARD)
+    if button is not None:
+        button.click()
+        human_pause(0.5, 1.0)
+
+
+def _attach_document(driver: Any, dialog: Any, document: Path, title: str) -> Optional[str]:
+    """Upload the PDF and name it; returns a failure detail, or None on success."""
+    add = _find(dialog, DOC_ADD)
+    if add is None:
+        more = _find(dialog, DOC_MORE)
+        if more is not None:
+            more.click()
+            human_pause(0.8, 1.5)
+            add = _find(driver, DOC_ADD)
+    if add is None:
+        return "no 'Add a document' button in the composer"
+    add.click()
+    human_pause(1.0, 2.0)
+    file_input = _find(driver, DOC_FILE_INPUT, visible=False)
+    if file_input is None:
+        return "no file input for the document"
+    file_input.send_keys(str(document.resolve()))
+    title_input = _wait_for(driver, DOC_TITLE, DOCUMENT_WAIT_S)
+    if title_input is None:
+        return "the document title box never appeared after the upload"
+    title_input.click()
+    title_input.send_keys(Keys.COMMAND, "a")
+    title_input.send_keys(title[:58])
+    human_pause(0.5, 1.0)
+    done = None
+    deadline = time.monotonic() + DOCUMENT_WAIT_S
+    while time.monotonic() < deadline:
+        done = _find(driver, DOC_DONE)
+        if done is not None and _enabled(done):
+            break
+        time.sleep(POLL_S)
+    if done is None or not _enabled(done):
+        return "the document dialog never let us press Done"
+    done.click()
+    human_pause(1.0, 2.0)
+    return None
+
+
+def _publish(
+    driver: Any, text: str, image_path: str, document_path: str = "", document_title: str = ""
+) -> PublishResult:
     image = Path(image_path)
-    if not image.is_file():
+    document = Path(document_path) if document_path else None
+    if document is not None and not document.is_file():
+        return PublishResult(False, "document", "carousel not found: %s" % document)
+    if document is None and not image.is_file():
         return PublishResult(False, "image", "card not found: %s" % image)
 
     if not safe_get(driver, FEED_URL):
@@ -317,6 +409,15 @@ def _publish(driver: Any, text: str, image_path: str) -> PublishResult:
             return PublishResult(False, "compose", "editor text never matched the draft")
         _clear(editor)
 
+    if document is not None:
+        problem = _attach_document(driver, dialog, document, document_title or document.stem)
+        if problem is not None:
+            return PublishResult(False, "document", problem)
+        dialog = _wait_for(driver, DIALOG, EDITOR_WAIT_S) or dialog
+        if _wait_for(dialog, EDITOR, EDITOR_WAIT_S) is None:
+            return PublishResult(False, "document", "the editor did not come back after the document step")
+        return _click_post_and_verify(driver, text)
+
     file_input = _find(dialog, FILE_INPUT, visible=False)
     if file_input is None:
         return PublishResult(False, "image", "no file input in the composer")
@@ -337,23 +438,31 @@ def _publish(driver: Any, text: str, image_path: str) -> PublishResult:
         dialog = _wait_for(driver, DIALOG, EDITOR_WAIT_S) or dialog
         if _wait_for(dialog, EDITOR, EDITOR_WAIT_S) is None:
             return PublishResult(False, "image", "the editor did not come back after the image step")
+    return _click_post_and_verify(driver, text)
 
+
+def _click_post_and_verify(driver: Any, text: str) -> PublishResult:
     post_button = _find(driver, POST_BUTTON)
     if post_button is None or not _enabled(post_button):
         return PublishResult(False, "post", "the Post button is missing or disabled")
-    post_button.click()
-
-    snippet = _normalise(text)[:60]
-    deadline = time.monotonic() + VERIFY_WAIT_S
-    while True:
-        toast = _find(driver, SUCCESS_TOAST)
-        if toast is not None and any(m in _normalise(toast.text) for m in SUCCESS_TEXT):
-            return PublishResult(True, "posted", "toast confirmed")
-        if _find(driver, DIALOG) is None:
-            update = _find(driver, FEED_UPDATE)
-            if update is not None and snippet in _normalise(update.text):
-                return PublishResult(True, "posted", "post found at the top of the feed")
-        if time.monotonic() >= deadline:
-            return PublishResult(False, "unconfirmed", "Post was clicked but nothing confirmed it")
-        time.sleep(POLL_S)
+    # From the click on the post may be live: any browser error is "unconfirmed",
+    # which ends the day, never an exception that would let the next run post again.
+    try:
+        post_button.click()
+        snippet = _normalise(text)[:60]
+        deadline = time.monotonic() + VERIFY_WAIT_S
+        while True:
+            toast = _find(driver, SUCCESS_TOAST)
+            if toast is not None and any(m in _normalise(toast.text) for m in SUCCESS_TEXT):
+                return PublishResult(True, "posted", "toast confirmed")
+            if _find(driver, DIALOG) is None:
+                update = _find(driver, FEED_UPDATE)
+                if update is not None and snippet in _normalise(update.text):
+                    return PublishResult(True, "posted", "post found at the top of the feed")
+            if time.monotonic() >= deadline:
+                return PublishResult(False, "unconfirmed", "Post was clicked but nothing confirmed it")
+            time.sleep(POLL_S)
+    except WebDriverException as exc:
+        return PublishResult(False, "unconfirmed", "Post was clicked, then the browser failed: %s"
+                             % type(exc).__name__)
 

@@ -32,6 +32,11 @@ MAX_CHARS = 1300
 PROMPT_MAX_CHARS = 1100
 MAX_HASHTAGS = 3
 MAX_ATTEMPTS = 3
+HOOK_MAX_CHARS = 110
+MIN_SLIDES = 4
+MAX_SLIDES = 7
+SLIDE_TITLE_MAX = 60
+SLIDE_BODY_MAX = 240
 PARROT_WORDS = 12
 PARROT_OVERLAP = 0.6
 
@@ -88,6 +93,9 @@ class Draft:
     hashtags: List[str] = field(default_factory=list)
     source_url: str = ""
     source_title: str = ""
+    slides: List[Dict[str, str]] = field(default_factory=list)
+    question: str = ""
+    subtitle: str = ""
 
 
 def lint(text: str) -> List[str]:
@@ -153,12 +161,21 @@ def parrots_headline(text: str, title: str) -> bool:
 def render_text(draft: Draft) -> str:
     text = draft.text.strip()
     tags = [t if t.startswith("#") else "#" + t for t in draft.hashtags if t.strip()]
-    if tags:
-        text = "%s\n\n%s" % (text, " ".join(tags))
-    return text
+    if not tags:
+        return text
+    lines = text.splitlines()
+    if lines and _URL_LINE.match(lines[-1].strip()):
+        # Hashtags go above the link so the article URL stays on the last line.
+        body = "\n".join(lines[:-1]).rstrip()
+        return "%s\n\n%s\n\n%s" % (body, " ".join(tags), lines[-1].strip())
+    return "%s\n\n%s" % (text, " ".join(tags))
 
 
-_SCHEMA = '{"post": "string", "card_line": "string", "hashtags": ["string"]}'
+_SCHEMA = (
+    '{"post": "string", "card_line": "string", "hashtags": ["string"], '
+    '"subtitle": "string", "slides": [{"title": "string", "body": "string"}], '
+    '"question": "string"}'
+)
 
 
 def build_prompt(article: Article, voice: str, feedback: Optional[List[str]] = None) -> str:
@@ -166,16 +183,28 @@ def build_prompt(article: Article, voice: str, feedback: Optional[List[str]] = N
 under VOICE. Return JSON only: %s
 
 Rules:
-- First person, 2 to 4 short paragraphs, %d to %d characters in total.
+- First person, 3 to 5 short paragraphs, %d to %d characters in total.
+- The FIRST line is a hook on its own: one sentence under %d characters that
+  makes a scrolling reader stop. Use a surprising number, a concrete problem or
+  a claim from the article that cuts against the usual view. No question here.
+- Keep paragraphs to one to three sentences so the post reads well on a phone.
 - Include ONE concrete detail from the article: a number, a name or a specific
   claim, paraphrased in your own words. No invented quotes, no made-up numbers.
 - Connect it to ONE thing from the author's own work, using only the VOICE
   facts. Claim nothing else about the author.
-- End with either a plain question to readers or a one-line takeaway, not both.
+- One short sentence tells readers the slides walk through the details.
+- End with ONE direct question that asks readers about their own experience,
+  specific enough that they can answer it in a comment. Same text as "question".
 - The last line is the article URL on its own, with nothing else on that line.
 - "card_line": one sentence under 90 characters, in the author's words, that
   could stand alone on an image. Not the article headline.
 - "hashtags": 0 to 3, lowercase, no spaces, without the # sign.
+- "slides": %d to %d slides for a swipeable carousel that explains the idea step
+  by step. Each "title" is a short, punchy sentence under %d characters in
+  sentence case; each "body" is one or two plain sentences under %d characters
+  that make one point. Facts only from the article and VOICE.
+- "subtitle": one line under 90 characters for the carousel cover.
+- "question": the closing question, under 120 characters.
 - Do not open by restating the headline.
 
 Never use: emojis; em dashes or en dashes; exclamation marks; bullet or
@@ -186,7 +215,8 @@ empower, elevate, landscape, testament, tapestry; "it's not X, it's Y" or
 "this isn't about X" constructions; rhetorical triplets; "Let that sink in";
 "Thoughts?"; "Agree?"; "I'm excited to share"; "I'm proud to"; anything
 addressed to "LinkedIn fam"; advice lists.
-""" % (_SCHEMA, MIN_CHARS, PROMPT_MAX_CHARS)
+""" % (_SCHEMA, MIN_CHARS, PROMPT_MAX_CHARS, HOOK_MAX_CHARS,
+       MIN_SLIDES, MAX_SLIDES, SLIDE_TITLE_MAX, SLIDE_BODY_MAX)
     parts = [rules, "VOICE:\n" + voice.strip()]
     if feedback:
         parts.append("Rewrite; fix these problems:\n- " + "\n- ".join(feedback))
@@ -208,17 +238,66 @@ def _draft_from(payload: Dict[str, Any], article: Article) -> Optional[Draft]:
     hashtags = [
         re.sub(r"[^a-z0-9]", "", str(tag).lower().lstrip("#")) for tag in tags
     ][:MAX_HASHTAGS]
-    text = post.strip()
-    lines = [line.strip() for line in text.splitlines() if line.strip()]
-    if not lines or not _URL_LINE.match(lines[-1]):
-        text = "%s\n\n%s" % (text, article.url)
+    lines = post.strip().splitlines()
+    while lines and not lines[-1].strip():
+        lines.pop()
+    if lines and _URL_LINE.match(lines[-1].strip()):
+        # The model's link is replaced: only the article's own URL is posted.
+        lines.pop()
+    text = "%s\n\n%s" % ("\n".join(lines).strip(), article.url)
     return Draft(
         text=text,
         card_line=card_line.strip(),
         hashtags=[t for t in hashtags if t],
         source_url=article.url,
         source_title=article.title,
+        slides=_slides_from(payload.get("slides")),
+        question=_clean_str(payload.get("question")),
+        subtitle=_clean_str(payload.get("subtitle")),
     )
+
+
+def _clean_str(value: Any) -> str:
+    return " ".join(value.split()) if isinstance(value, str) else ""
+
+
+def _slides_from(value: Any) -> List[Dict[str, str]]:
+    if not isinstance(value, list):
+        return []
+    slides = []  # type: List[Dict[str, str]]
+    for item in value:
+        if isinstance(item, dict):
+            slides.append({"title": _clean_str(item.get("title")), "body": _clean_str(item.get("body"))})
+    return slides
+
+
+def _bad_symbols(text: str) -> bool:
+    return any(ord(ch) > 0x2600 for ch in text) or any(d in text for d in _DASHES)
+
+
+def check_visuals(draft: Draft) -> List[str]:
+    """Problems with the carousel fields; an empty list means it can be drawn."""
+    problems = []  # type: List[str]
+    if not MIN_SLIDES <= len(draft.slides) <= MAX_SLIDES:
+        problems.append("give %d to %d slides, not %d" % (MIN_SLIDES, MAX_SLIDES, len(draft.slides)))
+    for number, slide in enumerate(draft.slides, start=1):
+        if not slide["title"] or not slide["body"]:
+            problems.append("slide %d needs both a title and a body" % number)
+        elif len(slide["title"]) > SLIDE_TITLE_MAX:
+            problems.append("slide %d title is over %d characters" % (number, SLIDE_TITLE_MAX))
+        elif len(slide["body"]) > SLIDE_BODY_MAX:
+            problems.append("slide %d body is over %d characters" % (number, SLIDE_BODY_MAX))
+        elif _bad_symbols(slide["title"] + slide["body"]):
+            problems.append("slide %d contains an emoji or a dash" % number)
+        elif any(p in (slide["title"] + " " + slide["body"]).lower() for p in BANNED_PHRASES):
+            problems.append("slide %d uses a banned phrase" % number)
+    if not draft.question.endswith("?") or len(draft.question) > 120:
+        problems.append("'question' must be one question under 120 characters ending in '?'")
+    elif _bad_symbols(draft.question):
+        problems.append("'question' contains an emoji or a dash")
+    if len(draft.subtitle) > 90 or _bad_symbols(draft.subtitle):
+        problems.append("'subtitle' must be under 90 characters with no emoji or dash")
+    return problems
 
 
 def check_draft(draft: Draft, article: Article) -> List[str]:
@@ -233,12 +312,18 @@ def check_draft(draft: Draft, article: Article) -> List[str]:
         d in draft.card_line for d in _DASHES
     ):
         problems.append("card_line contains an emoji or a dash")
+    first = next((line.strip() for line in draft.text.splitlines() if line.strip()), "")
+    if len(first) > HOOK_MAX_CHARS:
+        problems.append("the first line (the hook) must be one sentence under %d characters" % HOOK_MAX_CHARS)
+    if draft.question and draft.question.lower().rstrip("?") not in draft.text.lower():
+        problems.append("the post must end with the same question as 'question'")
     return problems
 
 
 def write_post(client: Any, article: Article, voice: str = VOICE) -> Optional[Draft]:
     """Up to three attempts; lint findings go back to the model between them."""
     feedback = None  # type: Optional[List[str]]
+    text_only = None  # type: Optional[Draft]
     for attempt in range(1, MAX_ATTEMPTS + 1):
         payload = client.complete_json(build_prompt(article, voice, feedback), _SCHEMA)
         if not payload:
@@ -250,8 +335,16 @@ def write_post(client: Any, article: Article, voice: str = VOICE) -> Optional[Dr
             feedback = ["return 'post' and 'card_line' as strings"]
             continue
         problems = check_draft(draft, article)
-        if not problems:
+        visual = check_visuals(draft)
+        if not problems and not visual:
             return draft
+        if not problems:
+            logger.info("Attempt %d: the post is fine, the carousel is not: %s", attempt, "; ".join(visual))
+            draft.slides = []
+            text_only = draft
+        problems += visual
         logger.info("Attempt %d rejected: %s", attempt, "; ".join(problems))
         feedback = problems
-    return None
+    if text_only is not None:
+        logger.warning("No usable carousel; posting the text with the image card only")
+    return text_only
