@@ -1,0 +1,106 @@
+# Every bot in its own container, all of them at once, each screen visible in your browser.
+#
+#   docker compose build
+#   python3 -m pipeline run --containers      # on your Mac: each site's stages in its own container,
+#                                             # and a page with every bot's screen opens
+#   docker compose run --rm --service-ports hirist docker/login.sh    # sign in once per site
+#   docker compose run --rm --service-ports hirist python3 -m hirist_bot --dry-run
+#
+# Watch a bot (or sign in) at http://localhost:<port>/vnc.html: naukri 6081, linkedin 6082,
+# hirist 6083, instahyre 6084, cutshort 6085, wellfound 6086 (pipeline/lanes.py WATCH_PORTS).
+# The pipeline itself runs on your Mac, so the briefing agents can use claude and kiro and only
+# one process writes .memory/.
+#
+# The repo is mounted at /app, so .env, data/ and .memory/ are shared with your machine. Each
+# container keeps its own Chrome profile in data/docker/browser/: a macOS profile does not open
+# in Linux Chromium. The claude CLI needs CLAUDE_CODE_OAUTH_TOKEN (run `claude setup-token` on
+# your Mac) or ANTHROPIC_API_KEY, in your shell or in .env.
+#
+# `bots` is the older all-in-one container: the whole pipeline inside one container,
+#   docker compose run --rm --service-ports bots python3 -m pipeline run --bots 4
+
+x-bot: &bot
+  build:
+    context: .
+    dockerfile: docker/Dockerfile
+  image: apply-bots
+  init: true
+  shm_size: 1gb
+  volumes:
+    - .:/app
+
+x-env: &env
+  HEADLESS: "false"
+  BACKGROUND: "false"
+  LLM_BACKEND: claude-cli  # kiro-cli is not in the image
+  LEDGER_JOURNAL_MODE: DELETE  # the ledger is shared with the Mac and the other containers
+  CLAUDE_CODE_OAUTH_TOKEN:
+  ANTHROPIC_API_KEY:
+  VNC_PASSWORD:
+
+services:
+  naukri:
+    <<: *bot
+    environment:
+      <<: *env
+      SITE: naukri
+      BROWSER_PROFILE_DIR: data/docker/browser/naukri
+      LOGIN_URL: https://www.naukri.com/nlogin/login
+    ports: ["127.0.0.1:6081:6080"]
+
+  linkedin:
+    <<: *bot
+    environment:
+      <<: *env
+      SITE: linkedin
+      BROWSER_PROFILE_DIR: data/docker/browser/linkedin
+      LINKEDIN_BROWSER_PROFILE_DIR: data/docker/browser/linkedin
+      LOGIN_URL: https://www.linkedin.com/login
+    ports: ["127.0.0.1:6082:6080"]
+
+  hirist:
+    <<: *bot
+    environment:
+      <<: *env
+      SITE: hirist
+      BROWSER_PROFILE_DIR: data/docker/browser/lanes/hirist
+      LOGIN_URL: https://www.hirist.tech/
+    ports: ["127.0.0.1:6083:6080"]
+
+  instahyre:
+    <<: *bot
+    environment:
+      <<: *env
+      SITE: instahyre
+      BROWSER_PROFILE_DIR: data/docker/browser/lanes/instahyre
+      LOGIN_URL: https://www.instahyre.com/login/
+    ports: ["127.0.0.1:6084:6080"]
+
+  cutshort:
+    <<: *bot
+    environment:
+      <<: *env
+      SITE: cutshort
+      BROWSER_PROFILE_DIR: data/docker/browser/lanes/cutshort
+      LOGIN_URL: https://cutshort.io/login
+    ports: ["127.0.0.1:6085:6080"]
+
+  wellfound:
+    <<: *bot
+    environment:
+      <<: *env
+      SITE: wellfound
+      BROWSER_PROFILE_DIR: data/docker/browser/lanes/wellfound
+      LOGIN_URL: https://wellfound.com/login
+    ports: ["127.0.0.1:6086:6080"]
+
+  bots:
+    <<: *bot
+    shm_size: 2gb
+    environment:
+      <<: *env
+      BROWSER_PROFILE_DIR: data/docker/browser/naukri
+      LINKEDIN_BROWSER_PROFILE_DIR: data/docker/browser/linkedin
+      PIPELINE_AI_CLI: claude
+      PIPELINE_BOTS: ${PIPELINE_BOTS:-4}
+    ports: ["127.0.0.1:6080:6080", "127.0.0.1:5900:5900"]

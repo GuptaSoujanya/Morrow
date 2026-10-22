@@ -1,7 +1,9 @@
 # Naukri Auto-Apply Bot Dependencies
-# Install with: pip install -r requirements.txt
+# Install with: pip install -r requirements.lock (exact, hashed versions)
+# Regenerate the lock after editing this file:
+#   uv pip compile requirements.txt --generate-hashes --python-version 3.12 -o requirements.lock
 #
-# Tested on Python 3.9.6 (macOS system python3).
+# Needs Python 3.11+ (Pillow 13); tested on Python 3.12.
 # Upper bounds are deliberate: Naukri's DOM changes often enough that an
 # unattended `pip install -U` picking up a breaking Selenium release would
 # surface as "the bot silently applied to nothing" rather than as an error.
@@ -9,15 +11,22 @@
 # --- Required by naukri_bot (v2) and the legacy scripts ---
 selenium>=4.15.0,<5.0.0
 beautifulsoup4>=4.12.0,<5.0.0
-lxml>=4.9.0,<6.0.0
+lxml>=6.1.0,<7.0.0
 python-dotenv>=1.0.0,<2.0.0
 webdriver-manager>=4.0.0,<5.0.0
+
+# CA bundle behind every HTTPS fetch (requests, feeds). 2026.7.22 trusts
+# compromised roots (GHSA-6q48-6c7w-9gw2).
+certifi>=2026.10.19
 
 # Facts file (profile.yaml) parsing - naukri_bot only
 PyYAML>=6.0,<7.0
 
 # Image cards for the LinkedIn poster (linkedin_bot)
-Pillow>=10.0,<12.0
+Pillow>=13.0.0,<14.0
+
+# Safe XML parsing of RSS and Atom feeds (linkedin_bot)
+defusedxml>=0.7.1,<1.0
 
 # Daily reports on the control site that runs everything (scripts/web, or python -m web)
 markdown-it-py>=3.0,<5.0
