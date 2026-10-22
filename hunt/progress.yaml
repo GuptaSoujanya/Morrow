@@ -1,0 +1,19 @@
+schema: hound.progress.v1
+generated: '2026-10-22T12:24:44+00:00'
+note: derived cache; the disk wins on every disagreement and every local check reruns on every invocation
+phases:
+- phase: scope
+  status: complete
+  artifact: hunt/scope.yaml
+  sha256: cc1b43413acbff774105eabc84d3e89101a74b815ca667eb72d98df33ff6f480
+- phase: provenance
+  status: complete
+  artifact: hunt/provenance.yaml
+  sha256: 7a73da10c6364ac5bf83ea43f52569ffcba4300445182a92c3e7db5b41aa55f1
+- phase: liveness
+  status: complete
+  ok: true
+- phase: instrument
+  status: complete
+  artifact: hunt/evidence.yaml
+  sha256: dd6584e1d6c9ca22cf5feb6b559a047f4142bf13622a8287151ee0fc3e3be79c

@@ -1,0 +1,1442 @@
+schema: hound.scope.v1
+generated: '2026-10-22T12:23:01+00:00'
+target:
+  root: /Users/apple/Desktop/apply
+  sha: 53b21e191b772c4e1ecd14c30cc14e57f6ae9a6e
+  branch: main
+  remote: https://github.com/GuptaSoujanya/apply-bot.git
+  dirty: true
+  dirty_entries: 243
+  porcelain_digest: 22962eeb4d7edccbf64c325f7efc08c5f6ec49824caa62ab71d01e369cf023d9
+inventory:
+  files: 288
+  tracked: 148
+  untracked: 140
+  by_extension:
+    (none): 4
+    .css: 11
+    .csv: 2
+    .example: 1
+    .html: 3
+    .ipynb: 1
+    .js: 31
+    .json: 9
+    .lock: 1
+    .md: 95
+    .mjs: 4
+    .py: 110
+    .sh: 7
+    .svg: 1
+    .txt: 4
+    .woff2: 3
+    .yaml: 1
+  manifests:
+  - froned-dashbord/package-lock.json
+  - froned-dashbord/package.json
+  - requirements.txt
+  lockfiles:
+  - froned-dashbord/package-lock.json
+  - requirements.lock
+  notebooks:
+  - legacy/Naukri autoapply jobs.ipynb
+  python_dirs:
+  - common
+  - course
+  - cutshort_bot
+  - froned-dashbord
+  - hirist_bot
+  - instahyre_bot
+  - legacy
+  - linkedin_bot
+  - naukri_bot
+  - pipeline
+  - sites_bot
+  - tests
+  - web
+  - wellfound_bot
+  shell_targets:
+  - scripts/google_login.sh
+  - scripts/install_linkedin_poster.sh
+  - scripts/install_profile_updater.sh
+  - scripts/linkedin_status.sh
+  - scripts/profile_update_status.sh
+  - scripts/run_linkedin_post.sh
+  - scripts/run_profile_update.sh
+  - scripts/web
+  js_targets:
+  - course/index.html
+  - froned-dashbord/app/index.html
+  - froned-dashbord/app/js/api.js
+  - froned-dashbord/app/js/components/charts.js
+  - froned-dashbord/app/js/components/console.js
+  - froned-dashbord/app/js/components/dialog.js
+  - froned-dashbord/app/js/components/kpi.js
+  - froned-dashbord/app/js/components/nav.js
+  - froned-dashbord/app/js/components/panel.js
+  - froned-dashbord/app/js/components/segmented.js
+  - froned-dashbord/app/js/components/toast.js
+  - froned-dashbord/app/js/dom.js
+  - froned-dashbord/app/js/format.js
+  - froned-dashbord/app/js/forms.js
+  - froned-dashbord/app/js/icons.js
+  - froned-dashbord/app/js/main.js
+  - froned-dashbord/app/js/router.js
+  - froned-dashbord/app/js/state.js
+  - froned-dashbord/app/js/views/automations.js
+  - froned-dashbord/app/js/views/files.js
+  - froned-dashbord/app/js/views/linkedin.js
+  - froned-dashbord/app/js/views/naukri.js
+  - froned-dashbord/app/js/views/overview.js
+  - froned-dashbord/app/js/views/profile.js
+  - froned-dashbord/app/js/views/reports.js
+  - froned-dashbord/app/js/views/resume.js
+  - froned-dashbord/app/js/views/setup.js
+  - froned-dashbord/app/js/views/sites.js
+  - froned-dashbord/app/js/views/study.js
+  - froned-dashbord/app/js/views/todo.js
+  - froned-dashbord/playwright.config.js
+  - froned-dashbord/scripts/audit.mjs
+  - froned-dashbord/scripts/build.mjs
+  - froned-dashbord/scripts/inspect.mjs
+  - froned-dashbord/scripts/start.mjs
+  - froned-dashbord/tests/dashboard.spec.js
+  - web/static/app.js
+  - web/static/index.html
+ecosystems:
+- docs
+- javascript
+- python
+- shell
+- web
+conditions:
+- git-history
+- node-lockfile
+- node-project
+- python-environment
+- python-tests
+- sandbox-reproductions
+product_types:
+- job-board auto-apply bot (selenium)
+- local web control site (http.server)
+- daily LinkedIn poster
+- company-site apply, browser agent, cold email
+- daily pipeline orchestrator with AI CLI
+- docs site (docsify) with inline scripts
+- shell launchers and launchd installers
+- legacy scripts and notebook
+surfaces:
+- name: (root)
+  kind: docs
+  files: 6
+  note: ''
+  uses: []
+  instruments:
+  - gitleaks-dir
+  - gitleaks-git
+  - history
+  - probe
+  untracked: 2
+- name: .kiro
+  kind: other
+  files: 6
+  note: ''
+  uses: []
+  instruments: []
+  untracked: 6
+- name: .research
+  kind: docs
+  files: 40
+  note: ''
+  uses: []
+  instruments:
+  - gitleaks-dir
+  - gitleaks-git
+  - history
+  - probe
+  untracked: 40
+- name: common
+  kind: python
+  files: 15
+  note: ''
+  uses:
+  - latex
+  - llm-cli
+  - selenium
+  - telegram
+  instruments:
+  - bandit
+  - gitleaks-dir
+  - gitleaks-git
+  - history
+  - inventory
+  - probe
+  - pytest-target
+  - ruff
+  - sandbox
+  - semgrep
+  - trivy-python
+  untracked: 2
+- name: course
+  kind: python+web+docs
+  files: 55
+  note: ''
+  uses: []
+  instruments:
+  - bandit
+  - gitleaks-dir
+  - gitleaks-git
+  - history
+  - inventory
+  - probe
+  - pytest-target
+  - ruff
+  - sandbox
+  - semgrep
+  - trivy-python
+  untracked: 0
+- name: cutshort_bot
+  kind: python
+  files: 5
+  note: ''
+  uses: []
+  instruments:
+  - bandit
+  - gitleaks-dir
+  - gitleaks-git
+  - history
+  - inventory
+  - probe
+  - pytest-target
+  - ruff
+  - sandbox
+  - semgrep
+  - trivy-python
+  untracked: 5
+- name: froned-dashbord
+  kind: python+web+docs
+  files: 59
+  note: ''
+  uses: []
+  instruments:
+  - bandit
+  - gitleaks-dir
+  - gitleaks-git
+  - history
+  - inventory
+  - probe
+  - pytest-target
+  - ruff
+  - sandbox
+  - semgrep
+  - trivy-python
+  untracked: 59
+- name: hirist_bot
+  kind: python
+  files: 5
+  note: ''
+  uses: []
+  instruments:
+  - bandit
+  - gitleaks-dir
+  - gitleaks-git
+  - history
+  - inventory
+  - probe
+  - pytest-target
+  - ruff
+  - sandbox
+  - semgrep
+  - trivy-python
+  untracked: 5
+- name: instahyre_bot
+  kind: python
+  files: 5
+  note: ''
+  uses: []
+  instruments:
+  - bandit
+  - gitleaks-dir
+  - gitleaks-git
+  - history
+  - inventory
+  - probe
+  - pytest-target
+  - ruff
+  - sandbox
+  - semgrep
+  - trivy-python
+  untracked: 5
+- name: legacy
+  kind: python+notebook+data
+  files: 5
+  note: ''
+  uses:
+  - selenium
+  instruments:
+  - bandit
+  - gitleaks-dir
+  - gitleaks-git
+  - history
+  - inventory
+  - probe
+  - pytest-target
+  - ruff
+  - sandbox
+  - semgrep
+  - trivy-python
+  untracked: 0
+- name: linkedin_bot
+  kind: python
+  files: 8
+  note: ''
+  uses:
+  - selenium
+  instruments:
+  - bandit
+  - gitleaks-dir
+  - gitleaks-git
+  - history
+  - inventory
+  - probe
+  - pytest-target
+  - ruff
+  - sandbox
+  - semgrep
+  - trivy-python
+  untracked: 0
+- name: naukri_bot
+  kind: python
+  files: 10
+  note: ''
+  uses:
+  - selenium
+  instruments:
+  - bandit
+  - gitleaks-dir
+  - gitleaks-git
+  - history
+  - inventory
+  - probe
+  - pytest-target
+  - ruff
+  - sandbox
+  - semgrep
+  - trivy-python
+  untracked: 0
+- name: pipeline
+  kind: python
+  files: 8
+  note: ''
+  uses: []
+  instruments:
+  - bandit
+  - gitleaks-dir
+  - gitleaks-git
+  - history
+  - inventory
+  - probe
+  - pytest-target
+  - ruff
+  - sandbox
+  - semgrep
+  - trivy-python
+  untracked: 8
+- name: scripts
+  kind: shell
+  files: 8
+  note: ''
+  uses:
+  - latex
+  - launchd
+  instruments:
+  - gitleaks-dir
+  - gitleaks-git
+  - history
+  - probe
+  - semgrep
+  - shellcheck
+  untracked: 0
+- name: sites_bot
+  kind: python
+  files: 8
+  note: ''
+  uses:
+  - llm-cli
+  - selenium
+  - smtp-imap
+  instruments:
+  - bandit
+  - gitleaks-dir
+  - gitleaks-git
+  - history
+  - inventory
+  - probe
+  - pytest-target
+  - ruff
+  - sandbox
+  - semgrep
+  - trivy-python
+  untracked: 1
+- name: tests
+  kind: python
+  files: 33
+  note: ''
+  uses:
+  - latex
+  - llm-cli
+  - selenium
+  - smtp-imap
+  instruments:
+  - bandit
+  - gitleaks-dir
+  - gitleaks-git
+  - history
+  - inventory
+  - probe
+  - pytest-target
+  - ruff
+  - sandbox
+  - semgrep
+  - trivy-python
+  untracked: 2
+- name: web
+  kind: python+web
+  files: 7
+  note: ''
+  uses: []
+  instruments:
+  - bandit
+  - gitleaks-dir
+  - gitleaks-git
+  - history
+  - inventory
+  - probe
+  - pytest-target
+  - ruff
+  - sandbox
+  - semgrep
+  - trivy-python
+  untracked: 0
+- name: wellfound_bot
+  kind: python
+  files: 5
+  note: ''
+  uses: []
+  instruments:
+  - bandit
+  - gitleaks-dir
+  - gitleaks-git
+  - history
+  - inventory
+  - probe
+  - pytest-target
+  - ruff
+  - sandbox
+  - semgrep
+  - trivy-python
+  untracked: 5
+instruments:
+- name: semgrep
+  category: sast
+  required: true
+  critical:
+  - injection
+  - auth
+  - secret
+  - api_misuse
+  - error
+  evidence_class: static
+  timeout_s: 1800
+  database: true
+  cap_when_absent: HOLD
+  available: true
+  argv:
+  - /Users/apple/Desktop/apply/hunt/.venv/bin/semgrep
+  - scan
+  - --metrics=off
+  - --disable-version-check
+  - --json
+  - --output
+  - hunt/results/raw/semgrep.json
+  - --config
+  - hunt/rule/semgrep.yaml
+  - --config
+  - hunt/rule/custom.yaml
+  - --timeout
+  - '30'
+  - --max-target-bytes
+  - '2000000'
+  - --exclude
+  - venv
+  - --exclude
+  - node_modules
+  - --exclude
+  - hunt
+  - --exclude
+  - data
+  - --exclude
+  - .omo
+  - --exclude
+  - .pytest_cache
+  - --exclude
+  - .git
+  - common
+  - course
+  - cutshort_bot
+  - froned-dashbord
+  - hirist_bot
+  - instahyre_bot
+  - legacy
+  - linkedin_bot
+  - naukri_bot
+  - pipeline
+  - sites_bot
+  - tests
+  - web
+  - wellfound_bot
+  - course/index.html
+  - froned-dashbord/app/index.html
+  - froned-dashbord/app/js/api.js
+  - froned-dashbord/app/js/components/charts.js
+  - froned-dashbord/app/js/components/console.js
+  - froned-dashbord/app/js/components/dialog.js
+  - froned-dashbord/app/js/components/kpi.js
+  - froned-dashbord/app/js/components/nav.js
+  - froned-dashbord/app/js/components/panel.js
+  - froned-dashbord/app/js/components/segmented.js
+  - froned-dashbord/app/js/components/toast.js
+  - froned-dashbord/app/js/dom.js
+  - froned-dashbord/app/js/format.js
+  - froned-dashbord/app/js/forms.js
+  - froned-dashbord/app/js/icons.js
+  - froned-dashbord/app/js/main.js
+  - froned-dashbord/app/js/router.js
+  - froned-dashbord/app/js/state.js
+  - froned-dashbord/app/js/views/automations.js
+  - froned-dashbord/app/js/views/files.js
+  - froned-dashbord/app/js/views/linkedin.js
+  - froned-dashbord/app/js/views/naukri.js
+  - froned-dashbord/app/js/views/overview.js
+  - froned-dashbord/app/js/views/profile.js
+  - froned-dashbord/app/js/views/reports.js
+  - froned-dashbord/app/js/views/resume.js
+  - froned-dashbord/app/js/views/setup.js
+  - froned-dashbord/app/js/views/sites.js
+  - froned-dashbord/app/js/views/study.js
+  - froned-dashbord/app/js/views/todo.js
+  - froned-dashbord/playwright.config.js
+  - froned-dashbord/scripts/audit.mjs
+  - froned-dashbord/scripts/build.mjs
+  - froned-dashbord/scripts/inspect.mjs
+  - froned-dashbord/scripts/start.mjs
+  - froned-dashbord/tests/dashboard.spec.js
+  - web/static/app.js
+  - web/static/index.html
+  - scripts/google_login.sh
+  - scripts/install_linkedin_poster.sh
+  - scripts/install_profile_updater.sh
+  - scripts/linkedin_status.sh
+  - scripts/profile_update_status.sh
+  - scripts/run_linkedin_post.sh
+  - scripts/run_profile_update.sh
+  - scripts/web
+  - hunt/results/staged/notebook/Naukri_autoapply_jobs.py
+  - hunt/results/staged/inline-js
+  targets:
+  - common
+  - course
+  - cutshort_bot
+  - froned-dashbord
+  - hirist_bot
+  - instahyre_bot
+  - legacy
+  - linkedin_bot
+  - naukri_bot
+  - pipeline
+  - sites_bot
+  - tests
+  - web
+  - wellfound_bot
+  - course/index.html
+  - froned-dashbord/app/index.html
+  - froned-dashbord/app/js/api.js
+  - froned-dashbord/app/js/components/charts.js
+  - froned-dashbord/app/js/components/console.js
+  - froned-dashbord/app/js/components/dialog.js
+  - froned-dashbord/app/js/components/kpi.js
+  - froned-dashbord/app/js/components/nav.js
+  - froned-dashbord/app/js/components/panel.js
+  - froned-dashbord/app/js/components/segmented.js
+  - froned-dashbord/app/js/components/toast.js
+  - froned-dashbord/app/js/dom.js
+  - froned-dashbord/app/js/format.js
+  - froned-dashbord/app/js/forms.js
+  - froned-dashbord/app/js/icons.js
+  - froned-dashbord/app/js/main.js
+  - froned-dashbord/app/js/router.js
+  - froned-dashbord/app/js/state.js
+  - froned-dashbord/app/js/views/automations.js
+  - froned-dashbord/app/js/views/files.js
+  - froned-dashbord/app/js/views/linkedin.js
+  - froned-dashbord/app/js/views/naukri.js
+  - froned-dashbord/app/js/views/overview.js
+  - froned-dashbord/app/js/views/profile.js
+  - froned-dashbord/app/js/views/reports.js
+  - froned-dashbord/app/js/views/resume.js
+  - froned-dashbord/app/js/views/setup.js
+  - froned-dashbord/app/js/views/sites.js
+  - froned-dashbord/app/js/views/study.js
+  - froned-dashbord/app/js/views/todo.js
+  - froned-dashbord/playwright.config.js
+  - froned-dashbord/scripts/audit.mjs
+  - froned-dashbord/scripts/build.mjs
+  - froned-dashbord/scripts/inspect.mjs
+  - froned-dashbord/scripts/start.mjs
+  - froned-dashbord/tests/dashboard.spec.js
+  - web/static/app.js
+  - web/static/index.html
+  - scripts/google_login.sh
+  - scripts/install_linkedin_poster.sh
+  - scripts/install_profile_updater.sh
+  - scripts/linkedin_status.sh
+  - scripts/profile_update_status.sh
+  - scripts/run_linkedin_post.sh
+  - scripts/run_profile_update.sh
+  - scripts/web
+  - hunt/results/staged/notebook/Naukri_autoapply_jobs.py
+  - hunt/results/staged/inline-js
+- name: bandit
+  category: sast
+  required: true
+  critical:
+  - injection
+  - secret
+  - api_misuse
+  - error
+  evidence_class: static
+  timeout_s: 600
+  database: false
+  cap_when_absent: HOLD
+  available: true
+  argv:
+  - /Users/apple/Desktop/apply/hunt/.venv/bin/bandit
+  - -r
+  - -q
+  - -f
+  - json
+  - -o
+  - hunt/results/raw/bandit.json
+  - -s
+  - B101
+  - --exclude
+  - venv,node_modules,hunt,data,.omo,.pytest_cache,.git
+  - common
+  - course
+  - cutshort_bot
+  - froned-dashbord
+  - hirist_bot
+  - instahyre_bot
+  - legacy
+  - linkedin_bot
+  - naukri_bot
+  - pipeline
+  - sites_bot
+  - tests
+  - web
+  - wellfound_bot
+  - hunt/results/staged/notebook/Naukri_autoapply_jobs.py
+  targets:
+  - common
+  - course
+  - cutshort_bot
+  - froned-dashbord
+  - hirist_bot
+  - instahyre_bot
+  - legacy
+  - linkedin_bot
+  - naukri_bot
+  - pipeline
+  - sites_bot
+  - tests
+  - web
+  - wellfound_bot
+  - hunt/results/staged/notebook/Naukri_autoapply_jobs.py
+- name: ruff
+  category: lint
+  required: true
+  critical:
+  - logic
+  - error
+  evidence_class: static
+  timeout_s: 300
+  database: false
+  cap_when_absent: HOLD
+  available: true
+  argv:
+  - /Users/apple/Desktop/apply/hunt/.venv/bin/ruff
+  - check
+  - --isolated
+  - --no-cache
+  - --output-format
+  - json
+  - --output-file
+  - hunt/results/raw/ruff.json
+  - --select
+  - F,E9,PLE,B
+  - --target-version
+  - py312
+  - --exclude=venv
+  - --exclude=node_modules
+  - --exclude=hunt
+  - --exclude=data
+  - --exclude=.omo
+  - --exclude=.pytest_cache
+  - --exclude=.git
+  - common
+  - course
+  - cutshort_bot
+  - froned-dashbord
+  - hirist_bot
+  - instahyre_bot
+  - legacy
+  - linkedin_bot
+  - naukri_bot
+  - pipeline
+  - sites_bot
+  - tests
+  - web
+  - wellfound_bot
+  - hunt/results/staged/notebook/Naukri_autoapply_jobs.py
+  targets:
+  - common
+  - course
+  - cutshort_bot
+  - froned-dashbord
+  - hirist_bot
+  - instahyre_bot
+  - legacy
+  - linkedin_bot
+  - naukri_bot
+  - pipeline
+  - sites_bot
+  - tests
+  - web
+  - wellfound_bot
+  - hunt/results/staged/notebook/Naukri_autoapply_jobs.py
+- name: shellcheck
+  category: lint
+  required: true
+  critical:
+  - injection
+  - logic
+  - error
+  evidence_class: static
+  timeout_s: 300
+  database: false
+  cap_when_absent: HOLD
+  available: true
+  argv:
+  - /Users/apple/Desktop/apply/hunt/.venv/bin/shellcheck
+  - -f
+  - json
+  - -S
+  - info
+  - -s
+  - bash
+  - scripts/google_login.sh
+  - scripts/install_linkedin_poster.sh
+  - scripts/install_profile_updater.sh
+  - scripts/linkedin_status.sh
+  - scripts/profile_update_status.sh
+  - scripts/run_linkedin_post.sh
+  - scripts/run_profile_update.sh
+  - scripts/web
+  targets:
+  - scripts/google_login.sh
+  - scripts/install_linkedin_poster.sh
+  - scripts/install_profile_updater.sh
+  - scripts/linkedin_status.sh
+  - scripts/profile_update_status.sh
+  - scripts/run_linkedin_post.sh
+  - scripts/run_profile_update.sh
+  - scripts/web
+- name: gitleaks-git
+  category: secrets
+  required: true
+  critical:
+  - secret
+  evidence_class: static
+  timeout_s: 900
+  database: true
+  cap_when_absent: HOLD
+  available: true
+  argv:
+  - /opt/homebrew/bin/gitleaks
+  - git
+  - --config
+  - hunt/rule/gitleaks.toml
+  - --redact
+  - --no-banner
+  - --exit-code
+  - '1'
+  - --log-level
+  - warn
+  - --report-format
+  - json
+  - --report-path
+  - hunt/results/raw/gitleaks-git.json
+  - --max-target-megabytes
+  - '5'
+  - .
+  targets:
+  - .
+- name: gitleaks-dir
+  category: secrets
+  required: true
+  critical:
+  - secret
+  evidence_class: static
+  timeout_s: 900
+  database: true
+  cap_when_absent: HOLD
+  available: true
+  argv:
+  - /opt/homebrew/bin/gitleaks
+  - dir
+  - --config
+  - hunt/rule/gitleaks.toml
+  - --redact
+  - --no-banner
+  - --exit-code
+  - '1'
+  - --log-level
+  - warn
+  - --report-format
+  - json
+  - --report-path
+  - hunt/results/raw/gitleaks-dir.json
+  - --max-target-megabytes
+  - '5'
+  - .
+  targets:
+  - .
+- name: trivy-python
+  category: supply
+  required: true
+  critical:
+  - supply
+  evidence_class: static
+  timeout_s: 900
+  database: true
+  cap_when_absent: HOLD
+  available: true
+  argv:
+  - /opt/homebrew/bin/trivy
+  - fs
+  - --cache-dir
+  - hunt/results/trivy
+  - --skip-db-update
+  - --skip-java-db-update
+  - --offline-scan
+  - --scanners
+  - vuln
+  - --format
+  - json
+  - --output
+  - hunt/results/raw/trivy-python.json
+  - --quiet
+  - --exit-code
+  - '0'
+  - hunt/results/staged/freeze
+  targets:
+  - hunt/results/staged/freeze
+- name: trivy-node
+  category: supply
+  required: true
+  critical:
+  - supply
+  evidence_class: static
+  timeout_s: 900
+  database: true
+  cap_when_absent: HOLD
+  available: true
+  argv:
+  - /opt/homebrew/bin/trivy
+  - fs
+  - --cache-dir
+  - hunt/results/trivy
+  - --skip-db-update
+  - --skip-java-db-update
+  - --offline-scan
+  - --scanners
+  - vuln
+  - --format
+  - json
+  - --output
+  - hunt/results/raw/trivy-node.json
+  - --quiet
+  - --exit-code
+  - '0'
+  - froned-dashbord/package-lock.json
+  targets:
+  - froned-dashbord/package-lock.json
+- name: pytest-target
+  category: tests
+  required: true
+  critical:
+  - logic
+  - error
+  evidence_class: dynamic
+  timeout_s: 1200
+  database: false
+  cap_when_absent: HOLD
+  available: true
+  argv:
+  - /Users/apple/Desktop/apply/venv/bin/python3
+  - -m
+  - pytest
+  - -q
+  - -p
+  - no:cacheprovider
+  - --basetemp
+  - hunt/results/pytest-tmp
+  - --junitxml
+  - hunt/results/raw/pytest-target.json
+  - -o
+  - addopts=
+  - tests
+  targets:
+  - tests
+- name: history
+  category: secrets
+  required: true
+  critical:
+  - secret
+  evidence_class: provenance
+  timeout_s: 300
+  database: false
+  cap_when_absent: HOLD
+  available: true
+  argv:
+  - hound
+  - internal
+  - history
+  targets: []
+- name: inventory
+  category: supply
+  required: true
+  critical:
+  - supply
+  - logic
+  evidence_class: provenance
+  timeout_s: 300
+  database: false
+  cap_when_absent: HOLD
+  available: true
+  argv:
+  - hound
+  - internal
+  - inventory
+  targets: []
+- name: probe
+  category: probe
+  required: false
+  critical: []
+  evidence_class: static
+  timeout_s: 300
+  database: false
+  cap_when_absent: HOLD
+  available: true
+  argv:
+  - hound
+  - internal
+  - probe
+  targets: []
+- name: sandbox
+  category: sandbox
+  required: false
+  critical: []
+  evidence_class: dynamic
+  timeout_s: 1200
+  database: false
+  cap_when_absent: HOLD
+  available: true
+  argv:
+  - /Users/apple/Desktop/apply/hunt/.venv/bin/python3
+  - -m
+  - pytest
+  - -q
+  - -p
+  - no:cacheprovider
+  - --disable-socket
+  - --basetemp
+  - hunt/results/sandbox-tmp
+  - --junitxml
+  - hunt/results/raw/sandbox.json
+  - -o
+  - addopts=
+  - --rootdir
+  - hunt
+  - hunt/sandbox
+  targets:
+  - hunt/sandbox
+staged:
+  notebook: hunt/results/staged/notebook/Naukri_autoapply_jobs.py
+  inline-js: hunt/results/staged/inline-js
+  freeze: hunt/results/staged/freeze
+  node-lock: froned-dashbord/package-lock.json
+remap:
+  hunt/results/staged/notebook/Naukri_autoapply_jobs.py: legacy/Naukri autoapply jobs.ipynb
+  hunt/results/staged/inline-js/.research__resume-learning__10-node-express-websockets-redis-mongodb.md.js: .research/resume-learning/10-node-express-websockets-redis-mongodb.md
+  hunt/results/staged/inline-js/.research__resume-learning__11-sql-javascript-typescript-cpp.md.js: .research/resume-learning/11-sql-javascript-typescript-cpp.md
+  hunt/results/staged/inline-js/course__03-fullstack-mern-kubernetes__01-nodejs-express.md.js: course/03-fullstack-mern-kubernetes/01-nodejs-express.md
+  hunt/results/staged/inline-js/course__03-fullstack-mern-kubernetes__02-mongodb.md.js: course/03-fullstack-mern-kubernetes/02-mongodb.md
+  hunt/results/staged/inline-js/course__03-fullstack-mern-kubernetes__03-react-advanced.md.js: course/03-fullstack-mern-kubernetes/03-react-advanced.md
+  hunt/results/staged/inline-js/course__03-fullstack-mern-kubernetes__04-auth-and-api-security.md.js: course/03-fullstack-mern-kubernetes/04-auth-and-api-security.md
+  hunt/results/staged/inline-js/course__03-fullstack-mern-kubernetes__05-fullstack-project-architecture.md.js: course/03-fullstack-mern-kubernetes/05-fullstack-project-architecture.md
+  hunt/results/staged/inline-js/course__03-fullstack-mern-kubernetes__08-production-operations.md.js: course/03-fullstack-mern-kubernetes/08-production-operations.md
+  hunt/results/staged/inline-js/course__index.html.js: course/index.html
+  hunt/results/staged/inline-js/course__news.md.js: course/news.md
+configs:
+  hunt/rule/custom.yaml: 50c81fa2b7ebb7f74302ed5d8b2507e4f15cb7dde085b986c3d1b3e29404a5bd
+  hunt/rule/gitleaks.toml: 6caae02c8c8e77ff02ca6e21c87b3f25d47bf96defc8960da994a8381418ef7b
+  hunt/rule/semgrep.lock.json: 5cc8817c01d27b869b466ca9c64060aea9e91d2748b5ea5268a54b0ed33269e3
+  hunt/rule/semgrep.yaml: 92cdd2955fd536ac4b3a3c36bb5c476daf8fd90d4b80bdfc258d7c3f40faad94
+ignore:
+  excluded_roots:
+  - venv
+  - node_modules
+  - hunt
+  - data
+  - .omo
+  - .pytest_cache
+  - .git
+  gitignore_entries:
+  - '# Environment variables (contains sensitive credentials)'
+  - .env
+  - ''
+  - '# Python cache'
+  - __pycache__/
+  - '*.py[cod]'
+  - '*$py.class'
+  - ''
+  - '# Jupyter Notebook checkpoints'
+  - .ipynb_checkpoints/
+  - ''
+  - '# Output CSV files'
+  - naukriapplied.csv
+  - ''
+  - '# IDE/editor files'
+  - .vscode/
+  - .idea/
+  - '*.swp'
+  - '*.swo'
+  - '*~'
+  - ''
+  - '# OS files'
+  - .DS_Store
+  - Thumbs.db
+  - ''
+  - '# Distribution / packaging'
+  - dist/
+  - build/
+  - '*.egg-info/'
+  - ''
+  - '# Virtual environments'
+  - venv/
+  - env/
+  - .venv/
+  - ''
+  - application_answers.csv
+  - ''
+  - '# Personal facts + local application history (naukri_bot v2)'
+  - "# profile.yaml holds salary, phone, optionally DOB \u2014 never commit it."
+  - '# naukri_bot.db holds your applied-job history and cached screening answers.'
+  - profile.yaml
+  - naukri_bot.db
+  - naukri_bot.db-wal
+  - naukri_bot.db-shm
+  - '# Run outputs (job data, regenerated each run)'
+  - external_jobs.md
+  - unanswered_questions.md
+  - ''
+  - '# Persistent browser profile: holds the live Naukri login session'
+  - .browser-profile/
+  - ''
+  - '# Run lock, so two runbook.sh invocations cannot share one Chrome profile'
+  - .runbook.lock/
+  - ''
+  - '# Company-site worklist state'
+  - external_archive.md
+  - external_opened.tsv
+  - ''
+  - '# Profile updater: scheduled-run logs, slot memory, failure screenshots'
+  - logs/
+  - screenshots/
+  - ''
+  - '# Your resume source and compiled PDFs: they carry your phone number and email'
+  - resume/
+  - '# LinkedIn drafts, cards, state, and the LinkedIn browser session'
+  - linkedin/
+  - .browser-profile-linkedin/
+  - '# Your data (facts, answers, career-site accounts, backups) and daily reports with run logs'
+  - data/
+  - reports/
+  - ''
+  - '# Agent session continuation state (local tooling, not project code)'
+  - .omo/
+  - ''
+  - '# The morning pipeline''s day checkpoint (python3 -m pipeline)'
+  - .memory/
+  - '# HOUND volatile scanner artifacts'
+  - hunt/results/
+  note: scans walk tracked plus untracked-not-ignored files; ignored directories such as data/ and venv/ are out of scope
+    except where gitleaks-dir walks the working tree under its allowlist
+gaps:
+- surface: .kiro
+  gap: no automated instrument covers this surface
+  cap: HOLD
+- surface: common
+  gap: 'latex: external TeX compiler invocation; not exercised'
+  cap: HOLD
+- surface: common
+  gap: 'llm-cli: shells out to an external AI CLI (claude or kiro); its runtime behaviour is not exercised'
+  cap: HOLD
+- surface: common
+  gap: 'selenium: browser automation against live third-party sites; no automated instrument drives it'
+  cap: HOLD
+- surface: common
+  gap: 'telegram: outbound Telegram notifications; not exercised'
+  cap: HOLD
+- surface: legacy
+  gap: 'selenium: browser automation against live third-party sites; no automated instrument drives it'
+  cap: HOLD
+- surface: linkedin_bot
+  gap: 'selenium: browser automation against live third-party sites; no automated instrument drives it'
+  cap: HOLD
+- surface: naukri_bot
+  gap: 'selenium: browser automation against live third-party sites; no automated instrument drives it'
+  cap: HOLD
+- surface: scripts
+  gap: 'latex: external TeX compiler invocation; not exercised'
+  cap: HOLD
+- surface: scripts
+  gap: 'launchd: launchd plist installation and scheduling; not exercised on the audit host'
+  cap: HOLD
+- surface: sites_bot
+  gap: 'llm-cli: shells out to an external AI CLI (claude or kiro); its runtime behaviour is not exercised'
+  cap: HOLD
+- surface: sites_bot
+  gap: 'selenium: browser automation against live third-party sites; no automated instrument drives it'
+  cap: HOLD
+- surface: sites_bot
+  gap: 'smtp-imap: live mail sending and mailbox polling; not exercised'
+  cap: HOLD
+- surface: tests
+  gap: 'latex: external TeX compiler invocation; not exercised'
+  cap: HOLD
+- surface: tests
+  gap: 'llm-cli: shells out to an external AI CLI (claude or kiro); its runtime behaviour is not exercised'
+  cap: HOLD
+- surface: tests
+  gap: 'selenium: browser automation against live third-party sites; no automated instrument drives it'
+  cap: HOLD
+- surface: tests
+  gap: 'smtp-imap: live mail sending and mailbox polling; not exercised'
+  cap: HOLD
+- surface: froned-dashbord
+  gap: test script 'playwright test' needs a browser runner the harness does not drive
+  cap: HOLD
+- surface: (tree)
+  gap: working tree is dirty (243 entries)
+  cap: HOLD
+ambiguities:
+- 'pipeline/ and common/ai_cli.py, common/memory.py are untracked: in scope as deliverable code, provenance unverifiable'
+- .env exists in the working tree (ignored); gitleaks-dir scope excludes it by allowlist, history checks cover whether it
+  was ever committed
+harness:
+  python: 3.13.9
+iteration:
+- date: '2026-10-22T09:31:52+00:00'
+  kind: fresh
+  surfaces:
+  - (root)
+  - .kiro
+  - .research
+  - common
+  - course
+  - legacy
+  - linkedin_bot
+  - naukri_bot
+  - pipeline
+  - scripts
+  - sites_bot
+  - tests
+  - web
+- date: '2026-10-22T09:32:29+00:00'
+  kind: update
+  unchanged:
+  - (root)
+  - .kiro
+  - .research
+  - common
+  - course
+  - legacy
+  - linkedin_bot
+  - naukri_bot
+  - pipeline
+  - scripts
+  - sites_bot
+  - tests
+  - web
+  changed: []
+  removed: []
+  added: []
+- date: '2026-10-22T09:32:51+00:00'
+  kind: update
+  unchanged:
+  - (root)
+  - .kiro
+  - .research
+  - common
+  - course
+  - legacy
+  - linkedin_bot
+  - naukri_bot
+  - pipeline
+  - scripts
+  - sites_bot
+  - tests
+  - web
+  changed: []
+  removed: []
+  added: []
+- date: '2026-10-22T09:37:42+00:00'
+  kind: update
+  unchanged:
+  - (root)
+  - .kiro
+  - .research
+  - common
+  - course
+  - legacy
+  - linkedin_bot
+  - naukri_bot
+  - pipeline
+  - scripts
+  - sites_bot
+  - tests
+  - web
+  changed: []
+  removed: []
+  added: []
+- date: '2026-10-22T09:45:16+00:00'
+  kind: update
+  unchanged:
+  - (root)
+  - .kiro
+  - .research
+  - common
+  - course
+  - legacy
+  - linkedin_bot
+  - naukri_bot
+  - pipeline
+  - scripts
+  - sites_bot
+  - tests
+  - web
+  changed: []
+  removed: []
+  added: []
+- date: '2026-10-22T10:19:53+00:00'
+  kind: update
+  unchanged:
+  - (root)
+  - .kiro
+  - .research
+  - common
+  - course
+  - legacy
+  - linkedin_bot
+  - naukri_bot
+  - pipeline
+  - scripts
+  - tests
+  - web
+  changed:
+  - sites_bot
+  removed: []
+  added:
+  - cutshort_bot
+  - hirist_bot
+  - instahyre_bot
+  - wellfound_bot
+- date: '2026-10-22T12:04:15+00:00'
+  kind: update
+  unchanged:
+  - .research
+  - common
+  - course
+  - cutshort_bot
+  - hirist_bot
+  - instahyre_bot
+  - legacy
+  - linkedin_bot
+  - naukri_bot
+  - scripts
+  - sites_bot
+  - web
+  - wellfound_bot
+  changed:
+  - (root)
+  - .kiro
+  - pipeline
+  - tests
+  removed: []
+  added:
+  - froned-dashbord
+- date: '2026-10-22T12:04:33+00:00'
+  kind: update
+  unchanged:
+  - (root)
+  - .kiro
+  - .research
+  - common
+  - course
+  - cutshort_bot
+  - froned-dashbord
+  - hirist_bot
+  - instahyre_bot
+  - legacy
+  - linkedin_bot
+  - naukri_bot
+  - pipeline
+  - scripts
+  - sites_bot
+  - tests
+  - web
+  - wellfound_bot
+  changed: []
+  removed: []
+  added: []
+- date: '2026-10-22T12:05:15+00:00'
+  kind: update
+  unchanged:
+  - (root)
+  - .kiro
+  - .research
+  - common
+  - course
+  - cutshort_bot
+  - froned-dashbord
+  - hirist_bot
+  - instahyre_bot
+  - legacy
+  - linkedin_bot
+  - naukri_bot
+  - pipeline
+  - scripts
+  - sites_bot
+  - tests
+  - web
+  - wellfound_bot
+  changed: []
+  removed: []
+  added: []
+- date: '2026-10-22T12:09:01+00:00'
+  kind: update
+  unchanged:
+  - (root)
+  - .kiro
+  - .research
+  - common
+  - course
+  - cutshort_bot
+  - hirist_bot
+  - instahyre_bot
+  - legacy
+  - linkedin_bot
+  - naukri_bot
+  - pipeline
+  - scripts
+  - sites_bot
+  - tests
+  - web
+  - wellfound_bot
+  changed:
+  - froned-dashbord
+  removed: []
+  added: []
+- date: '2026-10-22T12:09:04+00:00'
+  kind: update
+  unchanged:
+  - (root)
+  - .kiro
+  - .research
+  - common
+  - course
+  - cutshort_bot
+  - froned-dashbord
+  - hirist_bot
+  - instahyre_bot
+  - legacy
+  - linkedin_bot
+  - naukri_bot
+  - pipeline
+  - scripts
+  - sites_bot
+  - tests
+  - web
+  - wellfound_bot
+  changed: []
+  removed: []
+  added: []
+- date: '2026-10-22T12:17:10+00:00'
+  kind: update
+  unchanged:
+  - (root)
+  - .kiro
+  - .research
+  - common
+  - course
+  - cutshort_bot
+  - hirist_bot
+  - instahyre_bot
+  - legacy
+  - linkedin_bot
+  - naukri_bot
+  - pipeline
+  - scripts
+  - sites_bot
+  - tests
+  - web
+  - wellfound_bot
+  changed:
+  - froned-dashbord
+  removed: []
+  added: []
+- date: '2026-10-22T12:23:01+00:00'
+  kind: update
+  unchanged:
+  - (root)
+  - .kiro
+  - .research
+  - common
+  - course
+  - cutshort_bot
+  - hirist_bot
+  - instahyre_bot
+  - legacy
+  - linkedin_bot
+  - naukri_bot
+  - pipeline
+  - scripts
+  - sites_bot
+  - tests
+  - web
+  - wellfound_bot
+  changed:
+  - froned-dashbord
+  removed: []
+  added: []

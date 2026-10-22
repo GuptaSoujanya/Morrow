@@ -1,0 +1,167 @@
+lane: core
+lane_run:
+  first_attempt: {task: bg_359265ca, status: failed, error: "ProviderModelNotFoundError: Model not found: openai/gpt-6-astra"}
+  second_attempt: {task: bg_ebb0bc6e, session: ses_e9d54858effeGKbANRXoVhh9dm, status: completed, duration: "8m 12s"}
+entry_points:
+  - {kind: cli, name: "python3 -m naukri_bot [--dry-run --limit --keywords --location --llm-backend --early-access]", path: naukri_bot/cli.py, line: 1130, note: "Daily apply run. Started by the local user, or by the control site, which spawns it as a subprocess (web/state.py:74). Reads .env, profile.yaml, answers.txt, resume .tex, scraped job-card text and chatbot question text."}
+  - {kind: cli, name: "python3 -m naukri_bot.update_profile [--if-due --dry-run]", path: naukri_bot/update_profile.py, line: 512, note: "Headline-dot toggle. launchd runs it every 15 minutes through scripts/run_profile_update.sh. State is a JSON file on disk. Shares the Chrome profile and the Naukri account with the apply run."}
+  - {kind: cli, name: "python3 -m common.resume [--tailor jd.txt --upload]", path: common/resume.py, line: 952, note: "Compiles LaTeX with TEX_COMPILER. --tailor takes a pasted job description. --upload pushes a PDF to the Naukri profile and ignores DRY_RUN."}
+  - {kind: cli, name: "python3 -m common.assist [--dry-run]", path: common/assist.py, line: 552, note: "Rewrites answers.txt and profile.yaml from LLM output. Also runs before and after every apply run (naukri_bot/cli.py:1152)."}
+  - {kind: cli, name: "python3 -m common.report", path: common/report.py, line: 617, note: "Writes the daily report from the ledger."}
+  - {kind: import, name: "common.llm.build_client / ClaudeCLIClient._complete", path: common/llm.py, line: 270, note: "Every prompt reaches the claude or kiro-cli subprocess through here. Prompts contain job descriptions, recruiter chatbot questions, the resume and the facts."}
+  - {kind: import, name: "common.answers.AnswerEngine.resolve", path: common/answers.py, line: 336, note: "Called by the chatbot handlers with text read from the Naukri chatbot drawer, which a recruiter controls."}
+  - {kind: import, name: "common.ledger.Ledger", path: common/ledger.py, line: 32, note: "SQLite file at DB_PATH. Shared by the apply bot, sites_bot, the web site's read-only views and the report."}
+  - {kind: import, name: "common.config.load_settings", path: common/config.py, line: 69, note: "Reads .env and the process environment. Reached by every CLI."}
+  - {kind: launchd, name: "scripts/run_profile_update.sh", path: scripts/run_profile_update.sh, line: 11, note: "Runs update_profile --if-due on a 15-minute StartInterval."}
+pruned:
+  - {path: common/ledger.py (export_csv), reason: "No caller outside tests (grep of the repo). CSV formula injection through scraped titles is therefore unreachable."}
+  - {path: common/ledger.py (threading), reason: "One sqlite3 connection with check_same_thread=False, and every method takes the RLock. The ranking workers never touch the ledger, so there is no cross-thread race."}
+  - {path: common/resume.py (LaTeX injection through tailor), reason: "_lint rejects every backslash command outside a small allowlist. ^^5c-style escapes become digit-led terms that ungrounded_terms rejects. Skills and bullets can only be reordered. A compile failure falls back to the base resume. tailored_dir sanitises folder names, so no path traversal."}
+  - {path: common/resume.py (compile_pdf), reason: "argv is a list with no shell. The compiler comes from the local TEX_COMPILER setting. Output paths are resolved and stay under RESUME_OUT_DIR. The only job-derived text in the .tex has been lint-gated."}
+  - {path: common/run.py, reason: "Contains no lock file. Logging, exit codes and send_alert only. The bot-wide lack of mutual exclusion is reported as core-06. send_alert logs only the exception type and message, never the URL carrying the token."}
+  - {path: naukri_bot/sources.py, reason: "Every selector is guarded, and html5lib tolerates malformed input. Unparseable cards are dropped with a warning. Hrefs are Naukri-supplied, so no attacker-controlled navigation was found."}
+  - {path: naukri_bot/early_access.py, reason: "Honors dry_run (it clicks nothing and returns early). It stops at the first unconfirmed share and records each share in the ledger only after confirmation."}
+  - {path: naukri_bot/update_profile.py (toggle logic), reason: "The editor is read back before Save, and the page is reloaded and read after it. A retry after a verification failure only flips the dot again, which is harmless."}
+  - {path: naukri_bot/auth.py, reason: "The email is masked in logs, the password is never logged, and login detection is URL-first and marker-based, covered by test_login_detection.py. No credential-exposing path was found."}
+  - {path: common/browser.py (new BACKGROUND hunk), reason: "_add_common_options receives background positionally in the right slot. _tuck_away only moves the window and catches WebDriverException. No resource leak or unsafe flag was introduced."}
+  - {path: common/ai_cli.py and common/memory.py, reason: "Untracked files outside the listed core files, used by the pipeline lane."}
+hypotheses:
+  - key: core-01
+    title: "answers.txt lookup falls back to 0.9 fuzzy matching, so one answer is submitted for a different skill, number or city"
+    critical_class: logic
+    severity: HIGH
+    anchors:
+      - {path: common/answers.py, line: 187, snippet: "ratio = difflib.SequenceMatcher(None, key, candidate).ratio()"}
+      - {path: common/answers.py, line: 190, snippet: "if best_ratio >= _FUZZY_MATCH_RATIO:"}
+      - {path: naukri_bot/__init__.py, line: 16, snippet: "guessing. There is no fuzzy matching anywhere in this package."}
+    reachability: "Any recruiter chatbot question on Naukri (or a company-site form question) that resembles, but differs from, a question the user already answered in data/inputs/answers.txt. No attacker is needed; the preconditions are a normal answers.txt and the next job's screening questions."
+    defect: "AnswerBook._lookup (answers.py:175-192) tries an exact key and, when that misses, runs SequenceMatcher over every stored question key and accepts the best match at ratio >= 0.9. Questions that differ only in a skill, a number or a city score above 0.9: 'how many years of experience do you have in python' vs '... in pyspark' scores 0.911, 'are you willing to relocate to pune' vs '... to delhi' scores 0.901, and a '5 years of experience in java' vs '3 years ...' question scores 0.976. answer_for returns the stored answer, and AnswerEngine._own_answer (answers.py:~565) accepts it as AnswerSource.DATA with confidence 1.0, ahead of the cache, the profile and the LLM. The user's answer to one question is therefore submitted to an employer as the answer to a different one, with no abstain."
+    contract: "naukri_bot/__init__.py:15-16 and README.md:176-177 state 'There is no fuzzy matching anywhere in the package' because the legacy fuzzy_lookup 'could match 5 years to 15 years and submit the wrong answer to a real employer'. Also the fail-closed contract in common/answers.py's module docstring. tests/common/test_answers_file.py:60 pins only typo tolerance, not this class of near-miss."
+    repro: "1. tmp_path/answers.txt = 'Q: How many years of experience do you have in Python?\\nA: 5\\n'. 2. book = AnswerBook(str(path)). 3. assert book.answer_for('How many years of experience do you have in PySpark?') == '5' (currently true; the contract says it must be None). 4. Same with 'Are you willing to relocate to Pune?' -> 'Yes' and the question 'Are you willing to relocate to Delhi?'."
+    confidence: high
+  - key: core-02
+    title: "Success and quota XPaths match ancestors, so page text anywhere gives a false APPLIED or a false QUOTA_EXPIRED that stops the run"
+    critical_class: logic
+    severity: HIGH
+    anchors:
+      - {path: naukri_bot/apply.py, line: 46, snippet: "\"'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'daily quota')\""}
+      - {path: naukri_bot/apply.py, line: 193, snippet: "for element in driver.find_elements(By.XPATH, xpath):"}
+      - {path: naukri_bot/apply.py, line: 407, snippet: "return _result(job, ApplyStatus.QUOTA_EXPIRED, quota_message)"}
+      - {path: naukri_bot/apply.py, line: 461, snippet: "if _visible_message(driver, _SUCCESS_XPATH) or _applied_marker(driver):"}
+    reachability: "Scraped Naukri job-page text. After the Apply click, apply_to_job polls for 20 s. If the posting body or any sidebar widget contains 'daily quota' (sales jobs: 'meet your daily quota'), 'quota has been expired', 'successfully applied' or 'application sent' ('...once your application sent, HR will call'), the poller fires. A job poster controls that text."
+    defect: "_SUCCESS_XPATH and _QUOTA_XPATH are '//*[contains(normalize-space(.), ...)]'. normalize-space(.) is the element's full descendant text, so <html> and <body> match whenever the phrase appears anywhere. The sibling _REFUSED_XPATH was written with text()[...] precisely to avoid this (comment at apply.py:~60), but these two were not. _visible_message returns the first displayed match in document order, which is <html>, and returns its whole-page text. Consequences: (a) apply.py:405-407 returns QUOTA_EXPIRED, which is in ApplyStatus.TERMINAL, so cli.py:~955 breaks out of the loop and ends the whole run on one hostile or merely unlucky posting; (b) apply.py:461 treats the phrase as confirmation, verify_applied (which uses the same XPath) returns True with detail 'confirmation: <entire page text>', and the job is recorded APPLIED with quota_consumed=True before any chatbot question was answered. The ledger then says applied (has_applied) and a quota slot is burnt for an application that may never have been submitted."
+    contract: "naukri_bot/__init__.py:12-13 and README.md:170-171: 'Nothing is reported as applied unless it is verified'. The comment above _REFUSED_XPATH documents the ancestor pitfall."
+    repro: "1. Build static HTML: <html><body><div id='jd'>Candidates must meet a daily quota. Once your application sent, we call.</div></body></html>. 2. Parse with lxml.html (or html5lib) and evaluate tree.xpath(apply._QUOTA_XPATH) and tree.xpath(apply._SUCCESS_XPATH). 3. Assert both lists contain the <html> or <body> element, not only the div. 4. Stub driver: find_elements returns one element with is_displayed()=True and text 'meet daily quota ...' for XPATH selectors; drive apply_to_job past the click and assert the result is QUOTA_EXPIRED (or APPLIED with quota_consumed=True for the success phrase) although no drawer or confirmation exists."
+    confidence: high
+  - key: core-03
+    title: "Substring profile mappings answer 'Total experience in <skill>' with career years and 'passport number' with Yes/No"
+    critical_class: logic
+    severity: MEDIUM
+    anchors:
+      - {path: common/answers.py, line: 752, snippet: "((\"total experience\", \"overall experience\"), \"total_experience_years\", \"total_experience_years\"),"}
+      - {path: common/answers.py, line: 755, snippet: "((\"passport\",), \"has_passport\", \"has_passport\"),"}
+      - {path: common/answers.py, line: 761, snippet: "value = getattr(self.profile, field_name)"}
+    reachability: "Recruiter chatbot text such as 'Total experience in Kubernetes (years)?' or 'Please enter your passport number', both common on Naukri. Needs total_experience_years (or has_passport) set in profile.yaml. No LLM involved."
+    defect: "_profile_answer runs before the LLM, the judge and the skill-years rule. It does 'any(phrase in normalised_question)' over a fixed table. 'total experience in kubernetes' contains 'total experience', so the candidate's whole career length (for example '2.5') is typed as years of experience in a tool the resume never names, and the result is saved to the cache with persist=True (answers.py:~365), so it is replayed. 'enter your passport number' contains 'passport', so 'Yes' is typed into a number field. With options=None the candidate list's first element is used unchecked (answers.py:~766-768). The strict LLM path and the judge both refuse these exact cases (judge rule 1: 0 years for an unnamed skill; _NEVER_COPY blocks passport number), but the profile shortcut bypasses both."
+    contract: "README.md:347-362 (judging: a skill named nowhere gets 0 years, never more than a named role's years; passport/identity numbers are never answered). common/models.py Profile docstring: 'an absent value must cause an abstain, never an inferred guess'. test_skill_years_rule.py documents skill-years being a separate rule."
+    repro: "1. engine = AnswerEngine(Ledger(':memory:'), NullClient(), Profile(total_experience_years=2.5, has_passport=True), Settings(data_dir=str(tmp_path))). 2. r = engine.resolve('Total experience in Kubernetes (years)'). 3. assert r.answer.text == '2.5' and r.answer.source == 'profile' (currently true; contract expects abstain or 0). 4. r = engine.resolve('Enter your passport number') asserts r.answer.text == 'Yes'."
+    confidence: high
+  - key: core-04
+    title: "A tailored resume stays on the Naukri profile when the upload errors after the file landed, because restore is gated on a successful upload"
+    critical_class: lifecycle
+    severity: MEDIUM
+    anchors:
+      - {path: naukri_bot/cli.py, line: 898, snippet: "profile_resume_changed = profile_resume_changed or tailored_pdf is not None"}
+      - {path: naukri_bot/cli.py, line: 972, snippet: "if driver is not None and profile_resume_changed:"}
+      - {path: naukri_bot/cli.py, line: 1046, snippet: "except resume_module.ResumeError as exc:"}
+    reachability: "A TAILOR_RESUME=true real run. Naukri accepts the file, but upload_resume then raises ResumeError, for example the post-reload check at resume.py:~918 ('after reload the profile shows ...') or a 60 s confirmation timeout. The scheduler or the user triggers it; the trigger is a slow or flaky profile page."
+    defect: "_upload_tailored_resume catches ResumeError and returns None. The loop sets profile_resume_changed only when tailored_pdf is not None, so a failed-verification upload that actually changed the server-side profile leaves the flag False. The finally block restores the base resume only 'if ... profile_resume_changed', so it is skipped. The employer-specific tailored PDF then stays as the public profile resume for every recruiter. A non-ResumeError exception such as a WebDriverException from send_keys at resume.py:888/896 (InvalidArgument or stale element) escapes the loop's narrow except, ends the run with exit 3, and has the same gap on the first job."
+    contract: "README.md:297-299 ('the base PDF is put back at the end of the run, even when the run stops with an error') and the comment at cli.py:973-974 ('one employer's tailored resume must not stay on the profile for every other recruiter to download')."
+    repro: "1. Reuse tests/common/test_resume.py's apply_loop fixture (stubbed driver, stubbed apply_module.apply_to_job). 2. Monkeypatch resume_module.build_tailored_pdf to return (tmp_pdf, []) and resume_module.upload_resume to raise ResumeError('after reload the profile shows x'). 3. Run cli.run() with tailor_resume=True and one selected job. 4. Assert _restore_base_resume or build_base_pdf/upload_resume(base) was NOT called (currently true), whereas the contract requires a restore."
+    confidence: high
+  - key: core-05
+    title: "LLM-controlled text containing newlines forges Q:/A: entries in the user's answers.txt, which are later trusted at confidence 1.0"
+    critical_class: injection
+    severity: MEDIUM
+    anchors:
+      - {path: common/llm.py, line: 581, snippet: "reason = stated_reason.strip() if isinstance(stated_reason, str) else \"llm_abstained\""}
+      - {path: common/answers.py, line: 221, snippet: "block = \"\\n# %s%s | %s%s\\nQ: %s\\nA:\\n\" % ("}
+      - {path: common/answers.py, line: 503, snippet: "updated = text + \"\\n# %s\\nQ: %s\\nA: %s\\n\" % (note, \" \".join(question.split()), answer)"}
+    reachability: "Job description text (job_context, up to 3500 chars) or the recruiter's chatbot question, via prompt injection into the model that answers or judges. Needs auto answer mode and an LLM backend; no user action."
+    defect: "When the model abstains, resolve_answer uses the model's free text (response['answer'] or ['grounded_in']) as the abstain reason with only .strip(); internal newlines survive. _finish passes it to _record_unanswered, and AnswerBook.add_blank writes it inside a '# ... | <reason>' comment line (answers.py:221). A reason like 'no\\nQ: Are you a US citizen?\\nA: Yes' ends the comment and creates a second, answered block. judge_answer (llm.py:739) strips the answer and reason but does not collapse whitespace, so a typed 'answer' of up to 90 chars with newlines is written through answers.py:503 or fill_answer (assist.py:~392 note). parse_answers has no way to tell injected lines from the user's. On the next question that matches, _own_answer returns the forged answer as AnswerSource.DATA with confidence 1.0, ahead of the cache and the profile. The scraped title/company interpolated into 'where' (answers.py:~212) are unsanitised in the same way."
+    contract: "Fail-closed answer resolution (common/answers.py docstring) and README.md:325-330: answers.txt is the user's own words and 'your edit replaces' judged answers; nothing the model writes outside the marked judged block should become the user's answer."
+    repro: "1. engine with Ledger(':memory:'), Settings(data_dir=tmp, judge_answers=False), profile minimal, a stub client with available()=True and complete_json returning {'can_answer': False, 'answer': 'no\\nQ: Are you a US citizen?\\nA: Yes'}. 2. engine.resolve('Do you know Rust?'). 3. book = AnswerBook(answers_file_path(settings)); assert book.answer_for('Are you a US citizen?') == 'Yes' (currently true)."
+    confidence: medium
+  - key: core-06
+    title: "No mutual exclusion between apply runs, the launchd profile updater and the control site, so quota and browser session are raced"
+    critical_class: concurrency
+    severity: MEDIUM
+    anchors:
+      - {path: naukri_bot/cli.py, line: 605, snippet: "remaining = ledger.quota_remaining(settings.daily_quota)"}
+      - {path: naukri_bot/cli.py, line: 636, snippet: "driver = browser.create_driver(settings)"}
+      - {path: naukri_bot/update_profile.py, line: 543, snippet: "mark(state_path, slot, done=False)"}
+    reachability: "The user starts an apply run (long: 10-30 s pauses between up to 50 applications, plus LLM calls) while launchd fires run_profile_update.sh at a slot (09:00, 13:30, 18:30) or the 15-minute poll. Or a second apply run is started while the first is going."
+    defect: "grep finds no lock file, flock or pid check anywhere in common/ or naukri_bot/ or scripts/. Both entry points open a Chrome on the same BROWSER_PROFILE_DIR and the same Naukri account. If the profile is held, create_driver (browser.py:~137-148) falls back to a throwaway profile and logs in from scratch with the password, which can trigger OTP or captcha and a signed-out session in the other run. Two apply runs each read quota_remaining once at cli.py:605 and each plans up to that many applications, so together they can exceed DAILY_QUOTA. update_profile marks the slot attempt before its random start delay and retry sleeps (up to 600 s plus 30 s and 60 s), so a second launchd invocation can overlap the first."
+    contract: "Quota invariant (README.md:12 and cli.py:589-612: plan no more than the remaining daily quota) and the persistent-profile session reuse documented in common/browser.py:create_driver."
+    repro: "static-only"
+    confidence: medium
+  - key: core-07
+    title: "LLM CLI subprocess runs with unrestricted default tools for text calls and unscoped fs_read for Kiro, with untrusted page text in the prompt"
+    critical_class: injection
+    severity: MEDIUM
+    anchors:
+      - {path: common/llm.py, line: 92, snippet: "return [\"claude\", \"-p\", request] + tool_args"}
+      - {path: common/llm.py, line: 191, snippet: "trust = \"--trust-tools=fs_read\" if image is not None else \"--trust-tools=\""}
+    reachability: "Job description, company-site page text and screenshots, and recruiter chatbot questions flow into prompts (score_jobs, resolve_answer, judge_answer, tailor). A malicious posting can carry instructions. Preconditions: LLM_BACKEND=claude-cli or kiro-cli, and the CLI's own permission defaults."
+    defect: "For text-only calls ClaudeCLIClient._command passes no --tools, --allowedTools or --disallowedTools, no --permission-mode and no --add-dir. The subprocess inherits the repo root as cwd (only image calls set cwd, llm.py:~137), so whatever the user's global Claude settings allow, including auto-approved Read within the working directory, is available to a prompt-injected model. The repo root holds .env with the Naukri and Google passwords. The model's reply is then typed into employer forms (free-text answers are only checked for grounding-key naming, resolve_answer lines 596-610). KiroCLIClient trusts fs_read with no path scope when an image is attached, so it can read any file the user can, whereas the Claude variant is limited with --add-dir to the screenshot folder. The comment at llm.py:88 states the intent (Read only inside the screenshot folder) but only the image case enforces it."
+    contract: "llm.py:88 comment ('Read is the only tool it may use, and only inside the screenshot's folder') and common/ai_cli.py:command_for, which does restrict tools for the pipeline CLI."
+    repro: "1. cmd = ClaudeCLIClient(Settings())._command('x', None). 2. assert not any(a.startswith(('--tools', '--allowedTools', '--disallowedTools', '--permission-mode')) for a in cmd) (currently true). 3. kiro = KiroCLIClient(Settings())._command('x', Path('/tmp/a.png')); assert '--trust-tools=fs_read' in kiro and no directory scope argument is present."
+    confidence: low
+  - key: core-08
+    title: "Empty DB_PATH becomes a private temporary SQLite database, silently disabling quota counting and applied-job dedupe"
+    critical_class: logic
+    severity: MEDIUM
+    anchors:
+      - {path: common/config.py, line: 93, snippet: "\"db_path\": os.getenv(\"DB_PATH\", defaults.db_path),"}
+      - {path: common/ledger.py, line: 46, snippet: "self._connection = sqlite3.connect("}
+    reachability: "The local user (or the control site's settings editor) leaves 'DB_PATH=' set to an empty value in .env or the environment."
+    defect: "os.getenv returns '' when the variable is set but empty, and _absolute_path('') returns '' unchanged (config.py:~59-60). Ledger('') calls sqlite3.connect(''), which opens a fresh anonymous on-disk temp database each process. quota_used is then always 0, has_applied is always False, and held-back and sent_unconfirmed lists are empty, so every run can re-apply to jobs it already applied to and ignore the 24 h quota. web/state.py:498 treats an empty DB_PATH as the default path, so the control site and the bot disagree about which ledger exists. Nothing logs a warning."
+    contract: "README.md:213-214 ('db holds your applied-history and quota memory'). _env_int and _env_bool in the same file fall back to defaults on invalid values, but the string settings do not; web/state.py:498 uses 'or Settings.db_path'."
+    repro: "1. monkeypatch.setenv('DB_PATH', ''). 2. s = load_settings(env_path=str(empty_env_file)). 3. assert s.db_path == '' (currently true). 4. l = open_ledger(s); l.record_attempt(ApplyResult('1','u',ApplyStatus.APPLIED,quota_consumed=True)); l.close(); assert open_ledger(s).has_applied('1') is False (the record is lost across opens)."
+    confidence: medium
+  - key: core-09
+    title: "Unrecognised DRY_RUN value silently falls back to a live run"
+    critical_class: logic
+    severity: MEDIUM
+    anchors:
+      - {path: common/config.py, line: 48, snippet: "logger.warning(\"Invalid boolean for %s: %r; using default %r\", key, value, default)"}
+      - {path: common/config.py, line: 140, snippet: "\"dry_run\": _env_bool(\"DRY_RUN\", defaults.dry_run),"}
+    reachability: "The local user sets DRY_RUN=y, t, enabled, 'dry' or a typo in .env or the web settings page, expecting a rehearsal. Only a warning line in the log marks the problem."
+    defect: "_env_bool accepts only 1/true/yes/on and 0/false/no/off. Anything else logs one warning and returns the default, and Settings.dry_run defaults to False. The run proceeds live: it logs in, applies, uploads a resume and spends quota. The same happens to HEADLESS and JUDGE_ANSWERS. A fail-closed flag (dry run, which protects irreversible sends) defaults to the unsafe side on a parse error, and main() does not abort on it (cli.py:1136-1143 only checks settings.validate())."
+    contract: "config.py:_env_bool docstring 'conventional boolean'; README.md:160 (--dry-run clicks nothing) and the Settings.validate contract, which is meant to catch unusable configuration."
+    repro: "1. monkeypatch.setenv('DRY_RUN','enabled'). 2. s = load_settings(env_path=str(empty_env_file)). 3. assert s.dry_run is False (currently true) and settings.validate() == ['NAUKRI_EMAIL is not set', ...] contains no complaint about DRY_RUN."
+    confidence: medium
+  - key: core-10
+    title: "Jobs Naukri already shows as Applied are not remembered, so they are re-opened on every run"
+    critical_class: logic
+    severity: LOW
+    anchors:
+      - {path: common/ledger.py, line: 131, snippet: "\"SELECT 1 FROM applications WHERE job_id = ? AND status IN (?, ?, ?) LIMIT 1\","}
+      - {path: naukri_bot/cli.py, line: 566, snippet: "elif result.status == ApplyStatus.ALREADY_APPLIED:"}
+    reachability: "Any job that was applied to manually, in an earlier ledger, or on another device. The scheduler or the user re-runs the bot daily."
+    defect: "has_applied counts only APPLIED, APPLIED_EXTERNAL and APPLIED_PLATFORM. A page that shows 'Applied' yields ApplyStatus.ALREADY_APPLIED (apply.py:~367). It is recorded but never counted by has_applied, so select_for_application re-selects it on the next run and the loop pays a full page load plus the 15 s render wait for it again. Because these are high-scoring and fresh, they tend to sit at the top of the queue each day and delay the real applications."
+    contract: "cli.py module docstring step 6: 'drop anything already applied to'."
+    repro: "1. ledger.record_attempt(ApplyResult('7','u',ApplyStatus.ALREADY_APPLIED)). 2. assert ledger.has_applied('7') is False (currently true; the contract implies True)."
+    confidence: medium
+  - key: core-11
+    title: "answers.txt and profile.yaml are rewritten in place from a stale read, so a concurrent edit or a crash loses the user's data"
+    critical_class: lifecycle
+    severity: LOW
+    anchors:
+      - {path: common/answers.py, line: 506, snippet: "with open(self.book.path, \"w\", encoding=\"utf-8\") as handle:"}
+      - {path: common/assist.py, line: 500, snippet: "path.write_text(updated, encoding=\"utf-8\")"}
+    reachability: "The user (or the control site's answers editor) saves answers.txt while a run is judging a question or common.assist is filling blanks. Or the process is killed mid-write (SIGKILL on the second Stop press, power loss)."
+    defect: "_keep_judged reads the whole file (answers.py:~495), builds the new text, then reopens with mode 'w', which truncates before writing. assist._apply does read_text then write_text the same way. There is no temp-file-and-replace, no lock and no mtime re-check, so (a) an edit made between the read and the write is silently overwritten and (b) a crash after truncation leaves a partial or empty answers.txt and profile.yaml. _backup keeps only 10 copies and runs only on the assist path, not on the judge path."
+    contract: "assist.py module docstring: 'Every edit is backed up'. The judge path in answers.py makes no backup."
+    repro: "static-only"
+    confidence: low

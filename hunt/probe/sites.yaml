@@ -1,0 +1,171 @@
+lane: sites
+lane_run:
+  first_attempt: {task: bg_3f927c97, status: failed, error: "ProviderModelNotFoundError: Model not found: openai/gpt-6-astra"}
+  second_attempt: {task: bg_2862e09d, session: ses_e9d543c54ffe7gCKDaoLCy3cZy, status: completed, duration: "7m 36s"}
+entry_points:
+  - {kind: cli, name: "python3 -m sites_bot.external --url/--retry-pending/--google-login", path: sites_bot/external.py, line: 1803, note: "Local user or launchd. --url navigates to any URL with no scheme check in the module. The web control site's /api run for 'external' (web/state.py:121) restricts the URL to http(s). Page text and forms on that site are third-party controlled."}
+  - {kind: http, name: "web control site 'Apply on company site' action", path: web/state.py, line: 108, note: "A localhost request passes url/title/company as an argv list (no shell) to sites_bot.external. The Stop button sends SIGINT to the bot's process group; browser_agent's claude runs in its own session and is not reached (web/server.py:156)."}
+  - {kind: cli, name: "python3 -m sites_bot.browser_agent --url [--task]", path: sites_bot/browser_agent.py, line: 647, note: "Local user. Starts claude -p with a Playwright MCP attached over CDP to the bot's Chrome. The prompt carries scraped page and posting text."}
+  - {kind: import, name: "browser_agent.take_over / finish_application", path: sites_bot/browser_agent.py, line: 584, note: "Called from external.apply_on_company_site, retry_pending, main and platforms.apply_to when BROWSER_AGENT=true. Input is a Naukri or board posting text and the career-site page."}
+  - {kind: cli, name: "python3 -m sites_bot.platforms [--site --update-profile --profile-only]", path: sites_bot/platforms.py, line: 735, note: "Local user. The board job cards, titles, descriptions and Apply links come from third-party recruiters. update_profile runs the agent on the user's board profile."}
+  - {kind: cli, name: "python3 -m sites_bot.cold_email [--scan-naukri --to]", path: sites_bot/cold_email.py, line: 421, note: "Local user. Addresses are scraped from tailored postings, agent report.json, company_sites.md and Naukri job pages (third-party text)."}
+  - {kind: import, name: "external.apply_on_company_site", path: sites_bot/external.py, line: 1547, note: "Called from naukri_bot/cli.py:879 and :911 during the daily Naukri run. The URL comes from Naukri's 'Apply on company site' button, which the employer controls."}
+  - {kind: script, name: "accounts.sign_in / google_login", path: sites_bot/accounts.py, line: 263, note: "Reached from external.apply_here whenever a page has a password box and no file input. Types the shared COMPANY_SITE_PASSWORD on whatever domain the page is on."}
+pruned:
+  - {path: sites_bot/__init__.py, reason: "One line, no code."}
+  - {path: sites_bot/page_brain.py, reason: "No YAML dump or load exists. Page dumps are PNG screenshots in SCREENSHOT_DIR plus text passed in a prompt. Prompt-injection reach is limited to one click among numbered visible controls, with LinkedIn/Indeed labels refused (external.py:~575). The '%' prompt is built with the page text as an argument, not as the format string, so format injection is not possible."}
+  - {path: sites_bot/cold_email.py, reason: "Drafts-only invariant holds. There is no smtplib import or send call. The only transport is IMAP APPEND with the \\Draft flag, plus X-Unsent .eml files. Header injection through scraped addresses is not possible: the _EMAIL regex excludes whitespace and control characters, and Subject is whitespace-normalised with split(). The --to value is unvalidated, but only the local user can pass it."}
+  - {path: "external_jobs.md / external_archive.md / external_opened.tsv", reason: "These worklist files do not exist in sites_bot. The only worklists are data/inputs/company_sites.md, accounts.md and cold_emails.jsonl. Dedup there is by the exact '- Naukri:' line."}
+  - {path: sites_bot/platforms.py (PLATFORM_LIMIT, DRY_RUN), reason: "The limit counts confirmed applications only, with dry runs counted as sent. apply_to returns before the Apply click in dry runs. 2 unconfirmed submits stop the board via sent_unconfirmed in the ledger."}
+hypotheses:
+  - key: sites-01
+    title: "Browser-agent secrets.env sits in the folder the agent can upload from, and all tabs and tools are open to page-injected instructions"
+    critical_class: injection
+    severity: HIGH
+    anchors:
+      - {path: sites_bot/browser_agent.py, line: 381, snippet: "secrets.write_text(\"%s=%s\\n\" % (SECRET_NAME, _dotenv_value(settings.company_site_password)), encoding=\"utf-8\")"}
+      - {path: sites_bot/browser_agent.py, line: 295, snippet: "\"--allowedTools\", \"mcp__%s\" % SERVER,"}
+      - {path: sites_bot/browser_agent.py, line: 159, snippet: "6. Work only in the tab named below, on that site and the sign-in pages it sends"}
+    reachability: "A third party controls the career page or posting text. Preconditions: BROWSER_AGENT=true, COMPANY_SITE_PASSWORD set, and the agent following an instruction planted in the page or posting. The posting is placed in the prompt (application_prompt, job.description) and the page arrives through MCP snapshots."
+    defect: "README says the password never reaches the model. It is enforced only by prompt rule 6. Only browser_close and browser_run_code_unsafe are disallowed (line 299), so browser_navigate, browser_evaluate, browser_file_upload, browser_tabs and browser_type stay allowed. secrets.env (the real password, written at 381) is created inside workdir. workdir is also claude's cwd, the MCP --output-dir and the folder resume copies go into (line 377). That is the file-upload root. A hostile page can tell the agent to open its file chooser and upload secrets.env, or to navigate to its own login form and type COMPANY_SITE_PASSWORD (the MCP swaps in the real value on any origin). The MCP is also attached to the whole Chrome over CDP, so the Naukri and Google tabs and their sessions are reachable. mcp_config passes no --allowed-origins."
+    contract: "README: 'Its only tools are the browser tools ... the password never reaches the model.' Prompt rule 6 is the only guard."
+    repro: "static-only"
+    confidence: medium
+  - key: sites-02
+    title: "One shared career-site password is typed, and used to register, on any third-party page that shows a password box, including in dry runs"
+    critical_class: secret
+    severity: HIGH
+    anchors:
+      - {path: sites_bot/accounts.py, line: 322, snippet: "state, detail = _submit_sign_in(driver, email, settings.company_site_password, sign_in_fields)"}
+      - {path: sites_bot/accounts.py, line: 359, snippet: "state, detail = _submit_create(driver, email, account_password(settings), profile)"}
+      - {path: sites_bot/external.py, line: 1469, snippet: "ok, how = sign_in(driver, settings, profile, dry_run)"}
+    reachability: "A hostile or look-alike career page. It is reached from a Naukri company-site link, an Instahyre or Hirist 'company website' link, or a web-UI --url. The page needs a password input and no file input, so wants_account() is true. No attacker action is needed beyond hosting the page."
+    defect: "apply_here calls sign_in for any host. sign_in has no allowlist, no ATS or host check, and no comparison against accounts.md. If the page has one password box and COMPANY_SITE_PASSWORD is set, _submit_sign_in types the real shared password (322). Dry runs do this too, because only account creation is gated on dry_run. With two password boxes it registers with the same password (359) and ticks the terms boxes. The README states the password is shared across all sites, so one hostile page learns the email plus the password for every account in accounts.md."
+    contract: "none"
+    repro: "static-only"
+    confidence: medium
+  - key: sites-03
+    title: "GMAIL_APP_PASSWORD is sent over an IMAP TLS connection with no certificate verification and no timeout"
+    critical_class: secret
+    severity: MEDIUM
+    anchors:
+      - {path: sites_bot/cold_email.py, line: 312, snippet: "imap = imaplib.IMAP4_SSL(GMAIL_IMAP)"}
+      - {path: sites_bot/cold_email.py, line: 314, snippet: "imap.login(account, app_password)"}
+    reachability: "A network attacker on the user's path (public wifi or a rogue gateway) while 'python3 -m sites_bot.cold_email' runs with GMAIL_APP_PASSWORD set. No scraped content is involved."
+    defect: "IMAP4_SSL is built without ssl_context. In CPython 3.12 that falls back to ssl._create_stdlib_context(), which is an unverified context (CERT_NONE, no hostname check). A MITM can present any certificate and read the account name and app password from login(). The app password gives full IMAP/SMTP access to the Gmail account. There is also no socket timeout, so a stalled server hangs the run."
+    contract: "none"
+    repro: "1. Monkeypatch ce.imaplib.IMAP4_SSL with a recorder class that accepts *args, **kwargs and a fake login/append/logout. 2. Call ce.gmail_draft(message, 'a@b.test', 'pw'). 3. Assert the recorded kwargs contain a ssl_context whose verify_mode is CERT_REQUIRED and a timeout; the test fails because neither is passed. Alternatively assert ssl._create_stdlib_context().verify_mode == ssl.CERT_NONE."
+    confidence: medium
+  - key: sites-04
+    title: "With no COMPANY_SITE_PASSWORD saved, the agent creates accounts whose real password is the literal word COMPANY_SITE_PASSWORD"
+    critical_class: logic
+    severity: MEDIUM
+    anchors:
+      - {path: sites_bot/browser_agent.py, line: 379, snippet: "if settings.company_site_password:"}
+      - {path: sites_bot/browser_agent.py, line: 214, snippet: "\"password, which you never see. Creating an account with that email and password is allowed \""}
+    reachability: "BROWSER_AGENT=true, an empty COMPANY_SITE_PASSWORD (first use, before the scripted flow generated one), and a site that reaches the agent on a sign-up form. The scripted path generates and saves a password through accounts.account_password; the agent path never does."
+    defect: "run_agent writes the secrets file and passes --secrets only when settings.company_site_password is truthy (379). finish_application never calls account_password(). The prompt still tells the agent to type exactly the word COMPANY_SITE_PASSWORD and permits creating an account. With no secrets file the MCP substitutes nothing, so the site gets the literal string 'COMPANY_SITE_PASSWORD' as the password. _keep_account then records the account as created. The user's resume and PII sit behind a publicly guessable password, and later scripted sign-ins use a different generated password."
+    contract: "README: 'For the career-site password it types the word COMPANY_SITE_PASSWORD; the Playwright server swaps in the real one from .env.'"
+    repro: "1. Build settings with company_site_password=''. 2. Use the fake claude/Popen fixture from tests/sites/test_browser_agent.py and call agent.take_over(driver, job, profile, settings, None, False, stuck). 3. Assert that either a password was generated or the prompt in task.md forbids account creation; today the call has no secrets.env, no --secrets arg in mcp.json, and a prompt that allows account creation."
+    confidence: medium
+  - key: sites-05
+    title: "wait_for_confirmation counts an application as submitted from a URL substring such as 'success' or 'applied' as soon as a page momentarily has no fields"
+    critical_class: logic
+    severity: MEDIUM
+    anchors:
+      - {path: sites_bot/external.py, line: 1404, snippet: "if any(word in url for word in _CONFIRM_URL_WORDS) and not discover_fields(driver):"}
+      - {path: sites_bot/external.py, line: 161, snippet: "_CONFIRM_URL_WORDS = (\"confirmation\", \"thank\", \"success\", \"submitted\", \"applied\")"}
+    reachability: "Any company job URL whose path contains one of those words, for example /customer-success-engineer or /applied-scientist. It triggers when the page has no visible fields right after the Submit click (SPA redraw or navigation). No attacker is needed; a job poster controls the URL."
+    defect: "After _click(submit) at 1516, the first loop iteration checks the lower-cased URL for 'success', 'applied', 'thank' and similar words. It does not compare against the pre-submit URL, and it does not look for confirmation text. discover_fields returns [] on any transitional page, so the function returns True and apply_here sets APPLIED_EXTERNAL. The ledger and report then count an application that was never accepted, and the entry is dropped from company_sites.md. The body check also matches generic phrases such as 'thanks for your interest' and 'you have applied' anywhere on the page."
+    contract: "README: 'counts the application only when the site confirms it (\"Thank you for applying\", a confirmation page). A site that answers with an error is recorded as an error, never as applied.' Test test_silence_after_submit_is_not_a_confirmation."
+    repro: "1. Build the stub driver/page from tests/sites/test_external.py with current_url 'https://jobs.acme.test/careers/customer-success-engineer/apply'. 2. Make find_elements/execute_script return no fields and no errors. 3. Call ext.wait_for_confirmation(driver, timeout_s=0). 4. Assert not confirmed; today it returns (True, 'confirmation page ...')."
+    confidence: high
+  - key: sites-06
+    title: "An exception raised by the Submit click itself is recorded as a plain ERROR without the 'Submit was clicked' marker, so the job can be submitted twice"
+    critical_class: error
+    severity: MEDIUM
+    anchors:
+      - {path: sites_bot/external.py, line: 549, snippet: "element.click()"}
+      - {path: sites_bot/external.py, line: 552, snippet: "driver.execute_script(_CLICK_SCRIPT, element)"}
+      - {path: sites_bot/external.py, line: 1516, snippet: "_click(driver, submit)"}
+      - {path: sites_bot/external.py, line: 1573, snippet: "except (StaleElementReferenceException, WebDriverException) as exc:"}
+    reachability: "Submit triggers a full navigation. element.click() raises TimeoutException or WebDriverException after the form was already sent, the JS-fallback click then hits a stale element, and the exception escapes apply_here. This is a normal timing failure on slow ATS pages."
+    defect: "_click falls back to a second JS click when the first raises. The second call can raise Stale/WebDriverException out of apply_here. apply_on_company_site turns that into ERROR with detail 'TimeoutException: ...' (1573). That text has no 'submit was clicked', so ledger.sent_unconfirmed (LIKE '%submit was clicked%') and external._WAITS_ON_YOU do not hold it back. The job is recorded as a plain error and retried by retry_pending or the next run. platforms.apply_to has the same shape: answer_form clicks Submit inside the try at its except WebDriverException."
+    contract: "README: 'a job is recorded as \"Submit was clicked ...\" and never tried again automatically, so nothing is sent twice.' ledger.sent_unconfirmed docstring: 'The application may have gone through, so another attempt could send it twice.'"
+    repro: "1. Stub a driver and page for apply_here with a Submit button whose .click() raises TimeoutException and whose execute_script for the click raises StaleElementReferenceException. 2. Call ext.apply_on_company_site(...). 3. Assert result.status == ERROR and 'submit was clicked' in result.detail.lower(), and that ext.retryable({'site': url, 'why': result.detail}) is False. Both assertions fail today."
+    confidence: medium
+  - key: sites-07
+    title: "find_addresses accepts any person's mailbox containing 'hr', 'cv' or 'job' and any address near the word 'mail', not only addresses published for applications"
+    critical_class: logic
+    severity: MEDIUM
+    anchors:
+      - {path: sites_bot/cold_email.py, line: 52, snippet: "_HIRING_MAILBOX = re.compile(r\"hr|career|job|recruit|talent|hiring|people|resume|cv|apply\", re.I)"}
+      - {path: sites_bot/cold_email.py, line: 51, snippet: "_HIRING_WORDS = re.compile(r\"resume|\\bcv\\b|apply|application|send|share|mail|reach|contact|\\bhr\\b|hiring|recruit|career|interested\", re.I)"}
+    reachability: "Any third-party posting, career page or Naukri job page text the bot reads, such as 'Meet our CEO chris@acme.com' or 'Email: shreya@acme.com'. No attacker is needed; an attacker can plant a victim's address in a posting to have a draft with the resume attached created for that address."
+    defect: "_HIRING_MAILBOX is an unanchored substring test on the local part. 'chris', 'shreya', 'mehra' and 'jobin' all match, and so does any address whose name contains 'cv' or 'people'. _HIRING_WORDS contains the bare token 'mail', which matches 'email' or 'e-mail' within 140 characters of nearly any printed address. Personal addresses of staff or third parties therefore pass the filter, and a draft with the user's resume and contact details attached is saved to .eml, Gmail Drafts and cold_emails.jsonl."
+    contract: "README: 'only an address a company published for applications ... addresses with no hiring words around them, are left out.' Module docstring: 'Addresses come only from where a company published them.'"
+    repro: "1. Call ce.find_addresses('Meet our CEO chris@acme.com, she runs the company.'). 2. Assert the result is []. Today it returns ['chris@acme.com'] because 'hr' matches inside 'chris'. 3. Also call ce.find_addresses('Our office email is bob@acme.com') and assert []; it returns the address because 'mail' matches inside 'email'."
+    confidence: high
+  - key: sites-08
+    title: "Stopping a run orphans the claude/Playwright process group and can leave secrets.env on disk"
+    critical_class: lifecycle
+    severity: MEDIUM
+    anchors:
+      - {path: sites_bot/browser_agent.py, line: 394, snippet: "start_new_session=True,"}
+      - {path: sites_bot/browser_agent.py, line: 397, snippet: "out, err = process.communicate(timeout=settings.browser_agent_timeout_s)"}
+      - {path: sites_bot/browser_agent.py, line: 406, snippet: "if secrets is not None and secrets.exists():"}
+    reachability: "The local user presses Stop in the web control site (SIGINT, then SIGKILL on a second press, to the bot's process group) or Ctrl-C/kills the bot while an agent task runs. The same applies to any non-timeout exception, for example UnicodeDecodeError from text=True."
+    defect: "claude is started in its own session, so the web server's killpg does not reach it. Only the TimeoutExpired branch calls _stop(process). A KeyboardInterrupt or other exception from communicate skips _stop, so claude and its npx Playwright MCP keep running on the CDP browser and spend budget on the user's page, possibly clicking Submit after the bot has gone. On SIGINT the finally unlinks secrets.env. On SIGKILL (the second Stop press, or a launchd kill) no cleanup runs, and secrets.env with the real password stays in data/reports/<date>/agent/<task>/. It is created with the default umask and chmod'd to 0600 only afterwards, so there is a short window with default permissions."
+    contract: "web/server.py stop(): 'letting it close the browser cleanly'; browser_agent docstring and README: a bounded task of at most BROWSER_AGENT_TIMEOUT_S seconds and BROWSER_AGENT_BUDGET_USD."
+    repro: "1. Use the fake Popen from tests/sites/test_browser_agent.py with communicate raising KeyboardInterrupt. 2. Monkeypatch agent.os.killpg to record calls. 3. Call agent.run_agent(...) inside pytest.raises(KeyboardInterrupt). 4. Assert the recorded killpg calls contain SIGTERM for the process pid; today it is empty."
+    confidence: medium
+  - key: sites-09
+    title: "An uncaught OSError between save_eml, the Gmail append and _record aborts the whole cold-email run, and a long scraped address makes it a daily poison pill"
+    critical_class: error
+    severity: MEDIUM
+    anchors:
+      - {path: sites_bot/cold_email.py, line: 304, snippet: "path = folder / (\"%s (%s).eml\" % (name, lead.email))"}
+      - {path: sites_bot/cold_email.py, line: 322, snippet: "except imaplib.IMAP4.error as exc:"}
+      - {path: sites_bot/cold_email.py, line: 401, snippet: "_record(settings, lead, subject, eml, not problem, now)"}
+    reachability: "A posting or page that prints a hiring-context address with a very long domain (the _EMAIL regex has no length cap), or a network reset or SSL error during the Gmail append. The text comes from a third-party posting."
+    defect: "save_eml puts the full address in the filename. A domain of about 250 characters gives a name over 255 bytes, so write_bytes raises OSError (File name too long). draft_all has no try/except, so main crashes, skips later leads and skips report.update_quietly. The lead is never recorded, so every later run reaches it again, in the same order, and crashes again. Separately, gmail_draft catches only imaplib.IMAP4.error. A ConnectionResetError or ssl.SSLError (both OSError) during login/append escapes after the .eml is saved and possibly after the Gmail draft was appended. _record is not reached, so the next run drafts the same address again and creates duplicate Gmail drafts."
+    contract: "README: 'Once per address: data/inputs/cold_emails.jsonl records every draft; the same address is not written to again for 30 days.'"
+    repro: "1. Make a Lead with email 'hr@' + '.'.join(['a'*60]*4) + '.com'. 2. Call ce.draft_all(settings, profile, _Client({'subject': ..., 'body': BODY}), [lead], 10, False). 3. Assert it returns counts without raising; today it raises OSError ENAMETOOLONG. For the second case, monkeypatch ce.imaplib.IMAP4_SSL with a fake whose append raises ConnectionResetError and assert the lead is still recorded in read_records; today it is not."
+    confidence: high
+  - key: sites-10
+    title: "A manual --url run records nothing in the ledger on success, never clears the matching company_sites.md entry, and does not record 'Submit was clicked' errors"
+    critical_class: logic
+    severity: MEDIUM
+    anchors:
+      - {path: sites_bot/external.py, line: 1892, snippet: "if result.status == ApplyStatus.ERROR:"}
+      - {path: sites_bot/external.py, line: 1650, snippet: "return bool(job.url) and (\"\\n- Naukri: %s\\n\" % job.url) in block + \"\\n\""}
+      - {path: sites_bot/external.py, line: 1593, snippet: "\"Delete an entry once you have applied; the bot drops it itself when it\\n\""}
+    reachability: "The documented workflow: work one company_sites.md Site link by hand with --url (also the web UI action). Then later run --retry-pending or the Naukri flow."
+    defect: "main() builds job.url = args.url, the site link, whereas entries are keyed by their '- Naukri:' line, so _same_job never matches. After an APPLIED_EXTERNAL result, main falls through to return EXIT_OK without forget_company_site, without ledger.record_attempt and without a report row. The original entry stays and is still retryable. On ERROR with 'Submit was clicked ...', main returns without record_company_site (1892), so nothing marks it as sent. retry_pending or a later run can visit the same job again and may submit a duplicate. browser_agent.main has the same job.url = args.url and forget_company_site mismatch."
+    contract: "record_company_site header: 'Delete an entry once you have applied; the bot drops it itself when it finishes one'. README: 'Work one page by hand, for example a link from company_sites.md.'"
+    repro: "1. Write company_sites.md with an entry whose '- Naukri:' is N and '- Site:' is S. 2. Monkeypatch ext.apply_here to return ExternalResult(status=APPLIED_EXTERNAL) and browser.create_driver to a stub. 3. Run ext.main(['--url', S, '--title', 'T', '--company', 'C']). 4. Assert the entry for N is gone and the ledger has a row; today the entry remains and there is no ledger row."
+    confidence: high
+  - key: sites-11
+    title: "platforms.update_profile runs the browser agent regardless of BROWSER_AGENT and BROWSER_AGENT_LIMIT"
+    critical_class: logic
+    severity: LOW
+    anchors:
+      - {path: sites_bot/platforms.py, line: 667, snippet: "def update_profile(driver: Any, board: Board, settings: Settings, profile: Profile,"}
+      - {path: sites_bot/platforms.py, line: 691, snippet: "run = browser_agent.run_agent(driver, settings, prompt,"}
+    reachability: "Local user running 'python3 -m sites_bot.platforms --update-profile' or '--profile-only' with BROWSER_AGENT=false. The agent then drives the signed-in board session with the user's saved password."
+    defect: "update_profile calls browser_agent.run_agent directly. It never checks settings.browser_agent, never calls tasks_left, and never increments _started. Every board in the loop starts a separate claude run at BROWSER_AGENT_BUDGET_USD each, without limit. The board profile is a page the board's other users and recruiters can influence."
+    contract: "README: 'BROWSER_AGENT=true hands that open page to Claude Code'; 'It is used at most BROWSER_AGENT_LIMIT times a run'."
+    repro: "1. Use settings with browser_agent=False and browser_agent_limit=0. 2. Stub driver, a fake claude and safe_get. 3. Call plat.update_profile(driver, plat.BOARDS['hirist'], settings, profile). 4. Assert the fake claude was never started; today it is started."
+    confidence: medium
+  - key: sites-12
+    title: "Non-atomic read-modify-write of company_sites.md and .env can lose entries or truncate the secrets file"
+    critical_class: concurrency
+    severity: LOW
+    anchors:
+      - {path: sites_bot/external.py, line: 1646, snippet: "path.write_text(body, encoding=\"utf-8\")"}
+      - {path: sites_bot/accounts.py, line: 93, snippet: "write_env_value(settings.env_file, PASSWORD_KEY, password)"}
+    reachability: "Two bot processes overlapping (a web-started run plus a launchd or CLI run), a SIGKILL from the web UI's force stop, or the first-time password generation racing a second process. Precondition: no saved COMPANY_SITE_PASSWORD."
+    defect: "_write_company_sites reads the whole file, filters blocks and rewrites it with write_text, which truncates first. A concurrent record_company_site loses the other writer's entry, and a kill mid-write leaves a truncated worklist. account_password generates a password and calls write_env_value, which also rewrites the whole .env with write_text. A kill mid-write truncates the file that holds every secret. Two concurrent first-time runs generate different passwords and the last writer wins. Accounts the first run created are then locked behind a password no longer saved anywhere."
+    contract: "none"
+    repro: "static-only"
+    confidence: low

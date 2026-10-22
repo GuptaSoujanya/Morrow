@@ -1,0 +1,122 @@
+lane: dashboard
+lane_run:
+  first_attempt:
+    task: bg_f5c00df9
+    session: ses_e9caecb4effeCcOgulRuE7ph9D
+    status: completed
+    duration: 1m 6s
+entry_points:
+- kind: html
+  name: index.html module script
+  path: froned-dashbord/app/index.html
+  line: 35
+  note: loads ./js/main.js, which does not exist in the tree
+- kind: router
+  name: parseHash
+  path: froned-dashbord/app/js/router.js
+  line: 26
+  note: hash route parsing from user-controlled location.hash
+- kind: network
+  name: api
+  path: froned-dashbord/app/js/api.js
+  line: 20
+  note: single fetch wrapper for all /api/* calls to web/server.py
+- kind: view
+  name: renderSites
+  path: froned-dashbord/app/js/views/sites.js
+  line: 56
+  note: renders server-supplied status.sites entries, including URL fields, into anchors
+- kind: view
+  name: renderReports
+  path: froned-dashbord/app/js/views/reports.js
+  line: 28
+  note: renders server-supplied report HTML in an iframe srcdoc
+- kind: component
+  name: appendRunLines
+  path: froned-dashbord/app/js/components/console.js
+  line: 83
+  note: appends live run output lines to the DOM
+pruned:
+- path: froned-dashbord/app/js/dom.js
+  reason: h() uses textContent and setAttribute only; no innerHTML sink
+- path: froned-dashbord/app/js/components/charts.js
+  reason: builds SVG from DOM nodes, no innerHTML
+- path: froned-dashbord/app/js/api.js
+  reason: fetch errors and non-JSON bodies are handled; no defect found
+- path: froned-dashbord/app/styles
+  reason: CSS only
+- path: froned-dashbord/app
+  reason: 'dashboard-01 superseded: froned-dashbord/app/js/main.js now exists and is loaded by index.html (re-checked 2026-10-22 after the dashboard was rebuilt mid-run)'
+- path: froned-dashbord/app
+  reason: 'dashboard-02 superseded: views todo.js, setup.js and files.js now exist (re-checked 2026-10-22 after the dashboard was rebuilt mid-run)'
+- path: froned-dashbord/app
+  reason: 'dashboard-03 superseded: parseHash now wraps decodeURIComponent in try (re-checked 2026-10-22 after the dashboard was rebuilt mid-run)'
+hypotheses:
+- key: dashboard-04
+  title: Unvalidated URL from the status data used as anchor href
+  critical_class: injection
+  severity: LOW
+  anchors:
+  - path: froned-dashbord/app/js/views/sites.js
+    line: 25
+    snippet: 'href: entry[k], target: "_blank", rel: "noopener noreferrer", text: label'
+  reachability: conditional
+  defect: entry.site and entry.naukri come from scraped job-page URLs and the scheme is never checked, so a javascript, data or file URL becomes a clickable link.
+  contract: Only http(s) URLs should become hrefs.
+  repro: static-only
+  confidence: low
+- key: dashboard-05
+  title: Today in Reports uses the UTC date instead of the local date
+  critical_class: logic
+  severity: LOW
+  anchors:
+  - path: froned-dashbord/app/js/views/reports.js
+    line: 29
+    snippet: const today = new Date().toISOString().slice(0, 10);
+  reachability: reachable
+  defect: toISOString() is UTC while the server works in local days, so in IST before 05:30 today resolves to yesterday.
+  contract: Day keys must match the server's local-day ISO strings.
+  repro: static-only
+  confidence: medium
+- key: dashboard-06
+  title: Report cache never invalidates, so today's report goes stale
+  critical_class: logic
+  severity: LOW
+  anchors:
+  - path: froned-dashbord/app/js/views/reports.js
+    line: 7
+    snippet: const cache = new Map();
+  - path: froned-dashbord/app/js/views/reports.js
+    line: 31
+    snippet: if (!entry) loadReport(day);
+  reachability: reachable
+  defect: Results including exists false are cached for the page lifetime, so a newly written report is never shown until reload.
+  contract: The report should be refetched when the run state changes.
+  repro: static-only
+  confidence: high
+- key: dashboard-07
+  title: Run console appends output lines without a cap
+  critical_class: memory
+  severity: LOW
+  anchors:
+  - path: froned-dashbord/app/js/components/console.js
+    line: 87
+    snippet: for (const [, text] of entries) {
+  reachability: conditional
+  defect: Every output line is appended as a DOM span with no bound.
+  contract: Keep a bounded tail of lines.
+  repro: static-only
+  confidence: medium
+- key: dashboard-08
+  title: Concurrent preview calls can land out of order
+  critical_class: concurrency
+  severity: LOW
+  anchors:
+  - path: froned-dashbord/app/js/forms.js
+    line: 85
+    snippet: 'const reply = await api("/api/preview", { action, options: form(action) });'
+  reachability: conditional
+  defect: Debounced preview responses are not sequenced, so a stale response can overwrite a newer one.
+  contract: Discard responses whose request is not the latest for that action.
+  repro: static-only
+  confidence: low

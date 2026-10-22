@@ -1,0 +1,145 @@
+lane: edge
+lane_run:
+  first_attempt: {task: bg_4cf6f462, session: ses_e9d5bc3aaffes6NQ7sXGWOzeVt, status: completed, duration: "3m 20s"}
+entry_points:
+  - {kind: launchd, name: com.naukri-bot.profile-update, path: scripts/install_profile_updater.sh, line: 29, note: "LaunchAgent runs scripts/run_profile_update.sh at load and every 900 s. No EnvironmentVariables, so launchd's minimal PATH applies."}
+  - {kind: launchd, name: com.naukri-bot.linkedin-post, path: scripts/install_linkedin_poster.sh, line: 29, note: "LaunchAgent runs scripts/run_linkedin_post.sh at load and every 1800 s."}
+  - {kind: script, name: install_profile_updater.sh / install_linkedin_poster.sh, path: scripts/install_profile_updater.sh, line: 38, note: "The local user runs these by hand. They write ~/Library/LaunchAgents/*.plist, then bootout and bootstrap."}
+  - {kind: script, name: profile_update_status.sh / linkedin_status.sh, path: scripts/profile_update_status.sh, line: 5, note: "The local user runs these by hand. They read the STATE path from the shell environment or a default."}
+  - {kind: script, name: google_login.sh, path: scripts/google_login.sh, line: 11, note: "The local user runs it by hand. It parses BROWSER_PROFILE_DIR out of .env with grep and cut, then opens Chrome on that profile with any URLs passed as arguments."}
+  - {kind: script, name: scripts/web, path: scripts/web, line: 14, note: "The local user runs it by hand. It pip-installs requirements.txt on first run if markdown_it is missing, then execs python -m web on 127.0.0.1:8000."}
+  - {kind: http, name: course/serve.py, path: course/serve.py, line: 47, note: "ThreadingHTTPServer on 127.0.0.1:PORT, rooted at course/. Reachable by any local process or by a browser page that can reach loopback."}
+  - {kind: http, name: "web /course/ -> course/index.html and news.md", path: course/news.md, line: 56, note: "Browser-side JS fetches HN Algolia and dev.to on every open. It runs same-origin with the control API on 127.0.0.1:8000."}
+pruned:
+  - {path: frontend-dashboard/, reason: "The directory does not exist in the working tree: ls fails, glob finds no frontend*, git ls-files has no match. There are no package.json, vite.config.ts, App.tsx or other files to defect. The /dashboard/ route has nothing to serve."}
+  - {path: legacy/Naukri-Edge.py, reason: "Nothing imports or launches it: grep of .py, .sh and .md outside legacy/ finds no reference. Credentials come only from os.getenv after load_dotenv(), with no hard-coded values. The email and password are not logged. It runs only if a user invokes it by hand."}
+  - {path: legacy/Naukri-Recommended.py, reason: "Same as Naukri-Edge.py: unreferenced, and NAUKRI_* is read only from the environment or .env. No literal credentials."}
+  - {path: course/serve.py, reason: "The server binds 127.0.0.1 and serves directory=ROOT, which is course/ and not the repo root, so .env is not exposed. is_private() rejects dot-files and any realpath outside ROOT, including symlink escapes. translate_path normalises '..'. No traversal found."}
+  - {path: course/_sidebar.md, reason: "Plain markdown list of relative links with no raw HTML or script. Its content is not attacker-controlled."}
+  - {path: scripts/install_profile_updater.sh plist modes and credentials, reason: "The plist contains only Label, ProgramArguments, StartInterval and log paths. No EnvironmentVariables, so no .env secrets are copied into it and its 0644 mode is harmless. The labels are unique: com.naukri-bot.profile-update and com.naukri-bot.linkedin-post."}
+  - {path: scripts/run_linkedin_post.sh and scripts/run_profile_update.sh, reason: "Paths are quoted. launchd does not overlap two instances of the same label, so the scheduled runs do not race each other. The logs capture whatever the Python modules print, which is outside this lane."}
+  - {path: scripts/web, reason: "Quoting is correct and ${0:A:h} resolves symlinks. The one-time pip install of the repo's own requirements.txt is a user-initiated step, not a defect."}
+hypotheses:
+  - key: edge-01
+    title: "News page builds an href from an unescaped third-party URL, giving attribute-injection XSS on the origin that can read and write .env"
+    critical_class: injection
+    severity: HIGH
+    anchors:
+      - {path: course/news.md, line: 56, snippet: "'<a class=\"title\" href=\"' + esc(it.url) + '\" target=\"_blank\" rel=\"noopener\">' + esc(it.title) + '</a>' +"}
+      - {path: course/news.md, line: 38, snippet: "var d = document.createElement('div'); d.textContent = t || ''; return d.innerHTML;"}
+      - {path: course/index.html, line: 583, snippet: "executeScript: true,"}
+    reachability: "Anyone who can submit a Hacker News story. h.url comes straight from the Algolia API for the AI, Top and LLM tabs. The victim only needs to open /course/news.md through the control site (http://127.0.0.1:8000/course/#/news) while the story is in the feed. Preconditions: HN accepts a submitted URL containing a double quote, which I did not verify. If the control site's Host and Origin checks pass for the page's own origin, which they do, same-origin fetches succeed."
+    defect: "esc() (line 38) escapes only & < > because it serialises a text node, so a double quote survives. At line 56 esc(it.url) is placed inside href=\"...\". A URL such as https://x.test/?a=\" autofocus onfocus=\"fetch('/api/file?name=env')... closes the attribute and adds an event handler. The script on this page runs from the same origin as the control API. web/server.py change_ok accepts that Origin, and GET /api/file?name=env returns the full .env text, which holds NAUKRI_PASSWORD, GOOGLE_PASSWORD, GMAIL_APP_PASSWORD and the Telegram token. POST /api/file with name=env can overwrite .env, and /api/run starts the bots. A javascript: scheme is not blocked either; dev.to and HN only supply http(s)."
+    contract: none
+    repro: "static-only. Mock the feed: serve a copy of course/ with a stubbed fetch returning {hits:[{title:'t',url:'https://a.test/?q=\" autofocus onfocus=\"window.pwned=1\" x=\"',objectID:'1'}]}. Call render() and inspect list.innerHTML: the anchor gets a live onfocus attribute."
+    confidence: medium
+  - key: edge-02
+    title: "Course site loads many unpinned CDN scripts with no SRI, on the same origin as the control API"
+    critical_class: supply
+    severity: MEDIUM
+    anchors:
+      - {path: course/index.html, line: 809, snippet: "<script src=\"https://cdn.jsdelivr.net/npm/docsify@4\"></script>"}
+      - {path: course/index.html, line: 813, snippet: "<script src=\"https://cdn.jsdelivr.net/npm/docsify-pagination/dist/docsify-pagination.min.js\"></script>"}
+      - {path: course/index.html, line: 825, snippet: "<script src=\"https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js\"></script>"}
+    reachability: "Anyone who can publish a new version of docsify, docsify-copy-code, docsify-pagination (no version at all), prismjs or mermaid, or who can compromise or MITM jsdelivr. It triggers whenever the course is opened, either via web at 127.0.0.1:8000/course/ or standalone."
+    defect: "Every script tag uses a floating major version or none, with no integrity= or crossorigin attributes. The page is served under the control site's origin, so a hostile script gets the same access as edge-01: it can read .env through /api/file?name=env and start bot runs. Local files, including the .env behind the API, are also readable by it. The page also has no CSP, and the control server sends none (web/server.py send())."
+    contract: none
+    repro: "static-only. grep -n 'cdn.jsdelivr.net' course/index.html and observe there is no 'integrity=' on any of 14 script tags and no version for docsify-pagination."
+    confidence: high
+  - key: edge-03
+    title: "Scheduled runs inherit launchd's minimal PATH, so claude, tectonic and npx are not found"
+    critical_class: lifecycle
+    severity: MEDIUM
+    anchors:
+      - {path: scripts/run_profile_update.sh, line: 12, snippet: "exec \"$PYTHON\" -m naukri_bot.update_profile --if-due >> data/logs/profile_update.log 2>&1"}
+      - {path: scripts/run_linkedin_post.sh, line: 9, snippet: "exec \"$PYTHON\" -m linkedin_bot --if-due >> data/logs/linkedin.log 2>&1"}
+      - {path: scripts/install_profile_updater.sh, line: 29, snippet: "<array><string>$PROJECT_DIR/scripts/run_profile_update.sh</string></array>"}
+    reachability: "launchd, every 900 s (profile updater) and every 1800 s (LinkedIn). Precondition: LLM_BACKEND=claude-cli, or UPLOAD_RESUME_DAILY with a Homebrew tectonic, where claude lives in ~/.local/bin or /opt/homebrew/bin."
+    defect: "The plist sets no EnvironmentVariables and neither wrapper exports PATH, so launchd gives the job /usr/bin:/bin:/usr/sbin:/sbin. common/llm.py:102 uses shutil.which(\"claude\") and common/resume.py:594 uses shutil.which(\"tectonic\"), so both are missed. The LinkedIn writer and the resume upload fail or degrade only under launchd, while manual runs work. common/llm.py:98 documents the same symptom: 'reported present at startup and missing six minutes later'."
+    contract: "README line 574: 'python3 -m linkedin_bot --if-due  # what the launchd agent runs'. It implies the scheduled run behaves like the manual one."
+    repro: "1. Make a temp HOME and a fake bin dir containing an executable named claude. 2. Run env -i PATH=/usr/bin:/bin HOME=$tmp /bin/zsh scripts/run_linkedin_post.sh with the fake bin only in the parent shell's PATH. 3. python -c 'import shutil;print(shutil.which(\"claude\"))' under that minimal PATH prints None. Otherwise static-only."
+    confidence: medium
+  - key: edge-04
+    title: "Status scripts default to state paths that no longer exist, so they always report nothing yet"
+    critical_class: logic
+    severity: MEDIUM
+    anchors:
+      - {path: scripts/profile_update_status.sh, line: 5, snippet: "STATE=\"${PROFILE_UPDATE_STATE_PATH:-logs/profile_update.json}\""}
+      - {path: scripts/linkedin_status.sh, line: 5, snippet: "STATE=\"${LINKEDIN_STATE_PATH:-linkedin/state.json}\""}
+    reachability: "The local user running ./scripts/profile_update_status.sh or ./scripts/linkedin_status.sh. Precondition: the state-path variables are not exported in the user's shell, which is the normal case because they live only in .env."
+    defect: "The bots' defaults are data/logs/profile_update.json (common/models.py:371) and data/linkedin/state.json (linkedin_bot/config.py:50). The status scripts look at logs/profile_update.json and linkedin/state.json, and they read the variable from the shell environment, never from .env. The [ -f \"$STATE\" ] test (line 18) fails and the script prints 'none yet' or 'nothing yet' even when slots or posts completed. The log tail on line 40 and line 36 uses the new data/logs path, so only the state half is stale."
+    contract: "Header comments: 'Health check ... today's slots' and 'today's entry'. README line 694 places logs and slot memory under data/."
+    repro: "1. Make a temp dir with scripts/*.sh copied in. 2. Create data/logs/profile_update.json containing {\"<today>T09:00\":{\"done\":true,\"attempts\":1,\"last\":\"x\"}} and data/linkedin/state.json. 3. Run each status script with a fake HOME and no state variables: both print 'none yet' / 'nothing yet'. 4. Export the variable to the data/ path and the real entry appears."
+    confidence: high
+  - key: edge-05
+    title: "Installers boot out the live agent unconditionally, so a reinstall mid-run kills the browser session"
+    critical_class: lifecycle
+    severity: LOW
+    anchors:
+      - {path: scripts/install_profile_updater.sh, line: 38, snippet: "launchctl bootout \"gui/$(id -u)/$LABEL\" 2>/dev/null || true"}
+      - {path: scripts/install_linkedin_poster.sh, line: 38, snippet: "launchctl bootout \"gui/$(id -u)/$LABEL\" 2>/dev/null || true"}
+    reachability: "The local user re-running either installer while the agent's job is executing, which can take minutes. The profile updater adds up to 600 s of start delay (run_profile_update.sh:9)."
+    defect: "bootout sends SIGTERM and then SIGKILL to the running job, and the plist was already overwritten at line 20, so there is no rollback. A Selenium run is killed mid-flow and leaves SingletonLock in the Chrome profile, which also makes google_login.sh refuse to start (line 16). The slot is not marked done, so the next poll retries the edit. If bootstrap then fails, set -e exits and the agent stays uninstalled with a rewritten plist."
+    contract: none
+    repro: "static-only. Read the order of operations: cat > $PLIST (line 20), then bootout (38), then bootstrap (39) with no check that the job is idle."
+    confidence: medium
+  - key: edge-06
+    title: "google_login.sh parses BROWSER_PROFILE_DIR differently from the bot, so quotes and ~ pick a different profile"
+    critical_class: logic
+    severity: LOW
+    anchors:
+      - {path: scripts/google_login.sh, line: 11, snippet: "PROFILE_ROOT=\"$(grep -E '^BROWSER_PROFILE_DIR=' .env 2>/dev/null | tail -1 | cut -d= -f2- || true)\""}
+      - {path: scripts/google_login.sh, line: 13, snippet: "[[ \"$PROFILE_ROOT\" = /* ]] || PROFILE_ROOT=\"$PWD/$PROFILE_ROOT\""}
+    reachability: "The local user running scripts/google_login.sh with a .env containing BROWSER_PROFILE_DIR=\"data/x\" (quoted), BROWSER_PROFILE_DIR=~/bot-profile, or a trailing inline comment."
+    defect: "The shell takes the raw text after '=' including quotes, ~ and comments. It does not expand ~, so ~/p becomes $PWD/~/p. The bot uses python-dotenv, which strips quotes, and common/browser.py:53 applies expanduser and abspath. The user signs in to Google in a directory the bot never uses, so 'Sign in with Google' on career sites still fails, with no warning. It also does not honour BROWSER_PROFILE_DIR when it is only in the process environment."
+    contract: "Header comment: 'Sign in ... inside the bot's own browser profile' and the .env.example note 'scripts/google_login.sh <board URL>'."
+    repro: "1. Temp dir with scripts/google_login.sh, a .env with BROWSER_PROFILE_DIR=\"mine\", and a fake `open` on PATH that echoes its args. 2. Run it with HOME and PATH faked. 3. Output shows 'Opening Chrome on <tmp>/\"mine\"/chrome', a directory literally containing quote characters, whereas the bot uses <tmp>/mine/chrome."
+    confidence: high
+  - key: edge-07
+    title: "A missing venv silently falls back to system python3, and the installers never check for the venv"
+    critical_class: error
+    severity: LOW
+    anchors:
+      - {path: scripts/run_profile_update.sh, line: 11, snippet: "[ -x \"$PYTHON\" ] || PYTHON=\"python3\""}
+      - {path: scripts/run_linkedin_post.sh, line: 8, snippet: "[ -x \"$PYTHON\" ] || PYTHON=\"python3\""}
+    reachability: "launchd, every 15 or 30 minutes, after the user installs the agent without creating venv/. Alternatively the user moves the checkout, which is the very advice the installer gives."
+    defect: "The installers never verify venv/bin/python. The run wrappers then exec /usr/bin/python3 (the Xcode CLT shim) with no selenium, dotenv or yaml. The result is a ModuleNotFoundError traceback appended to data/logs/*.log every poll and no notification, because the Telegram path needs the same missing modules. When the shim has no CLT it can pop an install dialog from a background job."
+    contract: "scripts/web:5-8 explicitly checks and reports 'The bots' Python is missing', so the same condition is handled in that script and ignored in the others."
+    repro: "1. Temp dir with scripts/ and no venv. 2. Run PATH=<fake bin with a python3 that prints 'no module'> HOME=<tmp> scripts/run_profile_update.sh. 3. The failure is appended to data/logs/profile_update.log and the script exits non-zero. The installer prints 'Installed' without complaint."
+    confidence: medium
+  - key: edge-08
+    title: "Installer writes unescaped, unvalidated paths into the plist XML and proceeds from Desktop with a known failure"
+    critical_class: error
+    severity: LOW
+    anchors:
+      - {path: scripts/install_profile_updater.sh, line: 29, snippet: "<array><string>$PROJECT_DIR/scripts/run_profile_update.sh</string></array>"}
+      - {path: scripts/install_profile_updater.sh, line: 10, snippet: "case \"$PROJECT_DIR\" in"}
+    reachability: "A local user whose checkout path contains & or <. The same user also sees the Desktop warning: this repo is at ~/Desktop/apply, which matches the warning case."
+    defect: "$PROJECT_DIR is interpolated into the heredoc XML with no escaping, so a path with & produces an invalid plist and launchctl bootstrap fails with an opaque error after bootout has already removed the old agent. The Desktop/Documents/Downloads branch (lines 10-18) only prints a warning, then installs an agent that the script itself states will fail with 'Operation not permitted'. It still prints 'Installed'."
+    contract: "The script's own warning text: 'the agent fails with Operation not permitted in data/logs/launchd-profile-update.err'."
+    repro: "1. Copy scripts/ into a temp dir 'a&b/apply/scripts' with a fake HOME and a fake launchctl on PATH that records its args. 2. Run the installer. 3. Inspect $HOME/Library/LaunchAgents/*.plist: it contains a raw & inside <string>, so plutil -lint style parsing fails. The fake launchctl was already called with bootout first."
+    confidence: medium
+  - key: edge-09
+    title: "Mermaid blocks are injected into the page unescaped with securityLevel loose, plus executeScript"
+    critical_class: injection
+    severity: LOW
+    anchors:
+      - {path: course/index.html, line: 600, snippet: "return '<pre class=\"mermaid-src\" style=\"display:none\">' + code + '</pre><div class=\"mermaid\">' + code + '</div>';"}
+      - {path: course/index.html, line: 827, snippet: "if (window.mermaid) { window.mermaid.initialize({ startOnLoad: false, securityLevel: 'loose', theme: 'default' }); }"}
+    reachability: "Anyone who can write or alter a markdown file under course/ (a cloned or pulled module, or the web editor if it can touch course/). Opening that page in the browser runs the markup. The chain to .env is the same as edge-01."
+    defect: "The renderer interpolates the fenced code string into HTML twice with no escaping, so a ```mermaid block containing </pre><img src=x onerror=...> becomes live DOM. securityLevel 'loose' also permits click-callbacks and HTML labels in diagrams. Combined with executeScript:true and no CSP, any markdown in the course is a script-execution vector at the control site's origin. It is bounded by trust in course/ content, which is why severity is low."
+    contract: none
+    repro: "static-only. Add a mermaid fence containing </pre><img src=x onerror=alert(1)> to a temp copy of a course page and load it with docsify, or call the renderer function with that string and inspect the return value."
+    confidence: medium
+  - key: edge-10
+    title: "Launchd out/err logs grow without bound or rotation, and the wrappers append forever"
+    critical_class: lifecycle
+    severity: LOW
+    anchors:
+      - {path: scripts/install_profile_updater.sh, line: 32, snippet: "<key>StandardOutPath</key><string>$PROJECT_DIR/data/logs/launchd-profile-update.out</string>"}
+      - {path: scripts/run_profile_update.sh, line: 12, snippet: "exec \"$PYTHON\" -m naukri_bot.update_profile --if-due >> data/logs/profile_update.log 2>&1"}
+    reachability: "launchd, 96 runs per day for the profile updater and 48 for LinkedIn. A persistent failure such as edge-03 or edge-07 writes a traceback each time."
+    defect: "Nothing rotates or truncates data/logs/*.log or the launchd .out and .err files. Any password or token that a Python exception message prints into them persists in plaintext 0644 files under the project directory. Each run only appends. The status scripts show 8 lines, which hides the growth."
+    contract: none
+    repro: "static-only. Read the >> redirects and the StandardOutPath keys; there is no logrotate, newsyslog entry or size cap in scripts/."
+    confidence: low

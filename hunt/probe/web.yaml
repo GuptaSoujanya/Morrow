@@ -1,0 +1,162 @@
+lane: web
+lane_run:
+  first_attempt: {task: bg_0996cbee, status: failed, error: "ProviderModelNotFoundError: Model not found: openai/gpt-6-astra"}
+  second_attempt: {task: bg_26ee5cfa, session: ses_e9d54cf66ffeNMr2pbOBQMLvuw, status: completed, duration: "3m 7s"}
+entry_points:
+  - {kind: cli, name: "python -m web", path: web/__main__.py, line: 1, note: "local user runs it; main() at web/server.py:620 binds 127.0.0.1:8000 and calls open_outside(url)"}
+  - {kind: script, name: scripts/web, path: scripts/web, line: 9, note: "zsh wrapper, execs venv/bin/python -m web; may pip install -r requirements.txt on first run"}
+  - {kind: http, name: "GET /, /static/*, /course/*, /reports/*", path: web/server.py, line: 496, note: "Host header must be 127.0.0.1:port or localhost:port; paths go through inside(). /course/ and /reports/ serve files from the course and data/reports folders"}
+  - {kind: http, name: "GET /api/meta /status /run /course /overview /report /file", path: web/server.py, line: 506, note: "Host-checked only, no Origin check, no token. /api/file?name=env returns the contents of .env"}
+  - {kind: http, name: "POST /api/preview /run /stop /course/read /file /answer /fact /open", path: web/server.py, line: 527, note: "needs Host ok, Origin absent or own, and Content-Type application/json. /api/run spawns subprocesses, /api/file overwrites .env, /api/open runs 'open'"}
+  - {kind: http, name: "course/news.md and course/index.html rendered at /course/", path: course/index.html, line: 809, note: "docsify loaded from jsdelivr in the page served from the same origin as the control API; news.md injects HN and dev.to feed fields into innerHTML"}
+  - {kind: cli, name: "python3 course/serve.py [port]", path: course/serve.py, line: 33, note: "separate unauthenticated static server on the same default port 8000, serves only the course folder"}
+  - {kind: script, name: "scripts/*.sh via Runner", path: web/state.py, line: 59, note: "script() builds /bin/zsh scripts/<fixed name>; names are hardcoded in ACTIONS, so a request cannot choose them"}
+pruned:
+  - {path: frontend-dashboard/vite.config.ts, reason: "the file and the frontend-dashboard directory do not exist in the tree, so no dev proxy or Host/Origin claim could be checked"}
+  - {path: web/__init__.py, reason: "docstring only"}
+  - {path: course/serve.py, reason: "serves only the course folder via translate_path and is_private (realpath, dot-files). It has no API and no secrets, and it binds 127.0.0.1. Rebinding gains nothing beyond public course text. Port 8000 clashes with web are handled by already_running"}
+  - {path: web/static/app.css, reason: "styles only"}
+  - {path: web/static/index.html, reason: "static shell. It loads only /static/app.css, /course/logo.svg and the app script; no remote scripts"}
+  - {path: web/static/app.js, reason: "all dynamic DOM is built with h() using textContent or setAttribute, and links go through safeUrl (http/https only). The only innerHTML is the report body (see web-09)"}
+  - {path: web/server.py inside(), reason: "the dot-segment check runs before resolve(), the result must be under the resolved root, and symlinks resolve outside and are refused. Because the URL path is never percent-decoded, %2e%2e stays a literal name and 404s. Traversal and dot-files are not reachable"}
+  - {path: web/server.py Handler.open (what=path), reason: "the target must be absolute, resolved, and strictly under data/. An attacker needs files already in data/, and open_outside is called with an argv list (no shell), so there is no argument injection. A path starting with - cannot occur"}
+  - {path: web/state.py _query sqlite access, reason: "a new read-only connection is opened and closed per call, so nothing is shared between threads, and the SQL is constant with no user input"}
+  - {path: web/state.py command builders, reason: "all commands are argv lists with no shell. external_command requires http(s). Values starting with - are rejected by argparse in the child or are the user's own input. No path from a cross-origin page reaches them, since POST needs a JSON Content-Type, which forces a CORS preflight that the server fails with 501"}
+  - {path: web/server.py DNS rebinding and Origin, reason: "host_ok is an exact match on Host, which rebinding cannot forge. POST rejects any Origin that is not its own, including 'null'. No GET has side effects. A cross-origin page can send a GET to 127.0.0.1:8000 but cannot read the reply (no CORS headers)"}
+hypotheses:
+  - key: web-01
+    title: "News page builds an href attribute from feed data with an escaper that does not escape double quotes, giving same-origin script execution"
+    critical_class: injection
+    severity: HIGH
+    anchors:
+      - {path: course/news.md, line: 56, snippet: "'<a class=\"title\" href=\"' + esc(it.url) + '\" target=\"_blank\" rel=\"noopener\">' + esc(it.title) + '</a>' +"}
+      - {path: course/news.md, line: 38, snippet: "var d = document.createElement('div'); d.textContent = t || ''; return d.innerHTML;"}
+    reachability: "The local user opens /course/#/news (a normal flow: the Study section links it, and docsify loads it from the control site's origin). The item url comes from the Algolia HN API (the url field of a submitted story) or the dev.to API. Anyone can submit an HN story, so the attacker is a remote submitter. Precondition: the feed returns a URL containing a literal double quote. HN requires an http(s) scheme but may not strip quotes from the rest. Unconfirmed, so confidence is medium."
+    defect: "esc() uses textContent then innerHTML, which escapes &, < and > but NOT the double quote. At line 56 the result is placed inside href=\"...\". A url such as https://x/\" onfocus=\"...\" autofocus=\" closes the attribute and injects event handlers. The page runs on the same origin as /api/run, /api/file and /api/open. Injected script can POST to /api/run to execute commands, read .env via GET /api/file?name=env, or rewrite it (Host and Origin checks pass because the request is genuinely same-origin)."
+    contract: "none"
+    repro: "static-only"
+    confidence: medium
+  - key: web-02
+    title: "The course pages served from the control site's origin load unpinned third-party scripts with no SRI and no CSP"
+    critical_class: supply
+    severity: MEDIUM
+    anchors:
+      - {path: course/index.html, line: 809, snippet: "<script src=\"https://cdn.jsdelivr.net/npm/docsify@4\"></script>"}
+      - {path: web/server.py, line: 443, snippet: "self.send_header(\"Cache-Control\", \"no-cache\")"}
+    reachability: "A local user opens /course/ (the reader iframe in the Study section also loads it). Preconditions: jsdelivr, or one of the npm packages docsify@4, mermaid@10, prismjs@1, docsify-copy-code@2, docsify-pagination, is compromised or served a hijacked response. The module docstring promises 'Other web pages can't use it'."
+    defect: "The same origin (http://127.0.0.1:PORT) serves both the course and the control API. Floating-major-version CDN scripts run in that origin with no integrity attribute, and send() sets no Content-Security-Policy. Any such script can fetch /api/file?name=env and POST /api/run or /api/file, and every Host and Origin check passes because the request is same-origin."
+    contract: "web/server.py module docstring: 'Other web pages can't use it: ... anything that changes something has to be a JSON request from this site itself.' The course page is part of 'this site' but executes third-party code."
+    repro: "static-only"
+    confidence: medium
+  - key: web-03
+    title: "A finished or crashed child that leaves a grandchild on the stdout pipe keeps the Runner 'running', and Stop cannot kill it"
+    critical_class: lifecycle
+    severity: MEDIUM
+    anchors:
+      - {path: web/server.py, line: 117, snippet: "for raw in iter(proc.stdout.readline, b\"\"):"}
+      - {path: web/server.py, line: 142, snippet: "if self.proc is not None and self.proc.poll() is None:"}
+    reachability: "A local user starts any bot from the page. Precondition: the bot exits (or is SIGINTed) while a descendant it spawned still holds the inherited stdout pipe, for example a chromedriver or Chrome left behind by an unclean browser shutdown. The Stop button is the intended recovery."
+    defect: "_follow blocks in readline until every holder of the pipe's write end closes it. proc.wait() at line 120 is not reached while the pipe is held, so self.command stays set and start() returns 409 for every later run. In _signal, proc.poll() reaps the dead leader and returns non-None, so os.killpg is skipped and the lingering process group is never signalled. stop() answers ok:True ('Forced to stop.') while nothing happens, and shutdown() has the same flaw. The only recovery is restarting the site."
+    contract: "Runner docstring 'Runs one command at a time' and the stop message 'Press Stop again to force it.' The second Stop must force-kill."
+    repro: "1. runner = server.Runner(); runner.start(Command('x', ('/bin/sh','-c','sleep 60 & exit 0'))). 2. Poll until runner.proc.poll() == 0. 3. Assert runner.running is still True and runner.stop() twice returns (True, 'Forced to stop.'). 4. Assert the sleep process (os.killpg(runner.proc.pid, 0)) is still alive and runner.running still True after 1 s; a second start() raises RuntimeError. 5. Cleanup: os.killpg(pid, SIGKILL)."
+    confidence: high
+  - key: web-04
+    title: "Concurrent read-modify-write of answers.txt, profile.yaml and studied.json loses updates, including lines the bots append"
+    critical_class: concurrency
+    severity: MEDIUM
+    anchors:
+      - {path: web/state.py, line: 285, snippet: "lines = _read(path).splitlines(keepends=True)"}
+      - {path: web/state.py, line: 291, snippet: "path.write_text(\"\".join(lines), encoding=\"utf-8\")"}
+      - {path: web/state.py, line: 453, snippet: "path.write_text(json.dumps(sorted(read), indent=2) + \"\\n\", encoding=\"utf-8\")"}
+    reachability: "Two overlapping POSTs (two browser tabs, a double click, or the page saving several answers quickly) on ThreadingHTTPServer, or a bot run (Runner child) that appends Q:/A: pairs to data/inputs/answers.txt while the user saves an answer. Preconditions: timing overlap between read and write, with no lock."
+    defect: "save_answer, save_fact and mark_studied read the whole file, edit one line in memory, then truncate and rewrite it, with no lock and no atomic replace. The two handler threads, or a handler and a bot, each work from the same snapshot, so the last writer silently discards the other's change. The write_text truncation also lets a bot reading the file see an empty or partial file."
+    contract: "state.save_answer docstring: 'Write your answer on the empty A: line the question is waiting on.' The silent loss of another saved answer or of a freshly appended question breaks this."
+    repro: "1. Use the tests' site fixture with answers.txt = 'Q: A\\nA:\\nQ: B\\nA:\\n'. 2. Monkeypatch state._read with a wrapper that on its first call (thread 1) runs state.save_answer(4, 'two', path) to completion in thread 2 before returning the snapshot. 3. Call save_answer(2, 'one', path) in thread 1. 4. Assert the file contains both 'A: one' and 'A: two'; it contains only 'A: one'."
+    confidence: medium
+  - key: web-05
+    title: "Non-object 'options', a bad 'line' type, or a filesystem error in a POST handler escapes the handler and drops the connection with no response"
+    critical_class: error
+    severity: MEDIUM
+    anchors:
+      - {path: web/server.py, line: 539, snippet: "self.json({\"shown\": build(str(data.get(\"action\", \"\")), data.get(\"options\") or {}).shown})"}
+      - {path: web/server.py, line: 568, snippet: "files()[name].write_text(text, encoding=\"utf-8\")"}
+      - {path: web/server.py, line: 580, snippet: "except ApiError as exc:"}
+    reachability: "Anything that can POST JSON from this site, including a buggy front end or a local script. For example {\"action\":\"naukri\",\"options\":\"x\"} or {\"options\":[1]} to /api/preview or /api/run, {\"line\":[1]} to /api/answer, or /api/file when data/inputs does not exist yet."
+    defect: "do_POST catches only ApiError and ValueError. data.get('options') or {} is passed unchecked to _on/_text, which call options.get, so a str or list raises AttributeError. int([..]) raises TypeError, and write_text on a missing directory raises FileNotFoundError (OSError). None is caught, so BaseHTTPRequestHandler aborts, the client gets a reset or empty reply instead of a JSON error, and a traceback goes to stderr (log_message is silenced, but handle_error still prints it). The front end's api() reports 'Can't reach the site's server' and flips the page offline."
+    contract: "server.py convention: every route replies with JSON ({\"error\": ...}) and 400 for bad input; the preview comment 'so this answers 200 either way'."
+    repro: "1. Use the site fixture. 2. call(site,'POST','/api/preview',{'action':'naukri','options':'x'}) and assert it returns a status (400) with a JSON error. It raises http.client.RemoteDisconnected. 3. Likewise POST /api/answer with {'line':[1],'answer':'a'}."
+    confidence: high
+  - key: web-06
+    title: "Bots started from the site survive the site being killed or its terminal being closed"
+    critical_class: lifecycle
+    severity: MEDIUM
+    anchors:
+      - {path: web/server.py, line: 105, snippet: "start_new_session=True,"}
+      - {path: web/server.py, line: 644, snippet: "server.serve_forever()"}
+      - {path: web/server.py, line: 648, snippet: "server.runner.shutdown()"}
+    reachability: "The local user closes the terminal (SIGHUP) or the site is stopped with kill/launchd (SIGTERM) while a bot runs. Only SIGINT is turned into KeyboardInterrupt (line 636)."
+    defect: "Each child runs in its own session, so it gets no SIGHUP from the terminal. main() installs no SIGTERM or SIGHUP handler, so the default action ends the interpreter before the finally block (line 647) runs and Runner.shutdown() is never called. The bot (a Selenium run that applies to jobs, with Chrome) keeps running unsupervised: its output pipe is closed and no UI can Stop it, and the user can start a second one from a new site instance."
+    contract: "server.py line 641 prints '(ctrl+c stops it)' and the finally block's runner.shutdown() intends to stop commands run from the site."
+    repro: "static-only"
+    confidence: medium
+  - key: web-07
+    title: "No credential on the API: any other local user or process can run bots, read .env and rewrite it"
+    critical_class: auth
+    severity: MEDIUM
+    anchors:
+      - {path: web/server.py, line: 428, snippet: "def host_ok(self) -> bool:"}
+      - {path: web/server.py, line: 433, snippet: "if origin is not None and origin not in [f\"http://{h}\" for h in self.own_hosts()]:"}
+      - {path: web/server.py, line: 551, snippet: "\"env\": state.APPLY / \".env\","}
+    reachability: "Another account or process on the same machine (a shared Mac, a sandboxed tool, a malicious package run by the user) connects to 127.0.0.1:8000 with Host 127.0.0.1:8000 and no Origin header, Content-Type application/json. A browser page cannot do this (no CORS read, rebinding blocked), so the preconditions are local code execution as any user."
+    defect: "The checks only defend against browsers. A missing Origin is accepted (line 433), and there is no token. GET /api/file?name=env returns the .env text (credentials), POST /api/file overwrites it, and POST /api/run starts subprocesses (including the 'install' action, which runs pip install -r requirements.txt, and 'tests'). Loopback is not a boundary between local users."
+    contract: "web/server.py docstring says only that other web pages are refused, so this is a gap rather than a broken promise."
+    repro: "1. Site fixture (tmp .env = 'SECRET=1'). 2. call(site,'GET','/api/file?name=env') with default headers (Host only, no Origin) and assert it returns the text 'SECRET=1'. 3. POST /api/file name=env with no Origin and observe the write."
+    confidence: medium
+  - key: web-08
+    title: "/api/overview with a very large days value raises OverflowError, which the GET handler does not catch"
+    critical_class: error
+    severity: LOW
+    anchors:
+      - {path: web/server.py, line: 340, snippet: "days = int(days_text or 14)"}
+      - {path: web/state.py, line: 603, snippet: "start = min(first or today, today) if days == 0 else today - dt.timedelta(days=days - 1)"}
+    reachability: "Same-origin GET /api/overview?days=1000000 (typed in the URL bar, or sent by a local script). Not triggerable cross-origin with a readable result."
+    defect: "overview_json converts only ValueError into a 400. today - timedelta(days=999999) raises OverflowError ('date value out of range'), and so does a timedelta with days above 999999999. do_GET catches only ValueError and sqlite3.Error, so the handler dies and the connection drops with no reply."
+    contract: "overview_json raises ValueError for bad input so the route can answer 400; state.overview raises ValueError('days can't be negative') for the same kind of case."
+    repro: "1. Site fixture. 2. call(site,'GET','/api/overview?days=1000000'). 3. Assert status 400; it raises RemoteDisconnected."
+    confidence: high
+  - key: web-09
+    title: "Report HTML keeps remote images and protocol-relative links from scraped text, with no CSP"
+    critical_class: injection
+    severity: LOW
+    anchors:
+      - {path: web/state.py, line: 334, snippet: "if \"://\" in target or target.startswith((\"mailto:\", \"#\", \"/\")):"}
+      - {path: web/static/app.js, line: 1237, snippet: "if (report.exists) body.innerHTML = report.html;"}
+    reachability: "A job title or company name scraped from a job page is written into report.md (common/report.py builds it) as markdown. The user opens the Reports section. Precondition: the report writer does not escape markdown image or link syntax in those fields. I did not verify the writer's escaping."
+    defect: "html is False and markdown-it's validateLink blocks javascript:, data: and the like, so there is no script injection. But a ![](https://tracker/x) image src containing '://' is left alone and loads remote content when the report is shown, and a //host link starts with '/' so it is neither made target=_blank nor given rel=noopener and navigates the control site's tab. send() adds no Content-Security-Policy to block either."
+    contract: "none"
+    repro: "1. Write a report.md to tmp REPORTS with '![x](https://evil.example/p.png) [a](//evil.example/)'. 2. html = state.report_html(day). 3. Assert the output contains no remote img src; it contains <img src=\"https://evil.example/p.png\" and <a href=\"//evil.example/\">."
+    confidence: low
+  - key: web-10
+    title: "URL paths are never percent-decoded, so report and course files with spaces or non-ASCII names return 404"
+    critical_class: logic
+    severity: LOW
+    anchors:
+      - {path: web/server.py, line: 505, snippet: "self.file(inside(state.REPORTS, route[len(\"/reports/\"):]))"}
+      - {path: web/server.py, line: 494, snippet: "route = url.path"}
+    reachability: "The user clicks a link in a rendered report whose target contains a space or non-ASCII character, for example a company name in a saved file name. markdown-it percent-encodes the href, and state.report_html prefixes it with /reports/<day>/. Precondition: the bots save such files next to report.md. I did not verify that they do."
+    defect: "do_GET splits self.path with urlsplit but never calls unquote, so inside() joins the literal %20 or %C3%A9 into the filesystem path and the file is not found. The same applies to /course/ pages whose sidebar links contain such characters."
+    contract: "state.report_html docstring: 'its own links pointing at the files saved next to it.'"
+    repro: "1. Write tmp REPORTS/2026-10-12/my file.txt. 2. call(site,'GET','/reports/2026-10-12/my%20file.txt'). 3. Assert status 200; it is 404."
+    confidence: medium
+  - key: web-11
+    title: "A negative or oversized Content-Length makes the POST handler read without bound"
+    critical_class: error
+    severity: LOW
+    anchors:
+      - {path: web/server.py, line: 474, snippet: "length = int(self.headers.get(\"Content-Length\") or 0)"}
+      - {path: web/server.py, line: 476, snippet: "data = json.loads(self.rfile.read(length) or b\"{}\")"}
+    reachability: "A local client sending a POST with Host ok, JSON Content-Type and Content-Length: -1 or a huge value. A browser cannot send a negative length."
+    defect: "length is never checked. rfile.read(-1) blocks until the client closes the socket, and a large length buffers the whole body in memory. The handler thread, a daemon_thread, is held for as long as the connection stays open."
+    contract: "none"
+    repro: "1. Open a raw socket to a ControlServer(0) with 'POST /api/stop' and Content-Length: -1 and a valid Host and Content-Type. 2. Send no body and keep the socket open. 3. Assert a reply within 2 s; none arrives until the socket closes."
+    confidence: medium
