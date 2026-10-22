@@ -163,8 +163,9 @@ def test_with_an_app_password_the_draft_also_lands_in_gmail(settings, profile, n
     appended = []
 
     class _Imap:
-        def __init__(self, host):
+        def __init__(self, host, ssl_context=None, timeout=None):
             assert host == "imap.gmail.com"
+            assert ssl_context is not None and timeout
 
         def login(self, user, password):
             appended.append(("login", user, password))

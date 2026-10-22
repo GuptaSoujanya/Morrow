@@ -1,4 +1,4 @@
-"""Apply on job boards other than Naukri, with one loop for all of them.
+"""The loop every job board bot other than Naukri runs.
 
 Each board is a Board record: its search pages, what its job links look like,
 and the words on its Apply and Applied controls. The loop collects job cards
@@ -8,7 +8,13 @@ counts the application only when the board shows the job as applied after a
 reload. A board page the script cannot finish goes to the browser agent when
 it is on, and otherwise to data/inputs/company_sites.md for a person.
 
-    python3 -m sites_bot.platforms --site hirist --limit 10 [--dry-run]
+Each board is its own bot (hirist_bot, instahyre_bot, cutshort_bot,
+wellfound_bot) with its Board in <name>_bot/board.py; this module is the loop
+they share, and can still run several boards at once:
+
+    python3 -m hirist_bot --limit 10 [--dry-run]
+    python3 -m hirist_bot.update_profile                       # refresh the profile, apply nowhere
+    python3 -m sites_bot.platforms --site all --profile-only   # every board in one run
 """
 
 import argparse
@@ -16,7 +22,7 @@ import logging
 import re
 import sys
 import time
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -26,8 +32,14 @@ from selenium.common.exceptions import WebDriverException
 
 from . import browser_agent
 from . import external as ext
+from .board import Board
+from common import memory
 from common.browser import human_pause, safe_get
 from common.models import ApplyResult, ApplyStatus, JobPosting, Profile, RunSummary, Settings
+from cutshort_bot.board import BOARD as CUTSHORT
+from hirist_bot.board import BOARD as HIRIST
+from instahyre_bot.board import BOARD as INSTAHYRE
+from wellfound_bot.board import BOARD as WELLFOUND
 
 logger = logging.getLogger(__name__)
 
@@ -44,95 +56,8 @@ MAX_BROWSER_RESTARTS = 2
 UNCONFIRMED_BEFORE_STOP = 2
 
 
-@dataclass(frozen=True)
-class Board:
-    name: str
-    label: str
-    home: str
-    # Pages listing jobs picked for the signed-in profile, read before any search.
-    feeds: Tuple[str, ...]
-    # "{slug}" is the keyword in lower-case-hyphen form, "{query}" the URL-encoded keyword; "" = feeds only.
-    search: str
-    job_link: str
-    job_id: str
-    apply: str
-    applied: str
-    external: str = r"company (?:site|website)|apply on company|external"
-    signed_out: str = r"^(?:log ?in|sign ?in|login / register|candidate login)$"
-    # Card heading is "Company - Title".
-    company_first: bool = True
-    # The job page's <title>, with named groups "title" and "company" when the board puts both there.
-    page_title: str = ""
-    # The board's terms forbid automated use; it is skipped unless named on purpose.
-    risky: bool = False
-    # Address the board moves to once an application went through.
-    applied_url: str = ""
-    # A board whose Apply only opens its own job view, with a second Apply there.
-    # The Applied marker then shows on that view, not on the public job page.
-    second_apply: str = ""
-
-
-BOARDS = {
-    "hirist": Board(
-        name="hirist",
-        label="Hirist",
-        home="https://www.hirist.tech/jobfeed",
-        feeds=("https://www.hirist.tech/jobfeed",),
-        search="https://www.hirist.tech/search/{slug}",
-        job_link=r"^https://www\.hirist\.tech/j/[a-z0-9-]+-\d+",
-        job_id=r"-(\d+)/?$",
-        apply=r"^(?:apply|apply now|quick apply)$",
-        applied=r"^(?:applied|already applied)(?: on .{0,20})?$",
-        page_title=r"^(?P<title>.+) - (?P<company>[^-|]+?) \| hirist\.tech$",
-        applied_url=r"^https://www\.hirist\.tech/job/applied\b",
-    ),
-    "instahyre": Board(
-        name="instahyre",
-        label="Instahyre",
-        home="https://www.instahyre.com/candidate/opportunities/",
-        feeds=("https://www.instahyre.com/candidate/opportunities/?matching=true",),
-        search="https://www.instahyre.com/{slug}-jobs/",
-        job_link=r"^https://www\.instahyre\.com/job-\d+-",
-        job_id=r"/job-(\d+)-",
-        apply=r"^(?:apply|apply now|i'?m interested|interested)$",
-        # The Apply button turns into "Application sent!" the moment it is clicked.
-        applied=r"^(?:applied|application sent|interest sent)!?(?: on .{0,20})?$",
-        signed_out=r"^(?:log ?in|sign ?in)$",
-        page_title=r"^(?P<title>.+?) job at (?P<company>.+?) - Instahyre$",
-    ),
-    "cutshort": Board(
-        name="cutshort",
-        label="Cutshort",
-        home="https://cutshort.io/jobs/datascience-jobs",
-        # Cutshort's keyword search gave the same nine jobs for every keyword; its category pages are the feed.
-        feeds=("https://cutshort.io/jobs/datascience-jobs", "https://cutshort.io/jobs/backend-developer-jobs",
-               "https://cutshort.io/jobs/frontend-developer-jobs"),
-        search="",
-        job_link=r"^https://cutshort\.io/job/[A-Za-z0-9-]+-[A-Za-z0-9]{8}$",
-        job_id=r"-([A-Za-z0-9]{8})/?$",
-        # Only the posting's own button: the related jobs below it each have an "Apply now".
-        apply=r"^apply to this job$",
-        applied=r"^(?:applied|application sent|already applied)!?(?: on .{0,20})?$",
-        company_first=False,
-        page_title=r"^(?P<company>.+?) is hiring (?P<title>.+?) job in .+\| Cutshort$",
-        # "Apply to this job" leads to /profile/all-jobs?jobid=..., where "Apply now" opens the form.
-        second_apply=r"^apply now$",
-    ),
-    "wellfound": Board(
-        name="wellfound",
-        label="Wellfound",
-        home="https://wellfound.com/jobs",
-        feeds=("https://wellfound.com/jobs",),
-        search="https://wellfound.com/role/r/{slug}",
-        job_link=r"^https://wellfound\.com/jobs/\d+-",
-        job_id=r"/jobs/(\d+)-",
-        apply=r"^(?:apply|apply now|send application)$",
-        applied=r"^(?:applied|application sent)(?: on .{0,20})?$",
-        signed_out=r"^(?:log ?in|sign ?in)$",
-        company_first=False,
-        page_title=r"^(?P<title>.+?) (?:at|@) (?P<company>[^•|]+?)(?: [•|].*)?$",
-    ),
-}
+# Each board lives in its own package (<name>_bot/board.py); this is the list the loop knows.
+BOARDS = {board.name: board for board in (HIRIST, INSTAHYRE, CUTSHORT, WELLFOUND)}
 
 
 def board_job_id(board: Board, url: str) -> str:
@@ -642,19 +567,176 @@ def _count(summary: RunSummary, result: ApplyResult) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Profile update
+# ---------------------------------------------------------------------------
+
+_PROFILE_TASK = (
+    "Open the candidate's own profile on this job board (you start on it; if this page is not the "
+    "profile, find the profile or edit-profile link). Compare it with the facts below: headline or "
+    "summary, current role and company, skills, total experience, notice period, current and preferred "
+    "location, expected salary. Fix anything missing or out of date using only the facts; never invent "
+    "anything. Then save the profile, even if nothing needed fixing, so the board records an update "
+    "today: re-save the headline or summary section. Do not apply to any job and do not change the "
+    "password, email or phone number. In notes, quote the board's own confirmation text "
+    "(for example \"Profile updated successfully\") exactly as shown, and list what you changed."
+)
+
+
+_CREATE_TASK = (
+    "The candidate has no session on this job board. First look for a sign-in: if an account already "
+    "exists for the email below, sign in (prefer \"Continue with Google\"; Chrome is signed in to that "
+    "Google account) instead of creating a second one. Otherwise create the account with that email, "
+    "again preferring Google sign-up, and build the candidate profile from the facts below: headline or "
+    "summary, current role and company, skills, total experience, notice period, current and preferred "
+    "location, expected salary. Use only the facts; never invent anything. Accept only the board's own "
+    "terms; do not subscribe to newsletters or paid plans, and do not apply to any job. If the board "
+    "asks for an OTP, a captcha, a password you do not have, or a phone number, stop and report "
+    "needs_you. In notes, say whether you created or signed in to the account, give the URL of the "
+    "candidate's profile page, and quote the board's confirmation text exactly as shown."
+)
+
+_URL = re.compile(r"https?://[^\s\"')\]]+")
+
+
+def _profile_link(driver: Any, board: Board, notes: str) -> str:
+    """The profile URL the agent reported, else the board page it ended on, else ""."""
+    for url in _URL.findall(notes or ""):
+        if urlparse(url).netloc.endswith(urlparse(board.home).netloc.replace("www.", "")):
+            return url.rstrip(".,")
+    try:
+        current = driver.current_url
+    except (AttributeError, WebDriverException):
+        current = ""
+    if current and urlparse(current).netloc == urlparse(board.home).netloc:
+        return current
+    return ""
+
+
+def _remember_profile(driver: Any, board: Board, action: str, notes: str) -> None:
+    try:
+        link = (_profile_link(driver, board, notes) or memory.load_profiles().get(board.name, {}).get("url")
+                or board.profile_url or board.home)
+        memory.record_profile(board.name, action, link, notes)
+    except OSError as exc:
+        logger.warning("%s: could not note the profile in .memory (%s)", board.label, exc)
+
+
+def create_profile(driver: Any, board: Board, settings: Settings, profile: Profile,
+                   resume_pdf: Optional[Path] = None, dry_run: bool = False) -> bool:
+    """Sign in or sign up on the board and build the profile through the browser agent.
+
+    True only when the agent says it finished and the board then shows a session.
+    """
+    from .accounts import account_email
+
+    if dry_run:
+        logger.info("%s: dry run, would create the account and profile; changed nothing.", board.label)
+        return True
+    if not safe_get(driver, board.home):
+        logger.error("%s: could not open %s", board.label, board.home)
+        return False
+    time.sleep(PAGE_WAIT_S)
+    files = (resume_pdf,) if resume_pdf else ()
+    instruction = _CREATE_TASK + (" Upload the resume file given where the profile asks for one." if files else "")
+    prompt = browser_agent.task_prompt(instruction, board.home, browser_agent.facts_text(profile, settings),
+                                       account_email(settings), files,
+                                       has_password=bool(settings.company_site_password))
+    run = browser_agent.run_agent(driver, settings, prompt,
+                                  browser_agent.workdir_for(settings, "%s create profile" % board.label), files)
+    report = run.report or {}
+    if run.problem or report.get("status") != "done":
+        logger.error("%s profile not created: %s", board.label,
+                     run.problem or report.get("why") or "the agent gave no reason")
+        return False
+    notes = report.get("notes") or report.get("why") or ""
+    if signed_out(driver, board):
+        logger.error("%s: the agent finished but the board still shows no session; not counting it.", board.label)
+        return False
+    created = "created" in notes.casefold()
+    _remember_profile(driver, board, memory.PROFILE_CREATED if created else memory.PROFILE_UPDATED, notes)
+    logger.info("%s account %s in %.0fs: %s", board.label, "created" if created else "signed in",
+                run.seconds, notes)
+    return True
+
+
+def update_profile(driver: Any, board: Board, settings: Settings, profile: Profile,
+                   resume_pdf: Optional[Path] = None, dry_run: bool = False, create: bool = False,
+                   extra: str = "") -> bool:
+    """Refresh the board profile through the browser agent; True only when the agent says it saved.
+
+    `extra` is appended to the agent's task, for what one site needs on top (Naukri, LinkedIn).
+
+    With `create`, a board with no session first gets its account and profile made (create_profile).
+    """
+    from .accounts import account_email
+
+    if not board.profile_url:
+        logger.warning("%s: no profile page is known; skipping the profile update.", board.label)
+        return False
+    if not safe_get(driver, board.profile_url):
+        logger.error("%s: could not open %s", board.label, board.profile_url)
+        return False
+    time.sleep(PAGE_WAIT_S)
+    if signed_out(driver, board):
+        if not create:
+            logger.error("%s is signed out. Sign in once with scripts/google_login.sh (or pass --create-profile), "
+                         "then run again.", board.label)
+            return False
+        if not create_profile(driver, board, settings, profile, resume_pdf, dry_run):
+            return False
+        if dry_run:
+            return True
+        if not safe_get(driver, board.profile_url):
+            logger.error("%s: could not open %s", board.label, board.profile_url)
+            return False
+        time.sleep(PAGE_WAIT_S)
+    if dry_run:
+        logger.info("%s: dry run, opened %s and changed nothing.", board.label, board.profile_url)
+        return True
+    files = (resume_pdf,) if resume_pdf else ()
+    instruction = _PROFILE_TASK + (" If the profile has a resume upload, replace the resume with the file given."
+                                   if files else "") + (" " + extra if extra else "")
+    prompt = browser_agent.task_prompt(instruction, board.profile_url,
+                                       browser_agent.facts_text(profile, settings),
+                                       account_email(settings), files,
+                                       has_password=bool(settings.company_site_password))
+    run = browser_agent.run_agent(driver, settings, prompt,
+                                  browser_agent.workdir_for(settings, "%s profile" % board.label), files)
+    report = run.report or {}
+    if run.problem or report.get("status") != "done":
+        logger.error("%s profile not updated: %s", board.label,
+                     run.problem or report.get("why") or "the agent gave no reason")
+        return False
+    notes = report.get("notes") or report.get("why") or ""
+    _remember_profile(driver, board, memory.PROFILE_UPDATED, notes)
+    logger.info("%s profile updated in %.0fs: %s", board.label, run.seconds, notes)
+    return True
+
+
+# ---------------------------------------------------------------------------
 # Command line
 # ---------------------------------------------------------------------------
 
 
-def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
+def parse_args(argv: Optional[List[str]] = None, only: Optional[Board] = None) -> argparse.Namespace:
+    """The shared flags; `only` is the board of a per-board bot (python3 -m hirist_bot), which has no --site."""
     parser = argparse.ArgumentParser(
-        prog="python3 -m sites_bot.platforms",
-        description="Apply on other job boards with the same facts, answers, ranking and records as Naukri.",
+        prog="python3 -m %s_bot" % only.name if only else "python3 -m sites_bot.platforms",
+        description=("Apply on %s with the same facts, answers, ranking and records as Naukri." % only.label
+                     if only else "Apply on several job boards in one run (each board also has its own "
+                     "bot: python3 -m hirist_bot, instahyre_bot, cutshort_bot, wellfound_bot)."),
     )
-    parser.add_argument("--site", action="append", choices=sorted(BOARDS) + ["all"],
-                        help="board to work on; repeat for several (default: PLATFORMS in .env)")
+    if not only:
+        parser.add_argument("--site", action="append", choices=sorted(BOARDS) + ["all"],
+                            help="board to work on; repeat for several (default: PLATFORMS in .env)")
     parser.add_argument("--limit", type=int, help="applications per board this run (default: PLATFORM_LIMIT)")
     parser.add_argument("--dry-run", action="store_true", help="collect, rank and open each job, click nothing")
+    parser.add_argument("--update-profile", action="store_true",
+                        help="refresh the board profile through the browser agent before applying")
+    parser.add_argument("--profile-only", action="store_true",
+                        help="refresh the board profile and apply nowhere")
+    parser.add_argument("--create-profile", action="store_true",
+                        help="when the board shows no session, sign in or create the account and profile first")
     parser.add_argument("--env", metavar="PATH", help="path to a .env file")
     parser.add_argument("-v", "--verbose", action="store_true")
     return parser.parse_args(argv)
@@ -667,13 +749,14 @@ def chosen_boards(names: Optional[List[str]], settings: Settings) -> List[Board]
     return [BOARDS[name] for name in wanted if name in BOARDS]
 
 
-def main(argv: Optional[List[str]] = None) -> int:
+def main(argv: Optional[List[str]] = None, only: Optional[Board] = None) -> int:
+    """Run the board loop; `only` limits it to one board (the per-board bots call this)."""
     from common import browser, config, ledger as ledger_module, llm, profile as profile_module, report
     from common import resume as resume_module
     from common.answers import AnswerEngine
-    from common.run import EXIT_CONFIG, EXIT_OK, configure_logging, keep_log
+    from common.run import EXIT_CONFIG, EXIT_FAILED, EXIT_OK, configure_logging, keep_log
 
-    args = parse_args(argv)
+    args = parse_args(argv, only)
     configure_logging(args.verbose)
     try:
         settings = config.load_settings(args.env, {"dry_run": True} if args.dry_run else {})
@@ -681,11 +764,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     except Exception as exc:
         logger.error("Could not load settings or profile: %s", exc)
         return EXIT_CONFIG
-    boards = chosen_boards(args.site, settings)
+    boards = [only] if only else chosen_boards(args.site, settings)
     if not boards:
         logger.error("No board chosen: pass --site (%s) or set PLATFORMS in .env.", ", ".join(sorted(BOARDS)))
         return EXIT_CONFIG
-    keep_log(settings, "boards")
+    keep_log(settings, only.name if only else "boards")
     limit = args.limit if args.limit is not None else settings.platform_limit
     browser_agent.reset()
     ledger = ledger_module.open_ledger(settings)
@@ -710,11 +793,18 @@ def main(argv: Optional[List[str]] = None) -> int:
         return drivers[-1]
 
     totals: Dict[str, RunSummary] = {}
+    profiles_failed: List[str] = []
     try:
         for board in boards:
             if not browser_alive(drivers[-1]) and restart() is None:
                 logger.error("The browser keeps closing; stopping.")
                 break
+            if args.update_profile or args.profile_only or args.create_profile:
+                if not update_profile(drivers[-1], board, settings, profile, resume_pdf, args.dry_run,
+                                      create=args.create_profile):
+                    profiles_failed.append(board.label)
+            if args.profile_only:
+                continue
             totals[board.label] = run_board(drivers[-1], board, settings, profile, ledger, engine, client, limit,
                                             args.dry_run, resume_pdf, restart)
     finally:
@@ -727,8 +817,11 @@ def main(argv: Optional[List[str]] = None) -> int:
         logger.info("%s: applied %d, tried %d, for you %d, errors %d (collected %d, eligible %d)", label,
                     summary.applied, summary.attempted, summary.external_manual, summary.errors,
                     summary.collected, summary.eligible)
-    if not args.dry_run:
+    if not args.dry_run and not args.profile_only:
         report.update_quietly(settings)
+    if profiles_failed:
+        logger.error("Profiles not updated: %s", ", ".join(profiles_failed))
+        return EXIT_FAILED
     return EXIT_OK
 
 

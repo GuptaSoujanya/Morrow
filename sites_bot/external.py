@@ -160,6 +160,22 @@ _CONFIRMED = (
 )
 _CONFIRM_URL_WORDS = ("confirmation", "thank", "success", "submitted", "applied")
 
+
+def _confirmation_url(url: str) -> bool:
+    """A path part that is itself a confirmation word, such as /thank-you or /applied.
+
+    A word inside a longer part does not count: /customer-success-engineer/apply
+    is a job page, not a confirmation.
+    """
+    path = re.split(r"[?#]", url, 1)[0]
+    for part in path.split("/")[3:]:
+        part = part.strip().lower()
+        if part in _CONFIRM_URL_WORDS or part.startswith(("thank", "confirmation")):
+            return True
+        if part.replace("_", "-") in ("application-submitted", "application-sent", "success-page"):
+            return True
+    return False
+
 _LOWER = "translate(normalize-space(.),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')"
 _CLICKABLE_XPATH = "//*[self::button or self::a or @role='button' or @type='submit']"
 _GOOGLE_BUTTON_XPATH = "%s[contains(%s,'google')]" % (_CLICKABLE_XPATH, _LOWER)
@@ -1401,7 +1417,7 @@ def wait_for_confirmation(driver: Any, timeout_s: float = CONFIRM_WAIT_S) -> Tup
         if errors:
             return False, "the site reported: %s" % "; ".join(errors)[:300]
         url = _current_url(driver).lower()
-        if any(word in url for word in _CONFIRM_URL_WORDS) and not discover_fields(driver):
+        if _confirmation_url(url) and not discover_fields(driver):
             return True, "confirmation page %s" % url
         if time.monotonic() >= deadline:
             return False, "no confirmation within %d seconds" % int(timeout_s)
@@ -1513,7 +1529,14 @@ def apply_here(
         result.detail = "dry run: %d fields filled, Submit found, nothing sent" % len(result.filled)
         return result
 
-    _click(driver, submit)
+    try:
+        _click(driver, submit)
+    except WebDriverException as exc:
+        # The click may have gone through before the error, so this is held back like
+        # any other unconfirmed submit rather than retried as a plain error.
+        result.status = ApplyStatus.ERROR
+        result.detail = "Submit was clicked but the browser then failed: %s" % type(exc).__name__
+        return result
     confirmed, detail = wait_for_confirmation(driver, CONFIRM_WAIT_S)
     if not confirmed and not detail.startswith("the site reported"):
         quote = _confirmed_by_brain(driver, job, settings, answer_engine)

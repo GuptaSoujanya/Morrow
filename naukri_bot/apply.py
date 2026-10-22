@@ -35,17 +35,19 @@ _APPLY_TEXT_XPATH = (
     " | //a[contains(translate(normalize-space(.),"
     "'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'apply')]"
 )
+# Only elements whose own text says it: contains(normalize-space(.)) on //*
+# also matched <html> and <body>, so the phrase anywhere on the page counted.
 _SUCCESS_XPATH = (
-    "//*[contains(translate(normalize-space(.),"
+    "//*[text()[contains(translate(normalize-space(.),"
     "'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'successfully applied')"
     " or contains(translate(normalize-space(.),"
-    "'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'application sent')]"
+    "'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'application sent')]]"
 )
 _QUOTA_XPATH = (
-    "//*[contains(translate(normalize-space(.),"
+    "//*[text()[contains(translate(normalize-space(.),"
     "'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'daily quota')"
     " or contains(translate(normalize-space(.),"
-    "'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'quota has been expired')]"
+    "'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'quota has been expired')]]"
 )
 # Only the element whose own text says it, not every ancestor up to <body>.
 _REFUSED_XPATH = (

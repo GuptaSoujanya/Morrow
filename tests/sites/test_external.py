@@ -1225,6 +1225,7 @@ def test_the_saved_password_signs_in_with_the_forms_own_button(tmp_path):
 
     page = _workday_wall(on_create=_never, on_sign_in=signed_in)
     settings = _account_settings(tmp_path, company_site_password="Saved#Pass123")
+    acc.record_account(settings, "acme.wd5.myworkdayjobs.com", "jane@gmail.com", "account created")
 
     result = ext.apply_here(_browser(page), JOB, PROFILE, _Engine(), settings, _resume(tmp_path), dry_run=True)
 
@@ -1249,6 +1250,21 @@ def test_an_account_made_elsewhere_with_another_password_is_left_for_a_person(tm
     assert result.status == ApplyStatus.EXTERNAL_MANUAL
     assert "already exists on acme.wd5.myworkdayjobs.com with another password" in result.detail
     assert settings.company_site_password == "Saved#Pass123"
+
+
+def test_the_saved_password_is_never_typed_on_a_site_without_an_account(tmp_path):
+    typed = {}
+
+    def sign_in(page):
+        typed["password"] = _by_name(page, "password").value
+
+    page = _workday_wall(on_create=_never, on_sign_in=sign_in)
+    settings = _account_settings(tmp_path, company_site_password="Saved#Pass123")
+
+    ext.apply_here(_browser(page), JOB, PROFILE, _Engine(), settings, _resume(tmp_path), dry_run=True)
+
+    assert "Saved#Pass123" not in typed.values()
+    assert all(item.value != "Saved#Pass123" for item in page.fields if getattr(item, "name", "") == "password")
 
 
 def test_a_site_that_wants_the_email_verified_stops_and_says_so(tmp_path):

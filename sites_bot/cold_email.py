@@ -18,6 +18,7 @@ import imaplib
 import json
 import logging
 import re
+import ssl
 import sys
 import time
 from dataclasses import asdict, dataclass
@@ -48,8 +49,16 @@ _NOT_A_PERSON = re.compile(
 _NOT_MAIL = re.compile(r"\.(?:png|jpe?g|gif|svg|webp|js|css|ico)$", re.I)
 _PLACEHOLDER_DOMAINS = ("example.com", "example.org", "domain.com", "email.com", "yourcompany.com", "naukri.com",
                         "sentry.io", "wixpress.com", "w3.org", "schema.org", "company.com")
-_HIRING_WORDS = re.compile(r"resume|\bcv\b|apply|application|send|share|mail|reach|contact|\bhr\b|hiring|recruit|career|interested", re.I)
-_HIRING_MAILBOX = re.compile(r"hr|career|job|recruit|talent|hiring|people|resume|cv|apply", re.I)
+_HIRING_WORDS = re.compile(
+    r"resume|\bcv\b|apply|application|send|share|\bmail\b|reach|contact|\bhr\b|hiring|recruit|career|interested",
+    re.I,
+)
+# Whole parts of the mailbox name only: "hr" is a mailbox, "chris" is a person.
+_HIRING_MAILBOX = re.compile(
+    r"(?:^|[._+-])(?:hr|careers?|jobs?|recruit\w*|talent\w*|hiring|people|resumes?|cv|apply|applications?)"
+    r"(?=$|[._+\d-])",
+    re.I,
+)
 _PLACEHOLDERS = re.compile(r"\[[^\]]+\]|\{[^}]+\}|<[^>]+>|\bdear hiring manager\b", re.I)
 
 
@@ -301,15 +310,20 @@ def save_eml(message: EmailMessage, folder: Path, lead: Lead) -> Path:
 
     folder.mkdir(parents=True, exist_ok=True)
     name = _folder_name("%s - %s" % (lead.company or "Company", lead.title or "Role")) or "email"
-    path = folder / ("%s (%s).eml" % (name, lead.email))
+    # File names have a length limit; a long scraped address must not crash the run.
+    path = folder / ("%s (%s).eml" % (name[:80], lead.email[:80]))
     path.write_bytes(bytes(message))
     return path
+
+
+IMAP_TIMEOUT_S = 30
 
 
 def gmail_draft(message: EmailMessage, account: str, app_password: str) -> str:
     """Put the message in Gmail's Drafts folder; '' when done, else what went wrong."""
     try:
-        imap = imaplib.IMAP4_SSL(GMAIL_IMAP)
+        # A verified TLS session and a bounded wait: the app password goes nowhere else.
+        imap = imaplib.IMAP4_SSL(GMAIL_IMAP, ssl_context=ssl.create_default_context(), timeout=IMAP_TIMEOUT_S)
     except OSError as exc:
         return "could not reach Gmail: %s" % exc
     try:
@@ -321,6 +335,8 @@ def gmail_draft(message: EmailMessage, account: str, app_password: str) -> str:
         return "Gmail has no Drafts folder under the usual names"
     except imaplib.IMAP4.error as exc:
         return "Gmail refused the app password or the draft: %s" % exc
+    except OSError as exc:
+        return "lost the connection to Gmail: %s" % exc
     finally:
         try:
             imap.logout()

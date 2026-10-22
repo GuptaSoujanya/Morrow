@@ -4,6 +4,7 @@ import os
 import re
 import sys
 from datetime import date
+from urllib.parse import urlparse
 
 import pytest
 
@@ -389,3 +390,90 @@ def test_cutshorts_second_apply_is_clicked_and_checked_on_its_own_job_view(board
 
     assert result.status == ApplyStatus.APPLIED_PLATFORM
     assert board_page["clicks"] == 2 and checked == [view]
+
+
+def test_update_profile_needs_the_agent_to_say_done(monkeypatch):
+    from sites_bot import browser_agent, platforms
+
+    board = platforms.BOARDS["hirist"]
+    monkeypatch.setattr(platforms, "safe_get", lambda driver, url: True)
+    monkeypatch.setattr(platforms, "signed_out", lambda driver, b: False)
+    monkeypatch.setattr(platforms.time, "sleep", lambda s: None)
+    monkeypatch.setattr(browser_agent, "facts_text", lambda profile, settings: "facts")
+    prompts = []
+
+    def agent(status):
+        def run_agent(driver, settings, prompt, workdir, files=()):
+            prompts.append(prompt)
+            return browser_agent.AgentRun(report={"status": status, "why": "w", "notes": "n"},
+                                          workdir=workdir, seconds=1.0)
+        return run_agent
+
+    settings = Settings(report_dir="reports")
+    monkeypatch.setattr(browser_agent, "run_agent", agent("done"))
+    assert platforms.update_profile(object(), board, settings, None)
+    assert "Do not apply to any job" in prompts[0]
+    monkeypatch.setattr(browser_agent, "run_agent", agent("needs_you"))
+    assert not platforms.update_profile(object(), board, settings, None)
+    assert platforms.update_profile(object(), board, settings, None, dry_run=True)
+
+    from linkedin_bot import update_profile as linkedin_profile
+    from naukri_bot import update_profile as naukri_profile
+
+    monkeypatch.setattr(browser_agent, "run_agent", agent("done"))
+    for site in (linkedin_profile, naukri_profile):
+        assert platforms.update_profile(object(), site.PROFILE_BOARD, settings, None, extra="EXTRA-%s" % site.__name__)
+        assert prompts[-1].count("EXTRA-%s" % site.__name__) == 1 and urlparse(site.PROFILE_URL).netloc in prompts[-1]
+
+
+def test_a_signed_out_board_gets_its_profile_created_and_tracked_in_memory(monkeypatch):
+    from common import memory
+    from sites_bot import browser_agent, platforms
+
+    board = platforms.BOARDS["hirist"]
+    sessions = iter([True, True, False])  # signed out twice, signed in once the agent has run
+    monkeypatch.setattr(platforms, "safe_get", lambda driver, url: True)
+    monkeypatch.setattr(platforms, "signed_out", lambda driver, b: next(sessions))
+    monkeypatch.setattr(platforms.time, "sleep", lambda s: None)
+    monkeypatch.setattr(browser_agent, "facts_text", lambda profile, settings: "facts")
+    prompts = []
+
+    def run_agent(driver, settings, prompt, workdir, files=()):
+        prompts.append(prompt)
+        notes = "Account created. Profile at https://www.hirist.tech/profile/me" if len(prompts) == 1 else "saved"
+        return browser_agent.AgentRun(report={"status": "done", "why": "", "notes": notes},
+                                      workdir=workdir, seconds=1.0)
+
+    monkeypatch.setattr(browser_agent, "run_agent", run_agent)
+    settings = Settings(report_dir="reports")
+    assert not platforms.update_profile(object(), board, settings, None, create=False)
+    assert prompts == []
+    assert platforms.update_profile(object(), board, settings, None, create=True)
+    assert "create the account" in prompts[0] and "Do not apply to any job" in prompts[1]
+    tracked = memory.load_profiles()["hirist"]
+    assert tracked["url"] == "https://www.hirist.tech/profile/me"
+    assert tracked["created_at"] and tracked["last_action"] == memory.PROFILE_UPDATED
+    assert [h["action"] for h in tracked["history"]] == [memory.PROFILE_CREATED, memory.PROFILE_UPDATED]
+
+
+def test_every_board_is_its_own_bot(monkeypatch):
+    import importlib
+
+    for name in ("hirist", "instahyre", "cutshort", "wellfound"):
+        bot = importlib.import_module("%s_bot.cli" % name)
+        assert pf.BOARDS[name] is bot.BOARD and bot.BOARD.name == name
+        seen = []
+        monkeypatch.setattr(pf, "main", lambda argv=None, only=None: seen.append((argv, only)) or 0)
+        assert bot.main(["--dry-run"]) == 0
+        assert seen == [(["--dry-run"], bot.BOARD)]
+        profile = importlib.import_module("%s_bot.update_profile" % name)
+        seen.clear()
+        profile.main(["-v"])
+        assert seen == [(["-v", "--profile-only"], bot.BOARD)]
+
+
+def test_one_board_bot_has_no_site_flag():
+    args = pf.parse_args(["--limit", "3"], only=pf.BOARDS["hirist"])
+    assert args.limit == 3 and not hasattr(args, "site")
+    with pytest.raises(SystemExit):
+        pf.parse_args(["--site", "instahyre"], only=pf.BOARDS["hirist"])

@@ -125,7 +125,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--llm-backend",
-        choices=["claude-cli", "anthropic", "none"],
+        choices=["claude-cli", "kiro-cli", "anthropic", "none"],
         default=None,
         help="Which LLM to use for scoring and screening answers.",
     )

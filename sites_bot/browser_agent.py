@@ -18,6 +18,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import tempfile
 import time
 from dataclasses import dataclass, replace
 from datetime import datetime
@@ -177,6 +178,7 @@ def application_prompt(
     resume_file: Optional[Path],
     dry_run: bool,
     previous: str,
+    has_password: bool = True,
 ) -> str:
     host = urlparse(url).netloc or url
     if dry_run:
@@ -209,11 +211,12 @@ def application_prompt(
         "First list the browser tabs and select the tab whose address is on %s. Work in that tab." % host,
         "Goal: " + goal,
         "Resume: " + resume,
-        "Accounts: if the site wants you to sign in or create an account, use the email %s. For the "
-        "password, type exactly the word %s into the password box: the browser substitutes her saved "
-        "password, which you never see. Creating an account with that email and password is allowed "
-        "(except in a dry run). Use \"Continue with Google\" only if it signs in without asking for a "
-        "password or code." % (email or "(none given; report needs_you)", SECRET_NAME),
+        ("Accounts: if the site wants you to sign in or create an account, use the email %s. For the "
+         "password, type exactly the word %s into the password box: the browser substitutes her saved "
+         "password, which you never see. Creating an account with that email and password is allowed "
+         "(except in a dry run). Use \"Continue with Google\" only if it signs in without asking for a "
+         "password or code." % (email or "(none given; report needs_you)", SECRET_NAME))
+        if has_password else _NO_PASSWORD,
         "A required free-text question such as \"Why do you want to join us?\": write two or three "
         "plain first-person sentences using only facts from her resume and the posting, and list the "
         'question and your text under "written".',
@@ -231,7 +234,16 @@ def job_owner(facts: str) -> str:
     return ""
 
 
-def task_prompt(instruction: str, url: str, facts: str, email: str, files: Tuple[Path, ...] = ()) -> str:
+# Without a saved password the placeholder word would itself become the password.
+_NO_PASSWORD = (
+    "Accounts: no password is saved for career sites. Do not create an account and do not type "
+    "anything into a password box. Use \"Continue with Google\" only if it signs in without asking "
+    "for a password or code; otherwise stop and report needs_you."
+)
+
+
+def task_prompt(instruction: str, url: str, facts: str, email: str, files: Tuple[Path, ...] = (),
+                has_password: bool = True) -> str:
     host = urlparse(url).netloc or url
     uploads = (
         "Files you may upload when the task needs them (click the upload control so the file "
@@ -244,9 +256,11 @@ def task_prompt(instruction: str, url: str, facts: str, email: str, files: Tuple
         "First list the browser tabs and select the tab whose address is on %s." % host,
         "Task: " + instruction,
         uploads,
-        "Never submit an application, send a message or accept terms unless the task says so. If a "
-        "sign-in is needed, use the email %s and type exactly the word %s as the password (the "
-        "browser substitutes the real one)." % (email or "(none given)", SECRET_NAME),
+        ("Never submit an application, send a message or accept terms unless the task says so. If a "
+         "sign-in is needed, use the email %s and type exactly the word %s as the password (the "
+         "browser substitutes the real one)." % (email or "(none given)", SECRET_NAME))
+        if has_password else "Never submit an application, send a message or accept terms unless the task "
+        "says so. " + _NO_PASSWORD,
         _RULES,
         "The facts:\n" + facts,
         'When you finish or stop, reply with ONE JSON object and nothing else:\n'
@@ -377,9 +391,12 @@ def run_agent(
         shutil.copy2(str(path), str(workdir / path.name))
     secrets = None  # type: Optional[Path]
     if settings.company_site_password:
-        secrets = workdir / "secrets.env"
-        secrets.write_text("%s=%s\n" % (SECRET_NAME, _dotenv_value(settings.company_site_password)), encoding="utf-8")
-        os.chmod(str(secrets), 0o600)
+        # Outside the agent folder: --output-dir is where the browser may upload
+        # from, so a hostile page could talk the agent into attaching it.
+        secrets = Path(tempfile.mkdtemp(prefix="browser-agent-")) / "secrets.env"
+        fd = os.open(str(secrets), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write("%s=%s\n" % (SECRET_NAME, _dotenv_value(settings.company_site_password)))
     config_path = workdir / "mcp.json"
     config_path.write_text(json.dumps(mcp_config(settings, endpoint, workdir, secrets), indent=1), encoding="utf-8")
     (workdir / "task.md").write_text(prompt, encoding="utf-8")
@@ -399,12 +416,17 @@ def run_agent(
             _stop(process)
             out, err = process.communicate()
             run.problem = "it ran past %d seconds and was stopped" % settings.browser_agent_timeout_s
+        except BaseException:
+            # Ctrl-C or any other way out: the agent runs in its own session, so stop it here
+            # or it keeps driving the browser with nobody watching.
+            _stop(process)
+            raise
     except OSError as exc:
         out, err = "", ""
         run.problem = "claude could not be started: %s" % exc
     finally:
-        if secrets is not None and secrets.exists():
-            secrets.unlink()
+        if secrets is not None:
+            shutil.rmtree(str(secrets.parent), ignore_errors=True)
     run.seconds = round(time.monotonic() - started, 1)
     (workdir / "transcript.jsonl").write_text(out or "", encoding="utf-8")
     if err:
@@ -583,7 +605,8 @@ def finish_application(
     email = account_email(settings)
     prompt = application_prompt(
         job, url, facts_text(profile, settings), email,
-        resume_copy.resolve() if resume_copy is not None else None, dry_run, previous.detail)
+        resume_copy.resolve() if resume_copy is not None else None, dry_run, previous.detail,
+        has_password=bool(settings.company_site_password))
     logger.info("      browser agent: Claude Code takes over %s (task %d of %d)", url, _started,
                 settings.browser_agent_limit)
     run = run_agent(driver, settings, prompt, workdir, (Path(resume_pdf),) if resume_copy is not None else ())
@@ -688,7 +711,8 @@ def main(argv: Optional[List[str]] = None) -> int:
             workdir = workdir_for(settings, args.task[:60])
             files = (resume_pdf,) if resume_pdf is not None else ()
             prompt = task_prompt(args.task, args.url, facts_text(profile, settings), account_email(settings),
-                                 tuple((workdir / path.name).resolve() for path in files))
+                                 tuple((workdir / path.name).resolve() for path in files),
+                                 has_password=bool(settings.company_site_password))
             run = run_agent(driver, settings, prompt, workdir, files)
             print(json.dumps(run.report or {"status": "failed", "why": run.problem}, indent=1, ensure_ascii=False))
             logger.info("Agent folder: %s (%.0fs)", workdir, run.seconds)

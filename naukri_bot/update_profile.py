@@ -10,6 +10,12 @@ there is one saved session, one .env and one set of selectors to maintain.
     python3 -m naukri_bot.update_profile --dry-run   # open the editor, change nothing
     python3 -m naukri_bot.update_profile             # toggle the dot once, now
     python3 -m naukri_bot.update_profile --if-due    # only when a daily slot is due
+    python3 -m naukri_bot.update_profile --review    # toggle, then the Playwright agent checks the whole profile
+
+--review hands the signed-in browser to the same Playwright browser agent the
+job boards use (sites_bot.platforms.update_profile): it compares the profile with
+the facts from the resume and profile.yaml, fixes what is missing or out of date,
+and saves. The morning pipeline passes it.
 
 --if-due is what the launchd agent installed by scripts/install_profile_updater.sh
 runs every 15 minutes: it acts only when the latest passed slot (09:00, 13:30,
@@ -56,6 +62,20 @@ logger = logging.getLogger(__name__)
 
 PROFILE_URL = "https://www.naukri.com/mnjuser/profile"
 
+
+def _profile_board() -> Any:
+    from sites_bot.board import Board
+
+    # Only the profile fields matter: Naukri's apply run has its own code (naukri_bot.cli).
+    return Board(name="naukri", label="Naukri", home="https://www.naukri.com/", feeds=(), search="",
+                 job_link="", job_id="", apply="", applied="", profile_url=PROFILE_URL)
+
+
+PROFILE_BOARD = _profile_board()
+_REVIEW_EXTRA = ("The resume headline was just saved by another step; leave it as it is. Check the key "
+                 "skills, profile summary, employment, career profile (preferred locations, expected "
+                 "salary, notice period) and IT skills sections.")
+
 _HEADLINE_CARD = ".resumeHeadline"
 _EDIT_ICON = ".resumeHeadline span.edit.icon"
 _EDITOR = "#resumeHeadlineTxt"
@@ -90,6 +110,7 @@ class HeadlineUpdate:
     saved: bool
     resume: Optional[resume_module.ResumeUpload] = None
     resume_error: str = ""
+    review_error: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -426,10 +447,20 @@ def with_session(settings: Settings, work: Callable[[Any], Any]) -> Any:
             logger.debug("Ignoring driver teardown error: %s", exc)
 
 
+def review_profile(driver: Any, settings: Settings, profile: Any, dry_run: bool = False) -> bool:
+    """The Playwright agent checks the whole profile against the facts and saves it."""
+    from sites_bot import platforms
+
+    return platforms.update_profile(driver, PROFILE_BOARD, settings, profile, dry_run=dry_run,
+                                    extra=_REVIEW_EXTRA)
+
+
 def run_once(
-    settings: Settings, dry_run: bool = False, resume_pdf: Optional[Path] = None
+    settings: Settings, dry_run: bool = False, resume_pdf: Optional[Path] = None,
+    profile: Any = None,
 ) -> HeadlineUpdate:
-    """One browser session: headline toggle, then the resume upload when one is due."""
+    """One browser session: headline toggle, the resume upload when one is due, then
+    the agent's profile review when a profile is given."""
 
     def _work(driver: Any) -> HeadlineUpdate:
         result = update_resume_headline(driver, dry_run=dry_run)
@@ -440,6 +471,8 @@ def run_once(
                 result.resume_error = str(exc)
                 logger.error("Resume upload failed: %s", exc)
                 _screenshot(driver, settings)
+        if profile is not None and not review_profile(driver, settings, profile, dry_run):
+            result.review_error = "the browser agent did not save the profile"
         return result
 
     return with_session(settings, _work)
@@ -465,6 +498,16 @@ def _resume_to_upload(settings: Settings, state_path: Path, dry_run: bool) -> Op
 # ---------------------------------------------------------------------------
 
 
+def _remember_profile() -> None:
+    """Track the update in .memory/profiles.json with the profile link."""
+    from common import memory
+
+    try:
+        memory.record_profile("naukri", memory.PROFILE_UPDATED, PROFILE_URL, "headline re-saved")
+    except OSError as exc:
+        logger.warning("Could not note the profile in .memory (%s)", exc)
+
+
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="naukri_bot.update_profile",
@@ -487,6 +530,14 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         help=(
             "Only run when one of the daily slots (09:00, 13:30, 18:30) is due "
             "and not yet done. This is what the launchd agent passes."
+        ),
+    )
+    parser.add_argument(
+        "--review",
+        action="store_true",
+        help=(
+            "After the headline, let the Playwright browser agent compare the whole "
+            "profile with your facts, fix what is out of date and save it."
         ),
     )
     parser.add_argument(
@@ -549,11 +600,20 @@ def main(argv: Optional[List[str]] = None) -> int:
         time.sleep(delay)
 
     resume_pdf = _resume_to_upload(settings, state_path, args.dry_run)
+    profile = None
+    if args.review:
+        from common import profile as profile_module
+
+        try:
+            profile = profile_module.load_profile(settings)
+        except Exception as exc:
+            logger.error("Could not load the profile facts for --review: %s", exc)
+            return EXIT_CONFIG
 
     last_error = None  # type: Optional[BaseException]
     for attempt in range(1, MAX_ATTEMPTS + 1):
         try:
-            result = run_once(settings, dry_run=args.dry_run, resume_pdf=resume_pdf)
+            result = run_once(settings, dry_run=args.dry_run, resume_pdf=resume_pdf, profile=profile)
         except _NeedsHuman as exc:
             logger.error("Login needs a human: %s", exc)
             logger.error(
@@ -576,6 +636,8 @@ def main(argv: Optional[List[str]] = None) -> int:
 
         if result.saved and slot is not None:
             mark(state_path, slot, done=True)
+        if result.saved:
+            _remember_profile()
         logger.info(
             "%s (%d -> %d characters).",
             "Profile updated" if result.saved else "Dry run finished; nothing was changed",
@@ -589,6 +651,9 @@ def main(argv: Optional[List[str]] = None) -> int:
             report_module.update_quietly(settings)
         if result.resume_error:
             send_alert(settings, "Naukri resume upload failed: %s" % result.resume_error)
+            return EXIT_FAILED
+        if result.review_error:
+            send_alert(settings, "Naukri profile review failed: %s" % result.review_error)
             return EXIT_FAILED
         return EXIT_OK
 

@@ -314,11 +314,13 @@ def sign_in(driver: Any, settings: Settings, profile: Profile, dry_run: bool) ->
 
             if _wait_for(lambda: len(_passwords(dialog())) == 1, FORM_WAIT_S):
                 sign_in_fields = dialog()
-    elif len(_passwords(_fields(driver))) == 1:
+    elif known and len(_passwords(_fields(driver))) == 1:
         sign_in_fields = _fields(driver)
 
-    tried = ""
-    if sign_in_fields is not None and settings.company_site_password:
+    # The one shared password goes only to hosts accounts.md lists: typed into any
+    # page with a password box, a lookalike or hostile career page would collect
+    # the password for every account.
+    if sign_in_fields is not None and known:
         state, detail = _submit_sign_in(driver, email, settings.company_site_password, sign_in_fields)
         if state == "in":
             record_account(settings, host, email, "signed in")
@@ -327,13 +329,10 @@ def sign_in(driver: Any, settings: Settings, profile: Profile, dry_run: bool) ->
             return False, "%s shows a captcha at sign-in" % host
         if state == "verify":
             return False, "%s wants the email %s verified first; click the link it sent, then apply again" % (host, email)
-        tried = detail or state
-        if known:
-            return False, (
-                "the account on %s for %s did not take the saved password (%s); sign in there once by hand"
-                % (host, email, tried)
-            )
-        logger.info("      company site: sign-in on %s did not work (%s); creating an account", host, tried)
+        return False, (
+            "the account on %s for %s did not take the saved password (%s); sign in there once by hand"
+            % (host, email, detail or state)
+        )
 
     # One password box is a sign-in form; the sign-up form behind its link asks twice.
     if len(_passwords(_fields(driver))) < 2:
@@ -347,11 +346,10 @@ def sign_in(driver: Any, settings: Settings, profile: Profile, dry_run: bool) ->
     if _control(driver, _SEND_CODE) is not None:
         return False, (
             "signing up on %s needs a code it emails to %s; sign up there once by hand with the "
-            "password saved as COMPANY_SITE_PASSWORD in .env, and the bot signs in after that" % (host, email)
+            "password saved as COMPANY_SITE_PASSWORD in .env, then add a row for %s to %s so the bot "
+            "signs in after that" % (host, email, host, accounts_file(settings))
         )
     if not _passwords(_fields(driver)):
-        if tried:
-            return False, "sign-in on %s failed (%s) and there is no way to create an account" % (host, tried)
         return False, "no sign-in or sign-up form found on %s" % host
     if dry_run:
         return False, "dry run: would create an account on %s for %s" % (host, email)

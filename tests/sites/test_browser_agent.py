@@ -78,8 +78,10 @@ class _Claude:
         self.pid = 4242
         self.returncode = 0
         workdir = kwargs["cwd"]
-        secrets = os.path.join(workdir, "secrets.env")
-        self.secrets = open(secrets).read() if os.path.exists(secrets) else None
+        args = json.load(open(os.path.join(workdir, "mcp.json")))["mcpServers"]["browser"]["args"]
+        secrets = args[args.index("--secrets") + 1] if "--secrets" in args else None
+        self.secrets_path = secrets
+        self.secrets = open(secrets).read() if secrets and os.path.exists(secrets) else None
         self.timeouts = 0
         _Claude.calls.append(self)
 
@@ -263,6 +265,9 @@ def test_claude_gets_only_the_browser_tools_and_the_password_as_a_secret(claude,
     assert "--secrets" in args
     assert call.secrets == 'COMPANY_SITE_PASSWORD="%s"\n' % PASSWORD
     assert not os.path.exists(os.path.join(workdir, "secrets.env"))
+    # The agent may upload from its own folder, so the password file lives elsewhere.
+    assert not os.path.realpath(call.secrets_path).startswith(os.path.realpath(workdir))
+    assert not os.path.exists(call.secrets_path)
     assert os.path.exists(os.path.join(workdir, pdf.name))
     assert str(os.path.join(workdir, pdf.name)) in open(os.path.join(workdir, "task.md")).read()
 
