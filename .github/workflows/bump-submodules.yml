@@ -33,7 +33,9 @@ jobs:
         with:
           ref: main
           token: ${{ secrets.MORROW_BUMP_TOKEN }}
-          submodules: true
+          # Submodules are cloned one at a time below so a repo the token cannot
+          # reach is skipped with a warning instead of failing the whole run.
+          submodules: false
 
       - name: Bump each submodule that moved, one commit apiece
         run: |
@@ -43,8 +45,8 @@ jobs:
           bumped=0
           for path in $(git config --file .gitmodules --get-regexp '^submodule\..*\.path$' | awk '{print $2}'); do
             before=$(git rev-parse "HEAD:${path}")
-            if ! git submodule update --remote --checkout -- "${path}"; then
-              echo "::warning::Could not fetch ${path}; skipping it this run."
+            if ! git submodule update --init --remote --checkout -- "${path}"; then
+              echo "::warning::Could not fetch ${path} (is its repo on MORROW_BUMP_TOKEN?); skipping it this run."
               continue
             fi
             after=$(git -C "${path}" rev-parse HEAD)
@@ -54,7 +56,7 @@ jobs:
             fi
             git add "${path}"
             git commit -q -m "ci(${path}): bump submodule to commit ${after:0:7}" \
-              -m "$(git diff --submodule=log HEAD~0 -- "${path}" 2>/dev/null || true)" \
+              -m "$(git -C "${path}" log --oneline "${before}..${after}" 2>/dev/null || true)" \
               -m "Bumped-by: CI/CD (${GITHUB_EVENT_NAME})
           CI-Run: ${run_url}"
             git log -1 --format='%h %s'
