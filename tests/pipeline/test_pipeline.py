@@ -347,6 +347,9 @@ def test_cli_commands(monkeypatch):
     assert ai_cli.command_for("kiro", "hi")[:3] == ["kiro-cli", "chat", "--no-interactive"]
     claude = ai_cli.command_for("claude", "hi")
     assert claude[:3] == ["claude", "-p", "hi"] and "WebSearch,WebFetch" in claude
+    offline = ai_cli.command_for("claude", "hi", web=False)
+    assert offline[offline.index("--tools") + 1] == "" and "WebSearch" not in offline
+    assert "--trust-tools=" in ai_cli.command_for("kiro", "hi", web=False)
     monkeypatch.setattr(ai_cli.shutil, "which", lambda name: None)
     with pytest.raises(ai_cli.AIError):
         ai_cli.ask("hi")

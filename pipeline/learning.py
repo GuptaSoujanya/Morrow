@@ -3,7 +3,7 @@
 - learning/weeks/week-NN.md: the 90-day plan, one file per week. A week file that
   is missing (or short of days) is written by the CLI when that week comes up.
 - learning/today.md and learning/daily/<date>.md: today's day, cut from its week.
-- learning/progress.json: the start date and the days marked done.
+- .memory/learning.json: shared durable progress (imports learning/progress.json once).
 - resume-learning/NN-*.md: one study file per area of the resume; missing ones are written.
 - daily/<date>/: the day's briefing, written by the agents in pipeline/briefing.py.
 """
@@ -97,6 +97,9 @@ def syllabus_row(week: int, root: Path = LEARNING) -> str:
 
 def load_progress(root: Path = LEARNING) -> Dict:
     """The saved progress, {} before the first day; a damaged file is an error, not a fresh start."""
+    if root.resolve().name == "learning" and root.resolve().parent.name == ".research":
+        from common import learning_memory
+        return learning_memory.transact(root.resolve().parent.parent)["plan"]
     path = root / "progress.json"
     try:
         text = path.read_text(encoding="utf-8")
@@ -112,6 +115,16 @@ def load_progress(root: Path = LEARNING) -> Dict:
 
 
 def save_progress(progress: Dict, root: Path = LEARNING) -> None:
+    if root.resolve().name == "learning" and root.resolve().parent.name == ".research":
+        from common import learning_memory
+        # Generation only establishes the start date. Completion belongs to locked
+        # transactions, so a slow generator cannot overwrite a newer dashboard save.
+        def update(data):
+            for key, value in progress.items():
+                if key not in ("done", "marked"):
+                    data["plan"].setdefault(key, value)
+        learning_memory.transact(root.resolve().parent.parent, update)
+        return
     root.mkdir(parents=True, exist_ok=True)
     (root / "progress.json").write_text(json.dumps(progress, indent=1), encoding="utf-8")
 
@@ -126,6 +139,9 @@ def current_day(progress: Dict) -> int:
 
 
 def mark_done(root: Path = LEARNING, today: Optional[date] = None) -> int:
+    if root.resolve().name == "learning" and root.resolve().parent.name == ".research":
+        from common import learning_memory
+        return learning_memory.finish_plan_day(root.resolve().parent.parent, (today or date.today()).isoformat())
     progress = load_progress(root)
     stamp = (today or date.today()).isoformat()
     progress.setdefault("start", stamp)
@@ -274,8 +290,8 @@ def write_resume_index(root: Path = RESUME_LEARNING) -> Path:
     lines = ["# Resume learning", "", "One file per area of the resume: what it is, how you used it, "
              "core concepts, interview Q&A, a hands-on exercise, what to read next.", ""]
     for path in sorted(root.glob("[0-9][0-9]-*.md")):
-        lines = path.read_text(encoding="utf-8").splitlines()
-        title = (lines[0].lstrip("# ").strip() if lines else "") or path.stem
+        content = path.read_text(encoding="utf-8").splitlines()
+        title = (content[0].lstrip("# ").strip() if content else "") or path.stem
         lines.append("- [%s](%s)" % (title, path.name))
     index = root / "README.md"
     index.write_text("\n".join(lines) + "\n", encoding="utf-8")
