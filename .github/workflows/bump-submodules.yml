@@ -1,0 +1,53 @@
+# Points each submodule (froned-dashbord, data, .memory) at the newest commit on
+# its main and pushes that to Morrow's main.
+#
+# Runs when a submodule repo's "Bump Morrow" workflow sends submodule-updated,
+# every hour as a catch-up, or by hand from the Actions tab.
+#
+# Needs the secret MORROW_BUMP_TOKEN: a fine-grained token with Contents
+# read/write on Morrow, Morrow-frontend, Morrow-data and Morrow-memory. The
+# default GITHUB_TOKEN cannot read the other private repos.
+name: Bump submodules
+
+on:
+  repository_dispatch:
+    types: [submodule-updated]
+  schedule:
+    - cron: "17 * * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: bump-submodules
+  cancel-in-progress: false
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          token: ${{ secrets.MORROW_BUMP_TOKEN }}
+          submodules: true
+
+      - name: Move every submodule to its main
+        run: git submodule update --remote --checkout
+
+      - name: Commit and push the new pointers
+        run: |
+          git config user.name "morrow-bot"
+          git config user.email "morrow-bot@users.noreply.github.com"
+          git add .gitmodules froned-dashbord data .memory
+          if git diff --cached --quiet; then
+            echo "Every submodule is already current."
+            exit 0
+          fi
+          moved=$(git diff --cached --name-only | grep -v '^.gitmodules$' | paste -sd ' ' -)
+          git commit -q -m "Bump ${moved}" -m "$(git diff --cached --submodule=log)"
+          # Someone may have pushed to main meanwhile: replay on top and retry.
+          for attempt in 1 2 3; do
+            if git push origin HEAD:main; then exit 0; fi
+            git pull --rebase --no-recurse-submodules origin main
+          done
+          echo "::error::Could not push the bump after 3 attempts."
+          exit 1

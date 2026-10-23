@@ -14,6 +14,29 @@
 - ✅ Uses **Microsoft Edge** browser
 - ✅ Uses `webdriver-manager` for automatic driver download (no manual setup!)
 
+## 🧩 Repos and submodules
+
+This repo, [Morrow](https://github.com/GuptaSoujanya/Morrow), holds the bots and
+pulls the rest in as submodules:
+
+| Folder | Repo | What it holds |
+|---|---|---|
+| `froned-dashbord/` | [Morrow-frontend](https://github.com/GuptaSoujanya/Morrow-frontend) | The control dashboard |
+| `data/` | [Morrow-data](https://github.com/GuptaSoujanya/Morrow-data) | Database, inputs, resume, reports, posts, logs (never browser sessions) |
+| `.memory/` | [Morrow-memory](https://github.com/GuptaSoujanya/Morrow-memory) | The pipeline's day checkpoints and learning progress |
+
+```bash
+git clone --recurse-submodules https://github.com/GuptaSoujanya/Morrow.git
+```
+
+- **Changing a submodule:** commit and push inside its folder. Its "Bump Morrow"
+  workflow asks Morrow's "Bump submodules" workflow to point Morrow's `main` at
+  the new commit (it also catches up every hour). Then `git pull` here.
+- **Saving what the bots wrote:** `./scripts/sync_data.sh` commits and pushes
+  `data/` and `.memory/`.
+- **CI secret:** every repo needs `MORROW_BUMP_TOKEN`, a fine-grained token with
+  Contents read/write on all four repos.
+
 ## 🚀 How Multi-Tab Parallel Search Works
 
 Instead of processing each keyword one-by-one (slow), the bot **opens every keyword search page in its own browser tab simultaneously**:
