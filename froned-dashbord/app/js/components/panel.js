@@ -1,4 +1,5 @@
 import { h } from "../dom.js";
+import {brandMark} from './identity.js';
 
 export function panel(title, { sub, tools, cls = "" } = {}, ...body) {
   return h(
@@ -19,7 +20,7 @@ export function empty(text, extra) {
 }
 
 export function loadingState(text = "Loading…") {
-  return h("div", { class: "state-loading", role:'status' }, h("p", { class: "muted", text }));
+  return h("div", { class: "state-loading", role:'status','aria-live':'polite' },h('span',{class:'loading-emblem','aria-hidden':'true'},h('span',{class:'loading-orbit'}),brandMark()), h("p", { class: "muted", text }));
 }
 
 export function errorState(text, retry) {

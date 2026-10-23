@@ -10,17 +10,20 @@
     (() => {
       let days = 14;
       try { const saved = localStorage.getItem('overview-days'); if (saved !== null && [7,14,30,0].includes(Number(saved))) days = Number(saved); } catch {}
-      const paths = ['/api/meta','/api/status','/api/course',`/api/overview?days=${days}`,'/api/bots'];
+      const route=location.hash.replace(/^#\/?/,'').split(/[/?]/)[0]||'overview';
+      const paths = ['/api/meta','/api/status','/api/course'];
+      if(['overview','analytics','today'].includes(route))paths.push(`/api/overview?days=${days}`);
+      if(['overview','bots','today'].includes(route))paths.push('/api/bots');
       window.__orbitInitialRequests = new Map(paths.map(path => {
-        const request = fetch(path);
+        const request = fetch(path,{signal:AbortSignal.timeout(20_000)});
         request.catch(() => {});
         return [path, request];
       }));
     })();
   </script>
-  <title>Launchpad · Orbit</title>
-  <meta name="description" content="Orbit — your personal career workspace. Track applications, run automations, manage your profile and prepare for what’s next." />
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'%3E%3Ccircle cx='24' cy='24' r='13' fill='%23b9a5ff'/%3E%3Cellipse cx='24' cy='24' rx='23' ry='9' transform='rotate(-35 24 24)' stroke='%23f2f3f7' fill='none' stroke-width='3'/%3E%3C/svg%3E" />
+  <title>Launchpad · Morrow</title>
+  <meta name="description" content="Morrow — your personal career workspace. Track applications, run automations, manage your profile and prepare for what’s next." />
+  <link rel="icon" href="/assets/morrow-mark.svg" />
   <link rel="stylesheet" href="./styles/index.css" />
 </head>
 <body>

@@ -2,7 +2,7 @@ import { h, svg } from "../dom.js";
 import { recordTable } from './records.js';
 import { stageName } from './automations.js';
 import { BOTS, selectBot, botIcon, refreshBots } from './bots.js';
-import { avatar, workspaceAvatar, orbitMark, richIcon } from '../components/identity.js';
+import { avatar, workspaceAvatar, brandMark, richIcon } from '../components/identity.js';
 import { icon } from '../icons.js';
 import { api } from "../api.js";
 import { S, setOverviewDays } from "../state.js";
@@ -34,12 +34,12 @@ const NOT_SENT = {
 };
 const FUNNELS = [["all", "All"], ["naukri", "Naukri"], ["boards", "Job boards"]];
 
-async function loadOverview() {
+async function loadOverview(fresh=false) {
   const days = S.overviewDays;
   if (S.overviewLoading === days) return;
   S.overviewLoading = days;
   try {
-    const data = await api(`/api/overview?days=${days}`);
+    const data = await api(`/api/overview?days=${days}`,undefined,{fresh:!!fresh});
     if (days === S.overviewDays) S.overview = { days, data, at: Date.now(), error: "" };
   } catch (error) {
     if (days === S.overviewDays) S.overview = { ...(S.overview || {}), days, at: Date.now(), error: error.message };
@@ -123,7 +123,7 @@ function statusItem(tone, text, extra) {
 }
 
 function readerHref(route) {
-  return `${(S.meta && S.meta.course) || "/course/"}${route}`;
+  return `${(S.meta && S.meta.course) || "/course/"}#/${route}`;
 }
 
 function todayPanel() {
@@ -348,7 +348,7 @@ function orbitHeader(d){
   return h('header',{class:'page-head orbit-head'},h('div',{},h('p',{class:'eyebrow',text:'YOUR LAUNCHPAD'}),h('h1',{text:`Hey${S.status.name?', '+S.status.name:''}. Let’s make moves.`}),h('p',{class:'lead',text:'Your applications, your crew, your next chapter.'})),h('div',{class:'orbit-utilities'},search,h('button',{class:'icon-btn export-button',type:'button','aria-label':'Export data',title:'Export daily activity',disabled:!d,onclick:()=>exportDaily(d)},icon('download')),h('a',{href:'#/files/profile','aria-label':'Open your profile'},avatar(workspaceAvatar(),'header-avatar'))));
 }
 function careerCard(d){
-  return h('section',{class:'career-card','aria-label':'Application summary'},h('div',{class:'career-card-copy'},h('div',{class:'career-card-label'},orbitMark('career-mark'),h('span',{text:'YOUR CAREER, IN MOTION'})),h('p',{class:'career-number'},h('strong',{text:num(d.sent.total)}),h('span',{text:'applications sent'})),h('p',{class:'career-context',text:`${num(d.sent.naukri)} on Naukri · ${num(d.sent.boards)} on job boards · ${num(d.sent.company)} on company sites`}),h('div',{class:'career-actions'},h('a',{class:'btn btn-primary',href:'#/records/applications/submitted'},'View applications',icon('arrow-up-right','icon icon-sm')),h('a',{class:'btn btn-ghost',href:'#/pipeline'},richIcon('refresh'),'Open Flows'))),h('div',{class:'career-art','aria-hidden':'true'},h('span',{class:'orbital-ring orbital-ring-back'}),avatar(12,'hero-avatar'),h('span',{class:'orbital-ring orbital-ring-front'}),h('span',{class:'orbit-satellite'})));
+  return h('section',{class:'career-card','aria-label':'Application summary'},h('div',{class:'career-card-copy'},h('div',{class:'career-card-label'},brandMark('career-mark'),h('span',{text:'YOUR CAREER, IN MOTION'})),h('p',{class:'career-number'},h('strong',{text:num(d.sent.total)}),h('span',{text:'applications sent'})),h('p',{class:'career-context',text:`${num(d.sent.naukri)} on Naukri · ${num(d.sent.boards)} on job boards · ${num(d.sent.company)} on company sites`}),h('div',{class:'career-actions'},h('a',{class:'btn btn-primary',href:'#/records/applications/submitted'},'View applications',icon('arrow-up-right','icon icon-sm')),h('a',{class:'btn btn-ghost',href:'#/pipeline'},richIcon('refresh'),'Open Flows'))),h('div',{class:'career-art','aria-hidden':'true'},h('span',{class:'orbital-ring orbital-ring-back'}),avatar(12,'hero-avatar'),h('span',{class:'orbital-ring orbital-ring-front'}),h('span',{class:'orbit-satellite'})));
 }
 function orbitMetrics(d){
   return h('div',{class:'orbit-metrics'},[

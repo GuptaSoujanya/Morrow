@@ -21,6 +21,7 @@ sys.path.insert(0, str(ROOT))
 from web import server, state
 import commands
 import dashboard_data
+import research_learning
 
 BOARDS = ("hirist", "instahyre", "cutshort", "wellfound")
 BOT_IDS = ("naukri", *BOARDS, "external", "profile", "linkedin", "linkedin_profile", "cold_email", "resume", "learn", "brief", "research", *(board + '_profile' for board in BOARDS))
@@ -163,15 +164,18 @@ class DashboardHandler(server.Handler):
             if url.path == "/api/records":
                 return self.json(dashboard_data.records(query))
             if url.path == "/api/library":
-                return self.json(dashboard_data.artifacts())
+                return self.json(dashboard_data.artifacts(query if query else None))
+            if url.path == "/api/research/learning":
+                return self.json(research_learning.summary(query))
             if url.path == "/api/data":
-                return self.json(dashboard_data.inventory(server.files()))
+                return self.json(dashboard_data.inventory(server.files(), query if query else None))
             if url.path == "/api/resume-file":
                 path = dashboard_data.resume_file(query.get('file', ''))
                 body = path.read_bytes()
                 self.send_response(HTTPStatus.OK)
                 self.send_header('Content-Type', 'application/pdf')
-                self.send_header('Content-Disposition', 'attachment; filename="resume.pdf"; filename*=UTF-8\'\'' + quote(path.name))
+                disposition = 'inline' if query.get('preview') == '1' else 'attachment'
+                self.send_header('Content-Disposition', disposition + '; filename="resume.pdf"; filename*=UTF-8\'\'' + quote(path.name))
                 self.send_header('Content-Length', str(len(body)))
                 self.send_header('Cache-Control', 'no-store')
                 self.send_header('X-Content-Type-Options', 'nosniff')
@@ -200,6 +204,18 @@ class DashboardHandler(server.Handler):
             self.error(HTTPStatus.SERVICE_UNAVAILABLE, "The application database could not be read. Try again shortly.")
 
     def do_POST(self):
+        if urlsplit(self.path).path == "/api/research/read":
+            if not self.host_ok() or not self.change_ok():
+                return self.error(HTTPStatus.FORBIDDEN, "Only this site can change progress.")
+            try:
+                data = self.body()
+                return self.json(research_learning.mark(str(data.get('id', '')), data.get('read', True)))
+            except server.ApiError as exc:
+                return self.error(exc.status, str(exc))
+            except ValueError as exc:
+                return self.error(HTTPStatus.BAD_REQUEST, str(exc))
+            except OSError:
+                return self.error(HTTPStatus.INTERNAL_SERVER_ERROR, "Progress could not be saved. Please retry.")
         if urlsplit(self.path).path != "/api/file":
             return super().do_POST()
         if not self.host_ok() or not self.change_ok():

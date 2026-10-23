@@ -1,4 +1,4 @@
-# Orbit — your career workspace
+# Morrow — your career workspace
 
 A complete local workspace for the existing job-hunt project: application analytics,
 bot controls, pipeline progress, screening answers, profile/settings editors, reports,
@@ -22,7 +22,7 @@ with `DASHBOARD_PYTHON`, or choose a port with `npm start -- --port 8200`.
 
 - **Launchpad:** reference-inspired dark summary, real activity graph, compact metrics,
   recent attempts, Bot Crew shortcuts, follow-ups, saved flow progress and research output.
-- **Data hub:** all-time record counts, source paths and searchable research/report/profile/resume files; contained PDF downloads and clear missing/error states.
+- **Data hub:** all-time record counts, source paths and searchable research/report/profile/resume files; inline PDF preview, explicit downloads, URL-backed pagination and clear missing/error states.
 - **Applications:** search the actual ledger, switch between discovered jobs and attempts,
   filter by platform/outcome/date, sort by score and open the underlying records.
 - **Bot Crew:** 18 application, profile and career assistants with original 3D avatars, practice
@@ -32,20 +32,20 @@ with `DASHBOARD_PYTHON`, or choose a port with `npm start -- --port 8200`.
 - **Insights:** conversion funnel, outcomes, match scores, platform/search comparisons,
   recent runs and 7/14/30/all-time CSV exports.
 - **Research Studio:** search and read generated briefings, study plans, resume research and
-  saved recruiter drafts; browse real `.research` collections and mark a learning day done.
+  saved recruiter drafts. Today presents the selected date’s daily README, Papers, Tech radar and Company radar, with direct fetch/refresh controls. Learning and Resume lab have separate material and progress. Library contains the searchable `.research` collection; Progress records completion history.
 - **Automation controls:** Naukri and four other job boards, company sites, Naukri/LinkedIn
   profiles plus dedicated Hirist/Instahyre/Cutshort/Wellfound profile agents, LinkedIn posts, recruiter email drafts and resume tailoring.
 - **Action inbox, Learning path and Reports:** answer questions, complete facts, read course
   modules in expandable tracks and review or generate reports from the date archive.
 - **My profile & files / Preferences:** configuration editing, masked credentials, revision
-  checks, unsaved drafts, private backups, preferences grouped by purpose and a 24-character workspace avatar picker.
+  checks, unsaved drafts, private backups, preferences grouped by purpose and a 32-character workspace avatar picker.
 - **Activity:** compact illustrated launcher, run summary, expandable output, copy, follow-latest, graceful stop and force stop for owned runs.
 - **Schedules:** enable, inspect and disable the supported Naukri-profile/LinkedIn macOS jobs.
 - **Custom controls:** keyboard-accessible dropdowns, calendar date entry, persistent field errors,
   clear loading/retry states and draft-preserving saves.
 - **Interactive charts:** trend/bars toggle, channel filters, crosshairs, touch/keyboard date
   inspection, score-range exploration and outcome rings, all driven by the actual records.
-- **Orbit design:** dark glass navigation/dock, layered charcoal cards, original avatar art,
+- **Morrow design:** dark glass navigation/dock, layered charcoal cards, original avatar art,
   duotone navigation, local typography, restrained motion and reduced-motion support.
 
 See [CAPABILITIES.md](CAPABILITIES.md) for the backend-to-UI inventory and data semantics.
@@ -59,7 +59,7 @@ Commands started separately in a terminal are outside this console's process con
 
 The dashboard reads the project's existing SQLite database, `data/`, `.memory/`, `.research/`, `course/`
 and `.env`. It does not duplicate personal records in this folder or invent chart values.
-The original control site in `web/` is unchanged. Dashboard files are contained here.
+Shared course endpoints in `web/` use the same durable progress store. Most dashboard files are contained here; `common/learning_memory.py` is shared with the learning CLI.
 
 File saves require the revision that was opened; external changes cause a conflict instead
 of an overwrite. Prior versions are saved under `data/inputs/backups/dashboard-*.bak` with
@@ -85,7 +85,23 @@ files. Backend tests use temporary data. Reports are deliberately sandboxed: the
 accessibility scan checks the dashboard shell separately from report documents.
 
 Source: `app/js/` (ES modules), `app/styles/` (design tokens and primitives), `server.py`
-(dashboard server using the existing web API). No React runtime is needed. Typography uses locally hosted Source Sans3. Original avatar graphics are bundled from
+(dashboard server using the existing web API). React 19 owns lazy route boundaries and Suspense; existing DOM components render inside a route adapter. TanStack Query v5 caches and deduplicates read requests. Typography uses locally hosted Space Grotesk and Source Sans 3. Original avatar graphics are bundled from
 `app/assets/`; generation details are in `ASSETS.md`. Design decisions are in `DESIGN.md`; verification
 evidence and limitations are in `QA.md`. Generated screenshots/reports in `artifacts/` are
 gitignored because real dashboard views can contain personal information.
+
+## Durable learning and navigation
+
+Course lessons, research notes and 90-day learning completions save to **`.memory/learning.json`** in the project root. The server imports prior `data/reports/studied.json` and `.research/learning/progress.json` once, preserving the originals. Writes use a process lock, fsync and atomic replacement. Invalid storage is reported rather than silently reset. Back up `.memory/` with the rest of your workspace.
+
+- Research Studio → **Today**: choose a date, open its daily README, and read Papers, Tech radar and Company radar. Missing dates remain explicitly empty, with a link to the latest saved date. Fetch a whole briefing or one section directly, after reviewing its exact command.
+- **Learning**: your first unfinished learning day, 90-day progress, daily goal, system-design brief and saved weekly plans. **Resume lab**: a separate topic library based on your resume, with its own overview and completion count.
+- Fetch actions use your configured AI agents and persist their output in `.research/`; they are not simulated feeds. The Activity panel shows the run, and the view refreshes when it finishes. Only one dashboard run can execute at a time.
+- Open a read → **Mark complete**. **Reopen reading** reverses it. Opening alone never completes an item.
+- **Progress**: dated course/research completions and reopens, plus imported work whose original dates were not recorded.
+- Learning path and the hosted course reader share the same progress. `/course/01-system-design/` redirects to `/course/#/01-system-design/`. The course reader still uses its existing CDN scripts.
+- Applications, Data hub and the Research library keep page/filter/search state in the URL. Browser Back, Forward and reload restore it.
+
+TanStack Query keeps ordinary GETs fresh for 30 seconds and evicts unused entries after five minutes. Status/run/editable files bypass the cache. Mutations do not retry and invalidate cached reads after success. No credential or personal-data cache is persisted to browser storage. React Suspense and a route error boundary keep navigation available while pages load or fail. The initial route loads alongside its data to avoid an extra waterfall.
+
+`npm run dev` includes development-only react-grab and react-scan; `npm run doctor` checks the React route adapter. Production builds exclude those tools. Client caching and bounded rendering do **not** establish 100,000-user capacity: this server remains a local single-user tool.

@@ -28,7 +28,7 @@ const NAMES = new Set(SECTIONS.map(([name]) => name));
 const DEFAULT_ROUTE = { name: "overview", arg: "" };
 
 export function parseHash(hash) {
-  const raw = String(hash || "").replace(/^#\/?/, "");
+  const raw = String(hash || "").replace(/^#\/?/, "").split('?')[0];
   if (!raw) return { ...DEFAULT_ROUTE };
   let [name, ...rest] = raw.split("/");
   if (name === 'today') name = 'overview';

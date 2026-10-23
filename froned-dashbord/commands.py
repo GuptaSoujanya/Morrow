@@ -99,4 +99,9 @@ def pipeline_command(o, save=False):
         try: dt.date.fromisoformat(day)
         except ValueError: raise ValueError('Use a date in YYYY-MM-DD format.') from None
         args += ['--date',day]
-    return state.py('Daily pipeline · '+command,*args)
+    research_labels = {'brief': 'Daily research', 'brief:papers': 'Papers research',
+                       'brief:tech-news': 'Tech radar', 'brief:companies': 'Company radar',
+                       'brief:goal': 'Learning goal', 'brief:system-design': 'System design research',
+                       'learn': 'Learning material', 'research:resume': 'Resume learning'}
+    label = research_labels.get(group, 'Daily pipeline')
+    return state.py(label + ' · ' + (day if day and group in research_labels else command),*args)

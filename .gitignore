@@ -77,3 +77,4 @@ reports/
 # HOUND volatile scanner artifacts
 hunt/results/
 .kiro/agents/
+output/morrow-launch/

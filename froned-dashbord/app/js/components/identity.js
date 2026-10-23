@@ -1,12 +1,13 @@
+import markUrl from '../../assets/morrow-mark.svg';
 import {h,svg} from '../dom.js';
 let serial=0;
 export function avatar(index=15,className=''){
   const cell=index%16;
-  const position=n=>index>=16?((n+.5)*112.5-50)/3.5:n*100/3;
-  return h('span',{class:`crew-avatar ${index>=16?'orbit-world':''} ${className}`,'aria-hidden':'true',dataset:{avatar:index},style:{backgroundPosition:`${position(cell%4)}% ${position(Math.floor(cell/4))}%`}});
+  const position=n=>index>=32?((n+.5)*117.5-50)/3.7:index>=16?((n+.5)*112.5-50)/3.5:n*100/3;
+  return h('span',{class:`crew-avatar ${index>=32?'morrow-world':index>=16?'orbit-world':''} ${className}`,'aria-hidden':'true',dataset:{avatar:index},style:{backgroundPosition:`${position(cell%4)}% ${position(Math.floor(cell/4))}%`}});
 }
 export function workspaceAvatar(){
-  try {const raw=localStorage.getItem('orbit-avatar');const value=Number(raw);return raw!==null&&Number.isInteger(value)&&value>=0&&value<24?value:15;}catch{return 15;}
+  try {const raw=localStorage.getItem('orbit-avatar');const value=Number(raw);return raw!==null&&Number.isInteger(value)&&((value>=0&&value<24)||(value>=32&&value<40))?value:15;}catch{return 15;}
 }
 export function orbitMark(className='orbit-mark'){
   const id='orbit-'+(++serial);
@@ -32,3 +33,5 @@ export function richIcon(name){
   const paths=glyphs[name] || glyphs.grid;
   return svg('svg',{class:'rich-icon',viewBox:'0 0 24 24','aria-hidden':'true'},svg('path',{d:paths[0],fill:'currentColor',opacity:.38}),svg('path',{d:paths[1],fill:'currentColor'}));
 }
+
+export function brandMark(className='brand-mark'){return h('img',{src:markUrl,class:className,width:48,height:48,alt:'',decoding:'async'});}

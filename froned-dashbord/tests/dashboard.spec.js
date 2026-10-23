@@ -37,9 +37,9 @@ for (const width of [375, 768, 1280]) {
       await page.goto(`/#/${name}`);
       await expect(page.locator('main h1')).toBeVisible();
       if (name === 'overview') await expect(page.getByText('Application activity', { exact: true })).toBeVisible();
-      if (name === 'files') await expect(page.getByRole('textbox', { name: 'Your profile', exact: true })).toBeVisible();
+      if (name === 'files') await expect(page.getByRole('textbox', { name: 'First name', exact: true })).toBeVisible();
       if (name === 'setup') await expect(page.getByRole('searchbox')).toBeVisible();
-      if (name === 'data') await expect(page.locator('.data-source')).toHaveCount(7);
+      if (name === 'data') await expect(page.locator('.source-tile')).toHaveCount(7);
       if (name === 'reports') await expect(page.getByText('Reading the report…')).toHaveCount(0);
       if (['naukri', 'boards', 'profile', 'linkedin', 'resume', 'sites', 'pipeline', 'outreach', 'linkedin-profile'].includes(name)) await expect(page.locator('.preview')).not.toContainText('Checking…');
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), name).toBe(true);
@@ -100,15 +100,17 @@ test('file edits survive navigation; save uses revision; conflicts keep draft', 
     return route.fallback();
   });
   await page.goto('/#/files/profile');
-  await page.getByRole('textbox', { name: 'Your profile', exact: true }).fill('first_name: Updated');
+  await page.getByRole('textbox', { name:'First name',exact:true }).fill('Updated');
   await page.locator('.file-tabs a[href="#/files/answers"]').click();
   await page.locator('.file-tabs a[href="#/files/profile"]').click();
-  await expect(page.getByRole('textbox', { name: 'Your profile', exact: true })).toHaveValue('first_name: Updated');
-  await page.getByRole('button', { name: 'Save changes', exact: true }).click();
-  await page.getByRole('dialog').getByRole('button', { name: 'Save changes' }).click();
+  await expect(page.getByRole('textbox',{name:'First name',exact:true})).toHaveValue('Updated');
+  await page.getByRole('button',{name:'Save changes',exact:true}).click();
+  await page.getByRole('dialog').getByRole('button',{name:'Save changes'}).click();
   await expect(page.getByRole('alert').filter({hasText:'This file changed since you opened it.'})).toBeVisible();
-  expect(saved).toMatchObject({ name: 'profile', text: 'first_name: Updated', revision: 'fixture-v1' });
-  await expect(page.getByRole('textbox', { name: 'Your profile', exact: true })).toHaveValue('first_name: Updated');
+  expect(saved).toMatchObject({name:'profile',revision:'fixture-v1'});
+  expect(saved.text).toContain('first_name: Updated');
+  expect(saved.text).toContain('location: Bengaluru');
+  await expect(page.getByRole('textbox',{name:'First name',exact:true})).toHaveValue('Updated');
 });
 
 test('settings filter and secret reveal are operable', async ({ page }) => {
@@ -299,7 +301,8 @@ test('records explorer filters real data, preserves search focus and drills down
   await choose(page,'Board','all');
   await expect(page.locator('.records-count')).not.toContainText('Loading');
   await page.getByRole('button',{name:'Next',exact:true}).click();
-  await expect(page.locator('.records-pagination')).toContainText('Page 2');
+  await expect(page.locator('.pagination [aria-current=page]')).toHaveText('2');
+  await expect(page).toHaveURL(/page=2/);
 });
 
 test('new controls preview exact CLI options without running bots',async({page})=>{
@@ -336,7 +339,7 @@ test('new controls preview exact CLI options without running bots',async({page})
 });
 
 test('research documents can be searched, opened and read in their dark sandbox',async({page})=>{
-  await page.goto('/#/research');
+  await page.goto('/#/research?view=library');
   await expect(page.locator('.document-item').first()).toBeVisible();
   await page.getByRole('searchbox',{name:'Find a document'}).fill('today');
   await expect(page.locator('.document-item').first()).toBeVisible();
@@ -361,7 +364,7 @@ test('launchpad search and avatar shortcuts open the right workspace controls',a
   await page.goto('/#/overview');
   await page.getByRole('searchbox',{name:'Search applications',exact:true}).fill('no-such-orbit-fixture');
   await page.getByRole('searchbox',{name:'Search applications',exact:true}).press('Enter');
-  await expect(page).toHaveURL(/#\/records$/);
+  await expect(page).toHaveURL(/#\/records\?/);
   await expect(page.getByRole('searchbox',{name:'Search records'})).toHaveValue('no-such-orbit-fixture');
   await expect(page.getByText('No records match these filters.',{exact:true})).toBeVisible();
   await page.goto('/#/overview');
@@ -476,9 +479,10 @@ test('failed learning save rolls back the checkbox with visible feedback',async(
 
 test('research collections expose the real folder and preferences filter by purpose',async({page})=>{
   await page.goto('/#/research');
-  await expect(page.getByRole('heading',{name:/notes in \.research/})).toBeVisible();
-  await page.locator('.collection-card').filter({hasText:'Resume research'}).click();
-  await expect(page.getByRole('combobox',{name:'Document category'})).toHaveAttribute('data-value','Resume research');
+  await page.getByRole('link',{name:'Library',exact:true}).click();
+  await expect(page.getByText(/notes from \.research/)).toBeVisible();
+  await page.getByRole('button',{name:'Resume research',exact:true}).click();
+  await expect(page.getByRole('button',{name:'Resume research',exact:true})).toHaveAttribute('aria-pressed','true');
   await expect(page.locator('.document-item').first()).toContainText('.research/resume-learning/');
   await page.goto('/#/setup');
   await page.getByRole('button',{name:'Search & matching',exact:true}).click();
@@ -529,23 +533,27 @@ test('Research Studio and Data hub expose real sources and all-time records',asy
   await page.goto('/#/overview');
   await page.locator('.workspace-portal[href="#/research"]').click();
   await expect(page.getByRole('heading',{name:'Research Studio',exact:true})).toBeVisible();
-  await expect(page.getByRole('heading',{name:/notes in \.research/})).toBeVisible();
+  await page.getByRole('link',{name:'Library',exact:true}).click();
+  await expect(page.getByText(/notes from \.research/)).toBeVisible();
   await page.locator('#nav a[href="#/data"]').click();
-  await expect(page.locator('.data-source')).toHaveCount(7);
+  await expect(page.locator('.source-tile')).toHaveCount(7);
   for(const source of sources.sources){
-    const card=page.locator('.data-source').filter({has:page.getByRole('heading',{name:source.title,exact:true})});
-    await expect(card.locator('.data-source-count')).toHaveText(source.count===null?'—':new Intl.NumberFormat().format(source.count));
+    const card=page.locator('.source-tile').filter({hasText:source.title});
+    await expect(card.locator('strong')).toHaveText(source.count===null?'—':new Intl.NumberFormat().format(source.count));
   }
-  await page.locator('.data-source').filter({has:page.getByRole('heading',{name:'Application attempts',exact:true})}).click();
+  await page.locator('.source-tile').filter({hasText:'Application attempts'}).click();
   await expect(page.getByRole('combobox',{name:'Record period',exact:true})).toHaveAttribute('data-value','0');
   await page.goto('/#/data/resumes');
   await expect(page.getByRole('combobox',{name:'File category',exact:true})).toHaveAttribute('data-value','Resumes');
   await expect(page.locator('.data-file').first()).toContainText('Resumes');
   expect(await page.locator('.data-file').count()).toBeLessThanOrEqual(24);
-  const download=page.waitForEvent('download');await page.locator('.data-file').first().click();
+  await page.locator('.data-file').first().getByRole('button',{name:/Preview/}).click();
+  await expect(page.getByRole('dialog',{name:/resume|pdf|resume review/i})).toBeVisible().catch(async()=>{await expect(page.locator('.resume-dialog')).toBeVisible();});
+  await page.getByRole('button',{name:'Close resume preview'}).click();
+  const download=page.waitForEvent('download');await page.locator('.data-file').first().getByRole('link',{name:/Download/}).click();
   expect((await download).suggestedFilename()).toMatch(/\.pdf$/);
   await page.getByRole('searchbox',{name:'Search workspace data'}).fill('no-such-file-999');
-  await expect(page.getByText('No saved files match. Try another category or search.')).toBeVisible();
+  await expect(page.getByText('No saved files match.')).toBeVisible();
 });
 
 test('profile crew selects profile-only previews for all four new platforms',async({page})=>{
@@ -566,8 +574,8 @@ test('profile crew selects profile-only previews for all four new platforms',asy
 test('workspace avatar picker persists choice without changing platform profiles',async({page})=>{
   await page.goto('/#/files/profile');
   await page.getByRole('button',{name:'Change avatar',exact:true}).click();
-  const dialog=page.getByRole('dialog',{name:'Find your Orbit alter ego'});
-  await expect(dialog.locator('.avatar-choice')).toHaveCount(24);
+  const dialog=page.getByRole('dialog',{name:'Find your Morrow alter ego'});
+  await expect(dialog.locator('.avatar-choice')).toHaveCount(32);
   await dialog.getByRole('button',{name:'Lilac cat',exact:true}).click();
   for(const width of [375,768,1280]){
     await page.setViewportSize({width,height:900});
@@ -607,4 +615,205 @@ test('Activity is compact, keyboard accessible and explains idle and failed runs
   await page.screenshot({path:'artifacts/activity-failed-mobile.png',animations:'disabled'});
   const result=await new AxeBuilder({page}).withTags(['wcag2a','wcag2aa','wcag21a', 'wcag21aa','wcag22aa']).analyze();
   expect(result.violations.map(v=>v.id)).toEqual([]);
+});
+
+test('records pagination is bounded for 100,000 rows and survives refresh and history',async({page})=>{
+  await page.route('**/api/records?*',route=>{
+    const q=new URL(route.request().url()).searchParams,size=Number(q.get('size')||20),pageNumber=Math.min(Number(q.get('page')||1),Math.ceil(100000/size));
+    return route.fulfill({json:{page:pageNumber,pages:Math.ceil(100000/size),size,total:100000,statuses:['applied'],updated_at:new Date().toISOString(),rows:Array.from({length:size},(_,i)=>({job_id:String((pageNumber-1)*size+i+1),title:`Fixture role ${(pageNumber-1)*size+i+1}`,company:'Example',board:'hirist',kind:'sent',label:'Submitted',score:85,at:'2026-10-23T08:00:00',url:''}))}});
+  });
+  await page.goto('/#/records?kind=jobs&days=0&page=2&size=20&board=hirist');
+  await expect(page.locator('tbody tr')).toHaveCount(20);
+  await expect(page.locator('tbody tr').first()).toContainText('Fixture role 21');
+  await page.getByRole('button',{name:'Next',exact:true}).click();
+  await expect(page).toHaveURL(/page=3/);
+  await expect(page.locator('tbody tr').first()).toContainText('Fixture role 41');
+  await page.goBack();
+  await expect(page.locator('tbody tr').first()).toContainText('Fixture role 21');
+  await page.goForward();await page.reload();
+  await expect(page.locator('tbody tr').first()).toContainText('Fixture role 41');
+  await expect(page.getByRole('combobox',{name:'Board',exact:true})).toHaveAttribute('data-value','hirist');
+  await choose(page,'Rows per page','50');
+  await expect(page).toHaveURL(/page=1.*size=50/);
+  await expect(page.locator('tbody tr')).toHaveCount(50);
+  expect(await page.locator('.page-number').count()).toBeLessThanOrEqual(5);
+});
+
+test('Data hub restores filters and previews without triggering a download',async({page})=>{
+  await page.goto('/#/data?category=Resumes&page=2&size=12');
+  await expect(page.locator('.data-file')).toHaveCount(12);
+  const title=await page.locator('.data-file-name strong').first().textContent();
+  await page.reload();await expect(page.locator('.data-file-name strong').first()).toHaveText(title);
+  const downloads=[];page.on('download',d=>downloads.push(d));
+  const trigger=page.locator('.data-file').first().getByRole('button',{name:/Preview/});
+  await trigger.click();
+  const dialog=page.locator('.resume-dialog');await expect(dialog).toBeVisible();
+  const src=await dialog.locator('iframe').getAttribute('src');expect(src).toContain('preview=1');
+  const response=await page.request.get(src);expect(response.headers()['content-disposition']).toMatch(/^inline/);
+  const audit=await new AxeBuilder({page}).exclude('iframe').withTags(['wcag2a','wcag2aa']).analyze();expect(audit.violations.map(v=>v.id)).toEqual([]);
+  await page.screenshot({path:'artifacts/resume-preview-laptop.png',animations:'disabled'});
+  await page.keyboard.press('Escape');await expect(trigger).toBeFocused();expect(downloads).toHaveLength(0);
+  await choose(page,'File category','Research');await expect(page).toHaveURL(/category=Research.*page=1/);
+  await page.goBack();await expect(page.getByRole('combobox',{name:'File category',exact:true})).toHaveAttribute('data-value','Resumes');
+  await expect(page.locator('.pagination [aria-current=page]')).toHaveText('2');
+});
+
+test('query cache reuses reads, explicit refresh refetches, mutation invalidates',async({page})=>{
+  let reads=0;
+  await page.route('**/api/data?*',route=>{reads++;return route.fallback();});
+  await page.route('**/api/course/read',route=>route.fulfill({json:{ok:true}}));
+  await page.goto('/#/data');await expect(page.locator('.data-file').first()).toBeVisible();expect(reads).toBe(1);
+  await page.locator('#nav a[href="#/reports"]').click();await expect(page.locator('main h1')).toHaveText('Reports');
+  await page.locator('#nav a[href="#/data"]').click();await expect(page.locator('.data-file').first()).toBeVisible();expect(reads).toBe(1);
+  await page.getByRole('button',{name:'Refresh data',exact:true}).click();await expect.poll(()=>reads).toBe(2);
+  await page.locator('#nav a[href="#/study"]').click();await page.locator('.lesson-row input').first().click();await expect(page.locator('.lesson-row input').first()).toBeEnabled();
+  await page.locator('#nav a[href="#/data"]').click();await expect(page.locator('.data-file').first()).toBeVisible();expect(reads).toBe(3);
+});
+
+test('late filter responses cannot overwrite the current search',async({page})=>{
+  await page.route('**/api/data?*',async route=>{
+    const q=new URL(route.request().url()).searchParams.get('q');
+    if(q==='slow')await new Promise(resolve=>setTimeout(resolve,700));
+    if(q)return route.fulfill({json:{sources:[],files:[],total:0,page:1,pages:1,size:12}});
+    return route.fallback();
+  });
+  await page.goto('/#/data');await expect(page.locator('.data-file').first()).toBeVisible();
+  const search=page.getByRole('searchbox',{name:'Search workspace data'});
+  const slow=page.waitForRequest(r=>r.url().includes('q=slow'));await search.fill('slow');await slow;
+  await search.fill('latest');await expect(page).toHaveURL(/q=latest/);await expect(page.getByText('No saved files match.',{exact:true})).toBeVisible();
+  await page.waitForResponse(r=>r.url().includes('q=slow'));await expect(page).toHaveURL(/q=latest/);await expect(search).toHaveValue('latest');await expect(search).toBeFocused();
+});
+
+test('lazy route loading is visible and failed chunks preserve navigation',async({page})=>{
+  await page.goto('/#/overview');await expect(page.locator('main h1')).toBeVisible();
+  let release;const held=new Promise(resolve=>{release=resolve;});
+  await page.route('**/assets/chunks/data-*.js',async route=>{await held;return route.continue();});
+  await page.locator('#nav a[href="#/data"]').click();
+  await expect(page.locator('main .state-loading')).toBeVisible();
+  await page.screenshot({path:'artifacts/lazy-loading.png',animations:'disabled'});release();
+  await expect(page.locator('main h1')).toHaveText('Data hub');
+  await page.route('**/assets/chunks/research-*.js',route=>route.abort());
+  await page.locator('#nav a[href="#/research"]').click();
+  await expect(page.getByRole('alert')).toContainText('This page could not open');
+  await expect(page.getByRole('button',{name:'Reload workspace',exact:true})).toBeVisible();
+  await page.locator('.nav-group a[href="#/overview"]').click();await expect(page.getByText('Application activity',{exact:true})).toBeVisible();
+});
+
+test('profile fields preserve YAML types, lists, comments and unrelated facts',async({page})=>{
+  const source='# keep this comment\nfirst_name: Demo\ntotal_experience_years: 3\nskills:\n  - Python\n  - SQL\nwilling_to_relocate: true\nextra_facts:\n  portfolio_url: https://example.com\n  custom_fact: Keep me\n';
+  let saved;
+  await page.route('**/api/file?name=profile',route=>route.fulfill({json:{name:'profile',path:'profile.yaml',text:source,revision:'fixture-types'}}));
+  await page.route('**/api/file',route=>{saved=route.request().postDataJSON();return route.fulfill({json:{ok:true,revision:'fixture-saved'}});});
+  await page.goto('/#/files/profile');await page.getByRole('textbox',{name:'First name',exact:true}).fill('Taylor: Jo');
+  await page.getByRole('button',{name:'Career',exact:true}).click();await page.getByLabel('Experience in years',{exact:true}).fill('4.5');
+  await page.getByLabel('Skills',{exact:true}).fill('Python\nTypeScript');
+  await page.locator('.profile-form').getByRole('button',{name:'Preferences',exact:true}).click();await choose(page,'Willing to relocate','false');
+  await page.getByRole('button',{name:'Save changes',exact:true}).click();await page.getByRole('dialog').getByRole('button',{name:'Save changes',exact:true}).click();
+  await expect.poll(()=>saved?.revision).toBe('fixture-types');
+  expect(saved.text).toContain('# keep this comment');expect(saved.text).toContain('total_experience_years: 4.5');expect(saved.text).toContain('willing_to_relocate: false');expect(saved.text).toContain('custom_fact: Keep me');expect(saved.text).toContain('TypeScript');expect(saved.text).toContain('"Taylor: Jo"');
+  await expect(page.getByText('All changes saved',{exact:true})).toBeVisible();
+});
+
+for(const [width,height] of [[1280,720],[1366,768],[1440,900]])test(`laptop workspace at ${width}×${height}`,async({page})=>{
+  test.setTimeout(90000);await page.setViewportSize({width,height});await mkdir(`artifacts/laptop-${width}`,{recursive:true});
+  for(const route of ['overview','research','reports','study','files','setup','data','records']){
+    await page.goto('/#/'+route);await expect(page.locator('main h1')).toBeVisible();
+    if(route==='files'){await expect(page.getByRole('textbox',{name:'First name',exact:true})).toBeVisible();await expect(page.getByRole('textbox',{name:'First name',exact:true})).toBeInViewport();}
+    if(route==='data')await expect(page.locator('.data-file').first()).toBeVisible();
+    if(route==='research')await expect(page.locator('.daily-digest')).toBeVisible();
+    if(route==='reports')await expect(page.getByText('Reading the report…')).toHaveCount(0);
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),route).toBe(true);
+    await page.screenshot({path:`artifacts/laptop-${width}/${route}.png`,animations:'disabled'});
+  }
+});
+
+test('Research Learning shows the next read, saves explicitly and explains earlier progress',async({page})=>{
+  let completed=false,fail=false;const date=new Date().toLocaleDateString('en-CA'),at=new Date().toISOString();
+  await page.route('**/api/research/learning?*',route=>route.fulfill({json:{date,focus:{id:completed?'plan/day-2':'plan/day-1',day:completed?2:1,title:completed?'Caching foundations':'Client and server'},queue:[{id:completed?'plan/day-2':'plan/day-1',title:completed?'Caching foundations':'Client and server',category:'Learning',caption:'Your next unfinished day'}],plan_done:completed?1:0,plan_total:90,course_done:3,course_total:49,completed_today:completed?[{id:'plan/day-1',kind:'research',title:'Client and server',completed_at:at}]:[],history:{items:completed?[{id:'plan/day-1',kind:'research',title:'Client and server',at,action:'completed'}]:[],page:1,pages:1,size:15,total:completed?1:0},imported:[{id:'intro.md',kind:'course',title:'Imported introduction',done:true}],legacy_plan_days:[],storage:'.memory/learning.json'}}));
+  await page.route('**/api/document?id=plan%2Fday-1',route=>route.fulfill({json:{id:'plan/day-1',title:'Client and server',day:1,read:completed,html:'<h1>Client and server</h1><p>A saved lesson.</p>'}}));
+  await page.route('**/api/research/read',route=>{if(fail)return route.fulfill({status:500,json:{error:'Disk is unavailable.'}});completed=route.request().postDataJSON().read;return route.fulfill({json:{ok:true,read:completed}});});
+  await page.goto('/#/research?view=learning');await expect(page.locator('.daily-focus')).toContainText('Client and server');
+  await page.getByRole('link',{name:'Start reading',exact:true}).click();await expect(page.getByRole('button',{name:'Mark complete',exact:true})).toBeVisible();expect(completed).toBe(false);
+  fail=true;await page.getByRole('button',{name:'Mark complete',exact:true}).click();await expect(page.locator('.reading-save-status')).toContainText('Could not save');expect(completed).toBe(false);
+  fail=false;await page.getByRole('button',{name:'Mark complete',exact:true}).click();await expect(page.getByRole('button',{name:'Reopen reading',exact:true})).toBeEnabled();
+  await page.reload();await expect(page.getByRole('button',{name:'Reopen reading',exact:true})).toBeVisible();
+  await page.getByRole('link',{name:'← Back to Research Studio',exact:true}).click();await expect(page.locator('.daily-focus')).toContainText('Caching foundations');
+  await expect(page.locator('.panel').filter({has:page.getByRole('heading',{name:'Completed today',exact:true})})).toContainText('Client and server');
+  await page.getByRole('link',{name:'Progress',exact:true}).click();await expect(page).toHaveURL(/view=progress/);
+  await expect(page.getByRole('heading',{name:'Your learning history'})).toBeVisible();await page.getByText('1 imported completions',{exact:true}).click();await expect(page.getByText('Imported introduction',{exact:true})).toBeVisible();
+  for(const width of [375,768,1280]){await page.setViewportSize({width,height:900});expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);await page.screenshot({path:`artifacts/research-progress-${width}.png`,animations:'disabled',fullPage:true});}
+  const result=await new AxeBuilder({page}).withTags(['wcag2a','wcag2aa','wcag21aa']).analyze();expect(result.violations.map(v=>v.id)).toEqual([]);
+  await page.goto('/#/research/plan%2Fday-1?view=today');await page.getByRole('button',{name:'Reopen reading',exact:true}).click();await expect(page.getByRole('button',{name:'Mark complete',exact:true})).toBeEnabled();expect(completed).toBe(false);
+});
+
+test('short laptop navigation scrolls independently and remains stable during polling',async({page})=>{
+  await page.setViewportSize({width:1280,height:720});await page.goto('/#/research?view=learning');await expect(page.locator('.daily-focus')).toBeVisible();
+  const scroll=page.locator('.sidebar-scroll');expect(await scroll.evaluate(el=>el.scrollHeight>el.clientHeight)).toBe(true);
+  await scroll.evaluate(el=>{el.scrollTop=el.scrollHeight;});await expect(page.locator('.nav-group a[href="#/setup"]')).toBeInViewport();
+  const before=await scroll.evaluate(el=>el.scrollTop);await page.waitForResponse(r=>r.url().includes('/api/status'));expect(await scroll.evaluate(el=>el.scrollTop)).toBe(before);
+  await page.locator('.nav-group a[href="#/setup"]').click();await expect(page.locator('main h1')).toBeVisible();await expect(page.locator('.sidebar-foot')).toBeInViewport();
+  expect(await page.evaluate(()=>scrollY)).toBe(0);await page.screenshot({path:'artifacts/sidebar-short-laptop.png',animations:'disabled'});
+});
+
+test('loading indicator is centered and respects reduced motion',async({page})=>{
+  await page.setViewportSize({width:1366,height:768});await page.emulateMedia({reducedMotion:'reduce'});
+  await page.goto('/#/overview');await expect(page.locator('main h1')).toBeVisible();
+  let release;const held=new Promise(resolve=>{release=resolve;});await page.route('**/assets/chunks/data-*.js',async route=>{await held;return route.continue();});
+  await page.locator('.nav-group a[href="#/data"]').click();const state=page.locator('main .state-loading');await expect(state).toBeVisible();
+  const box=await state.boundingBox(),emblem=await state.locator('.loading-emblem').boundingBox();expect(Math.abs(emblem.x+emblem.width/2-box.x-box.width/2)).toBeLessThan(2);expect(emblem.y).toBeGreaterThan(200);
+  expect(await page.locator('.loading-orbit').evaluate(el=>getComputedStyle(el).animationName)).toBe('none');await page.screenshot({path:'artifacts/centered-loading-laptop.png',animations:'disabled'});release();await expect(page.locator('main h1')).toHaveText('Data hub');
+});
+
+test('legacy course URL opens the real lesson and provides a safe progress control',async({page})=>{
+  test.setTimeout(60000);
+  await page.goto('/course/01-system-design/');await expect(page).toHaveURL('/course/#/01-system-design/');
+  await expect(page.locator('.markdown-section h1').first()).toBeVisible({timeout:30000});
+  await expect(page.locator('.morrow-progress button')).toBeVisible();await page.locator('.morrow-progress button').click();
+  await expect(page.locator('.morrow-progress [role=status]')).toContainText('Could not save');await expect(page.locator('.morrow-progress button')).toBeEnabled();
+  await page.screenshot({path:'artifacts/course-reader-progress.png',animations:'disabled'});
+});
+
+test('daily research exposes Papers, Tech, Companies, README and distinct learning spaces',async({page})=>{
+  await page.goto('/#/research?view=today&date=2026-10-22');
+  await expect(page.getByRole('link',{name:'Open daily README',exact:true})).toBeVisible();
+  for(const [key,title] of [['papers','Papers'],['tech','Tech radar'],['companies','Company radar']]){
+    const section=page.locator(`[data-research-section="${key}"]`);await expect(section.getByRole('heading',{name:title,exact:true})).toBeVisible();await expect(section.getByRole('link',{name:'Open '+title,exact:true})).toBeVisible();await expect(section.locator('.research-headlines li').first()).toBeVisible();
+  }
+  await page.getByRole('link',{name:'Open Papers',exact:true}).click();await expect(page.frameLocator('.document-reader').locator('h1')).toContainText('Papers');
+  await page.getByRole('link',{name:'← Back to Research Studio',exact:true}).click();await expect(page).toHaveURL(/view=today.*date=2026-10-22/);
+  await page.getByRole('link',{name:'Learning',exact:true}).click();await expect(page).toHaveURL(/view=learning.*date=2026-10-22/);
+  await expect(page.getByRole('heading',{name:'Daily learning goal',exact:true})).toBeVisible();await expect(page.getByRole('heading',{name:'System design deep dive',exact:true})).toBeVisible();await expect(page.locator('.daily-digest')).toHaveCount(0);
+  await page.getByRole('link',{name:'Resume lab',exact:true}).click();await expect(page.getByRole('heading',{name:'Your resume topics',exact:true})).toBeVisible();await expect(page.locator('.research-row')).toHaveCount(12);
+  await page.getByRole('link',{name:'Open resume README',exact:true}).click();await expect(page.frameLocator('.document-reader').locator('h1')).toHaveText('Resume learning');await expect(page.frameLocator('.document-reader').locator('li')).toHaveCount(12);
+});
+
+test('missing daily research can be fetched by exact section and selected date with inline errors',async({page})=>{
+  await page.goto('/#/research?view=today&date=2026-10-23');
+  await expect(page.getByRole('button',{name:'Fetch daily research',exact:true})).toBeVisible();await expect(page.getByRole('link',{name:/Latest saved research:/})).toBeVisible();
+  const calls=[];page.on('request',r=>{if(r.method()==='POST'&&r.url().endsWith('/api/run'))calls.push(r.postDataJSON());});
+  for(const [title,group] of [['Papers','brief:papers'],['Tech radar','brief:tech-news'],['Company radar','brief:companies']]){
+    await page.getByRole('button',{name:'Fetch '+title,exact:true}).click();const dialog=page.getByRole('dialog',{name:`Fetch ${title}?`});await expect(dialog.locator('code')).toContainText('--only '+group);await expect(dialog.locator('code')).toContainText('--date 2026-10-23');await expect(dialog.locator('code')).not.toContainText('--only apply');await dialog.getByRole('button',{name:'Cancel',exact:true}).click();
+  }
+  expect(calls).toHaveLength(0);
+  await page.getByRole('button',{name:'Fetch Papers',exact:true}).click();await page.getByRole('dialog').getByRole('button',{name:'Fetch research',exact:true}).click();
+  await expect(page.locator('[data-research-section=papers] [role=alert]')).toContainText('Could not fetch this research');expect(calls).toEqual([{action:'pipeline',options:{group:'brief:papers',date:'2026-10-23',redo:true}}]);
+  const date=page.getByRole('textbox',{name:'Research date',exact:true});await date.fill('2026-10-22');await date.press('Enter');await expect(page).toHaveURL(/date=2026-10-22/);await expect(page.getByRole('link',{name:'Open daily README',exact:true})).toBeVisible();
+});
+
+test('research desk views remain readable and accessible across laptop, tablet and phone',async({page})=>{
+  test.setTimeout(90000);
+  for(const width of [375,768,1280]){
+    await page.setViewportSize({width,height:width===1280?720:900});
+    for(const view of ['today','learning','resume','library','progress']){
+      await page.goto(`/#/research?view=${view}&date=2026-10-22`);await expect(page.locator('main h1')).toBeVisible();
+      if(view==='today')await expect(page.locator('[data-research-section=papers]')).toBeVisible();
+      if(view==='learning')await expect(page.locator('.daily-focus')).toBeVisible();
+      if(view==='resume')await expect(page.locator('.research-row')).toHaveCount(12);
+      if(view==='library')await expect(page.getByRole('searchbox',{name:'Find a document'})).toBeVisible();
+      if(view==='progress')await expect(page.getByRole('heading',{name:'Your learning history',exact:true})).toBeVisible();
+      expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),view).toBe(true);
+      await page.screenshot({path:`artifacts/research-${view}-${width}.png`,animations:'disabled',fullPage:true});
+      if(width===1280){const result=await new AxeBuilder({page}).exclude('iframe').withTags(['wcag2a','wcag2aa','wcag21aa','wcag22aa']).analyze();expect(result.violations.map(v=>({id:v.id,targets:v.nodes.map(n=>n.target)})),view).toEqual([]);}
+    }
+  }
 });

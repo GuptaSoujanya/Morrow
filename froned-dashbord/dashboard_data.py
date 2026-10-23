@@ -31,12 +31,14 @@ def resume_files():
 
 def resume_file(relative):
     path = state.RESUMES / relative
-    if not relative or Path(relative).is_absolute() or '..' in Path(relative).parts or path not in resume_files():
+    if (not relative or Path(relative).is_absolute() or '..' in Path(relative).parts
+            or path.suffix != '.pdf' or not path.is_file()
+            or not path.resolve().is_relative_to(state.RESUMES.resolve())):
         raise ValueError('Choose a saved resume PDF from Data hub.')
     return path
 
 
-def inventory(input_files):
+def inventory(input_files, params=None):
     """An explicit catalogue, never a recursive browser over credentials/session data."""
     sources, files = [], []
     def source(key, title, path, href, art, description):
@@ -92,8 +94,23 @@ def inventory(input_files):
         flows['count'] = len(saved.get('days', {}))
         if checkpoint.is_file(): files.append(file_metadata(checkpoint, 'Automation', 'Flow checkpoint', '#/pipeline'))
     except (OSError, ValueError): flows.update(count=None, error='The saved checkpoint could not be read.')
-    return {'sources': sources, 'files': sorted(files, key=lambda f:f['updated_at'], reverse=True),
-            'updated_at': dt.datetime.now().astimezone().isoformat(timespec='seconds')}
+    learning = state.APPLY / '.memory/learning.json'
+    if learning.is_file():
+        files.append(file_metadata(learning, 'Research', 'Learning progress & completion history', '#/research?view=progress'))
+    result = {'sources': sources, 'files': sorted(files, key=lambda f:f['updated_at'], reverse=True),
+              'updated_at': dt.datetime.now().astimezone().isoformat(timespec='seconds')}
+    if params is not None:
+        page = integer(params.get('page'), 1, 1, 1000000)
+        size = integer(params.get('size'), 12, 1, 100)
+        query = str(params.get('q', '')).strip().casefold()
+        category = params.get('category', '')
+        matched = [f for f in result['files'] if (not category or f['category'] == category)
+                   and (not query or query in (f['title']+' '+f['path']).casefold())]
+        total = len(matched)
+        pages = max(1, (total+size-1)//size)
+        page = min(page, pages)
+        result.update(files=matched[(page-1)*size:page*size],total=total,page=page,pages=pages,size=size)
+    return result
 
 
 def integer(value, default, low, high):
@@ -171,14 +188,15 @@ def workspace():
     entry=checkpoint.get('days',{}).get(today,{})
     stages=entry.get('stages',{})
     plan=entry.get('plan',list(stages))
-    learning=read_json(root/'.research/learning/progress.json',{})
+    from common import learning_memory
+    learning=learning_memory.transact(root, studied=state.STUDIED)['plan']
     return {'date':today,'pipeline':{'total':len(plan),'done':sum(stages.get(k,{}).get('status')=='done' for k in plan),
         'stages':[{'name':key,**stages.get(key,{'status':'pending'})} for key in plan]},
         'learning_done':len(learning.get('done',[])), 'research_count':len(artifacts()['items']),
         'configured_boards':[key.strip() for key in (state._setting('PLATFORMS') or 'hirist,instahyre').split(',') if key.strip()]}
 
 
-def artifacts():
+def artifacts(params=None):
     items=[]
     for prefix,root,pattern in [('research',state.APPLY/'.research','**/*.md'),('email',state.REPORTS,'*/emails/*.eml')]:
         if not root.is_dir(): continue
@@ -193,15 +211,38 @@ def artifacts():
             category='Email drafts' if prefix=='email' else 'Learning' if relative.startswith('learning/') else 'Resume research' if relative.startswith('resume-learning/') else 'Briefing'
             items.append({'id':prefix+'/'+relative,'title':title,'category':category,'path':relative,
                 'updated_at':dt.datetime.fromtimestamp(path.stat().st_mtime).astimezone().isoformat(timespec='seconds')})
-    return {'items':sorted(items,key=lambda x:x['updated_at'],reverse=True)}
+    items = sorted(items,key=lambda x:x['updated_at'],reverse=True)
+    if params is None: return {'items': items}
+    research_count = sum(item['id'].startswith('research/') for item in items)
+    query = str(params.get('q', '')).strip().casefold()
+    category = params.get('category', '')
+    items = [item for item in items if (not category or item['category'] == category)
+             and (not query or query in (item['title']+' '+item['path']).casefold())]
+    size = integer(params.get('size'),12,1,100)
+    total = len(items)
+    pages = max(1,(total+size-1)//size)
+    page = min(integer(params.get('page'),1,1,1000000),pages)
+    import research_learning
+    progress = research_learning.saved()
+    selected = items[(page-1)*size:page*size]
+    for item in selected:
+        item['read'] = research_learning.completion(research_learning.document_info(item['id'], items), progress)
+    return {'items':selected, 'total':total, 'pages':pages, 'page':page, 'size':size, 'research_count':research_count}
+
 
 
 def artifact(identifier):
+    import research_learning
+    info = research_learning.document_info(identifier)
     prefix,sep,relative=str(identifier).partition('/')
-    if not sep or prefix not in ('research','email'): raise ValueError('Choose a generated document.')
+    if not sep or prefix not in ('research','email','plan'): raise ValueError('Choose a generated document.')
     root=(state.APPLY/'.research') if prefix=='research' else state.REPORTS
     path=(root/relative).resolve()
-    allowed={item['id'] for item in artifacts()['items']}
+    allowed={item['id']:item for item in artifacts()['items']}
+    if prefix == 'plan':
+        root = state.APPLY / '.research'
+        path = info['file'].resolve()
+        allowed[identifier] = info
     if identifier not in allowed or not path.is_relative_to(root.resolve()): raise ValueError('This document is not available in the library.')
     if prefix=='email':
         from email import policy
@@ -214,7 +255,7 @@ def artifact(identifier):
     else:
         from markdown_it import MarkdownIt
         md=MarkdownIt('commonmark',{'html':False}).enable(['table','strikethrough'])
-        tokens=md.parse(path.read_text(encoding='utf-8'))
+        tokens=md.parse(info['text'] if prefix == 'plan' else path.read_text(encoding='utf-8'))
         for token in tokens:
             for child in token.children or []:
                 if child.type=='image':
@@ -232,7 +273,12 @@ def artifact(identifier):
                         if key in allowed:
                             child.attrSet('href','/#/research/'+quote(key,safe=''));child.attrSet('target','_top')
                         else: child.attrSet('href','#')
+                    elif resolved.is_relative_to(state.COURSE.resolve()):
+                        module = next((m for m in state.course_modules(state.COURSE) if m.file == resolved), None)
+                        if module:
+                            child.attrSet('href', '/course/#/' + quote(module.route, safe='/'));child.attrSet('target', '_blank');child.attrSet('rel', 'noopener')
+                        else: child.attrSet('href','#')
                     else: child.attrSet('href','#')
                 elif scheme: child.attrSet('href','#')
         rendered=md.renderer.render(tokens,md.options,{})
-    return {'id':identifier,'title':path.stem,'html':rendered}
+    return {'id':identifier,'title':info['title'],'html':rendered, 'read':research_learning.completion(info, research_learning.saved()), 'day':info.get('day')}

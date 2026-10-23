@@ -7,7 +7,8 @@ import { quickButton } from '../forms.js';
 import { dateControl } from '../components/controls.js';
 import { journeyBanner } from '../components/journey.js';
 import { richIcon } from '../components/identity.js';
-import { READER_STYLE } from './research.js';
+import { READER_STYLE } from '../components/reader.js';
+import {selectControl} from '../components/controls.js';
 
 const cache = new Map();
 let loadingDay = null;
@@ -16,11 +17,11 @@ function dayLabel(day) {
   return day === S.status.date ? `Today, ${longDate(day)}` : longDate(day);
 }
 
-async function loadReport(day) {
+async function loadReport(day, fresh=false) {
   if (loadingDay === day) return;
   loadingDay = day;
   try {
-    const data = await api(`/api/report?day=${encodeURIComponent(day)}`);
+    const data = await api(`/api/report?day=${encodeURIComponent(day)}`,undefined,{fresh});
     cache.set(day, { data, error: "" });
   } catch (error) {
     cache.set(day, { data: null, error: error.message });
@@ -58,9 +59,10 @@ export function renderReports(argDay) {
 
   return h(
     "div",
-    { class: "page" },
+    { class: "page reports-page" },
     h("header", { class: "page-head" }, h("div", {}, h("h1", { text: "Reports" }), h("p", { class: "lead", text: "A written summary the bots leave after every run." })), h("div", { class: "head-actions" }, select)),
-    journeyBanner({image:29,eyebrow:'THE RECORD OF YOUR PROGRESS',title:`${days.length} saved ${days.length===1?'report':'reports'}`,body:'Review what happened, spot patterns and plan your next move. Dots in the calendar mark days with a saved report.'}),
-    h('div',{class:'report-layout'},panel('Report archive',{cls:'report-archive',sub:'Choose a saved day'},days.length?h('div',{class:'report-date-list'},days.map(d=>h('a',{class:'report-date',href:`#/reports/${d}`,'aria-current':day===d?'page':null},richIcon('file'),h('span',{},h('strong',{text:dayLabel(d)}),h('small',{text:'Saved daily report'}))))):h('p',{class:'muted',text:'Build your first report to start an archive.'})),panel(entry && !entry.error && entry.data && entry.data.exists ? entry.data.title : dayLabel(day), { tools: h('div', { class: 'row' }, quickButton('report', 'Build report', { day }), h('button', { class: 'btn btn-sm', type: 'button', text: 'Refresh', onclick: () => loadReport(day) })) }, body)),
+    h('div',{class:'report-toolbar'},h('div',{class:'report-context'},richIcon('file'),h('div',{},h('strong',{text:`${days.length} saved reports`}),h('span',{class:'muted small',text:'Choose a day, then read at your own pace.'}))),
+      selectControl({label:'Saved report',value:day,options:[...new Set([day,...days])].map(value=>({value,label:dayLabel(value)})),onChange:value=>{window.location.hash=`#/reports/${value}`;}})),
+    panel(entry?.data?.exists ? entry.data.title : dayLabel(day), {cls:'focus-reader',tools:h('div',{class:'row'},quickButton('report','Build report',{day}),h('button',{class:'btn btn-sm',type:'button',text:'Refresh',onclick:()=>loadReport(day,true)}))},body),
   );
 }

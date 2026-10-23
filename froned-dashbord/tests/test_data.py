@@ -166,3 +166,30 @@ def test_data_inventory_reports_corrupt_sources_without_losing_other_collections
     assert by_id['applications']['count'] is None and by_id['applications']['error']
     assert by_id['flows']['count'] is None and by_id['flows']['error']
     assert by_id['research']['count']==2
+
+
+def test_inventory_pages_filter_before_slicing_and_clamp(library,monkeypatch):
+    root=data.state.APPLY/'resumes';root.mkdir()
+    monkeypatch.setattr(data.state,'RESUMES',root)
+    monkeypatch.setattr(data.state,'database',lambda:root/'absent.db')
+    for i in range(65): (root/f'engineer-{i:03}.pdf').write_bytes(b'%PDF fixture')
+    one=data.inventory({}, {'category':'Resumes','page':1,'size':12})
+    two=data.inventory({}, {'category':'Resumes','page':2,'size':12})
+    assert one['total']==65 and one['pages']==6 and len(one['files'])==12
+    assert not {f['path'] for f in one['files']} & {f['path'] for f in two['files']}
+    last=data.inventory({}, {'category':'Resumes','page':999,'size':12})
+    assert last['page']==6 and len(last['files'])==5
+    search=data.inventory({}, {'category':'Resumes','q':'engineer-064','page':2,'size':12})
+    assert search['total']==1 and search['page']==1
+    empty=data.inventory({}, {'category':'Resumes','q':'not-found','page':2,'size':12})
+    assert empty['total']==0 and empty['page']==1 and empty['pages']==1
+    with pytest.raises(ValueError): data.inventory({}, {'size':101})
+
+
+def test_library_pagination_preserves_counts_and_search(library):
+    page=data.artifacts({'page':2,'size':1})
+    assert page['total']==2 and page['research_count']==2 and len(page['items'])==1
+    filtered=data.artifacts({'q':'Next lesson','page':999,'size':1})
+    assert filtered['total']==1 and filtered['page']==1 and filtered['items'][0]['title']=='Next lesson'
+    assert data.artifacts({'category':'Email drafts','size':12})['items']==[]
+    with pytest.raises(ValueError): data.artifacts({'page':0})

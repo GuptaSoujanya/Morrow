@@ -1,4 +1,4 @@
-# Orbit artwork
+# Morrow artwork
 
 ## Original generated crew
 
@@ -62,3 +62,17 @@ Final prompt:
 ### Delivery variants
 
 Both generated originals are also encoded at the same 1024×1024 dimensions as AVIF with FFmpeg/SVT-AV1 (CRF34). CSS `image-set` selects AVIF on supporting browsers and retains WebP fallback. `app/assets/orbit-crew.avif` is 61,463 bytes; `app/assets/orbit-world.avif` is 58,376 bytes. Combined image transfer drops from 208,654 to 119,839 bytes without removing graphics or changing layout/materials. Browser screenshots verify the rendered variants.
+
+## Morrow crew extension and identity — October 23, 2026
+
+- Mode: built-in imagegen, using the approved original crew atlas as a viewed style reference.
+- Generated original: `/Users/apple/.codex/generated_images/01a16352-8bbc-7342-b7e3-a0c7e0ac8546/exec-0f63b1ce-07ef-405c-a167-58e9186014fd.png`.
+- Production: `app/assets/morrow-crew.webp` and `app/assets/morrow-crew.avif`, 1024×1024; WebP quality84 and AV1 CRF34. CSS selects a supported format and centrally crops each tile to avoid neighboring-cell bleed.
+- Portrait indices32–39: lavender bunny, mint mushroom, peach pilot, pearl professor, slate bear, violet beanie, mint stargazer, cream earmuffs. Combined with existing atlases: **32 selectable portraits**.
+- Symbol indices40–47: folded M sculpture, calendar, filter, PDF document, folder, chart, shield/check, magnifier/document.
+- Primary brand mark: original code-native `app/assets/morrow-mark.svg`; raster M sculpture is supporting artwork. No platform affiliation implied; no trademark clearance claimed for the working name.
+- Local display type: Space Grotesk variable, from Google Fonts, with OFL license at `app/fonts/space-grotesk-OFL.txt`. Body remains Source Sans3.
+
+Generation brief (recorded summary):
+
+> Create a precise four-by-four atlas on uniform charcoal #191b22. Use the original crew as a style reference for premium glossy vinyl/ceramic, soft studio rim lighting, friendly rounded robot faces and restrained lavender, mint, peach, cream and slate colors. The first eight cells contain the distinct robot portraits listed above; the final eight contain the dimensional utility symbols listed above. Center each object in an equal cell with safe margins, no overlaps, no text, no labels and no watermark. Preserve polished collectible-toy detail and legibility at small dashboard sizes. This is a production asset atlas, not a dashboard screenshot.

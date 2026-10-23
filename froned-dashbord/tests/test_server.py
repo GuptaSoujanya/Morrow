@@ -147,3 +147,57 @@ def test_resume_api_is_download_only_and_contained(app,monkeypatch):
     assert request(app,'GET','/api/resume-file?file=demo.pdf')==(200,b'%PDF fixture')
     assert request(app,'GET','/api/resume-file?file=../profile.yaml')[0]==400
     assert request(app,'GET','/api/resume-file?file=demo.pdf',headers={'Host':'evil.example'})[0]==403
+
+
+def test_resume_preview_is_inline_but_download_is_explicit(app,monkeypatch):
+    root=app[1].parent/'pdfs';root.mkdir();(root/'preview.pdf').write_bytes(b'%PDF fixture')
+    monkeypatch.setattr(dashboard.state,'RESUMES',root)
+    for query,expected in [('', 'attachment'),('&preview=1','inline')]:
+        connection=http.client.HTTPConnection('127.0.0.1',app[0].server_port)
+        connection.request('GET','/api/resume-file?file=preview.pdf'+query)
+        response=connection.getresponse()
+        assert response.status==200
+        assert response.getheader('Content-Disposition').startswith(expected+';')
+        assert response.getheader('Content-Type')=='application/pdf'
+        assert response.getheader('Cache-Control')=='no-store'
+        assert response.read()==b'%PDF fixture'
+        connection.close()
+
+
+def test_course_legacy_deep_links_redirect_to_the_hash_reader(app,monkeypatch):
+    root=app[1].parent/'course';(root/'01-system-design').mkdir(parents=True)
+    (root/'index.html').write_text('<h1>Reader</h1>')
+    (root/'_sidebar.md').write_text('- **Systems**\n  - [System design](01-system-design/README.md)\n')
+    (root/'01-system-design/README.md').write_text('# System design')
+    monkeypatch.setattr(dashboard.state,'COURSE',root)
+    connection=http.client.HTTPConnection('127.0.0.1',app[0].server_port)
+    connection.request('GET','/course/01-system-design/')
+    response=connection.getresponse();response.read()
+    assert response.status in (301,302,303,307,308)
+    assert response.getheader('Location')=='/course/#/01-system-design/'
+    connection.close()
+    assert request(app,'GET','/course/')[0]==200
+    assert request(app,'GET','/course/01-system-design/README.md')==(200,b'# System design')
+    assert request(app,'GET','/course/not-a-lesson/')[0]==404
+    assert request(app,'GET','/course/../../profile.yaml')[0]==404
+
+
+def test_research_progress_endpoint_is_local_validated_and_durable(app,monkeypatch):
+    root=app[1].parent/'.research/learning/weeks';root.mkdir(parents=True)
+    (root/'week-01.md').write_text('## Day 1: First lesson\nRead this.\n\n## Day 2: Second lesson\nRead next.')
+    monkeypatch.setattr(dashboard.state,'STUDIED',app[1].parent/'studied.json')
+    assert request(app,'GET','/api/document?id=plan/day-1')[1]['read'] is False
+    body={'id':'plan/day-1','read':True}
+    assert request(app,'POST','/api/research/read',body,{'Origin':'https://evil.example'})[0]==403
+    assert request(app,'POST','/api/research/read',{'id':'plan/day-1','read':'false'})[0]==400
+    assert request(app,'POST','/api/research/read',body)[0]==200
+    assert request(app,'GET','/api/research/learning')[1]['focus']['day']==2
+    # A second server instance has no in-memory completion state to inherit.
+    second=dashboard.DashboardServer(0)
+    thread=threading.Thread(target=second.serve_forever,daemon=True);thread.start()
+    try:
+        assert request((second,app[1]),'GET','/api/document?id=plan/day-1')[1]['read'] is True
+    finally:
+        second.shutdown();second.server_close();thread.join()
+    saved=json.loads((app[1].parent/'.memory/learning.json').read_text())
+    assert saved['plan']['done']==[1] and len(saved['history'])==1

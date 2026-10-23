@@ -30,7 +30,7 @@ export async function refreshBots() {
   if (loading) return;
   loading = true;
   try {
-    const data = await api('/api/bots');
+    const data = await api('/api/bots',undefined,{fresh:true});
     const changed = JSON.stringify(data.bots) !== JSON.stringify(S.bots?.data?.bots) || S.bots?.error;
     S.bots = { data, at:Date.now() };
     if (changed && ['overview','bots'].includes(S.route.name) && (!document.getElementById('content').contains(document.activeElement) || document.activeElement.id === 'content')) hooks.requestRender();

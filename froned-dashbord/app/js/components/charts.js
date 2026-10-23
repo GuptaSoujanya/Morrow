@@ -94,11 +94,14 @@ export function columnsChart({ rows, series, label, xLabel, detailFor }, width =
       chart.append(group);
     });
     guide=svg('line',{class:'chart-crosshair',x1:x(index),x2:x(index),y1:top,y2:bottom}); chart.append(guide);
-    interaction=svg('rect',{x:left,y:0,width:width-left,height:bottom,fill:'transparent',tabindex:0,role:'slider',
+    // Keep the hit target stable while ResizeObserver recomputes the artwork.
+    // Replacing it could interrupt a tap or focus during the first layout pass.
+    interaction ||= svg('rect',{x:left,y:0,width:width-left,height:bottom,fill:'transparent',tabindex:0,role:'slider',
       'aria-label':'Inspect application date','aria-orientation':'horizontal','aria-valuemin':1,'aria-valuemax':rows.length,
       onkeydown:e=>{const delta={ArrowLeft:-1,ArrowDown:-1,ArrowRight:1,ArrowUp:1}[e.key];if(delta||['Home','End'].includes(e.key)){e.preventDefault();inspect(e.key==='Home'?0:e.key==='End'?rows.length-1:index+delta);}},
       onpointermove:e=>{if(e.pointerType!=='touch'||e.buttons)locate(e);},onpointerdown:e=>locate(e)});
-    function locate(e){const r=chart.getBoundingClientRect();inspect(Math.round(((e.clientX-r.left)/r.width*width-left-inset())/(width-left-right-2*inset())*(rows.length-1)));}
+    interaction.setAttribute('width',width-left);
+    function locate(e){const r=interaction.ownerSVGElement.getBoundingClientRect();inspect(Math.round(((e.clientX-r.left)/r.width*width-left-inset())/(width-left-right-2*inset())*(rows.length-1)));}
     chart.append(interaction);plot.replaceChildren(chart);
     [...modes.children].forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.mode===mode)));
     [...legend.children].forEach(b=>{b.setAttribute('aria-pressed',String(visible.has(b.dataset.key)));b.disabled=visible.size===1&&visible.has(b.dataset.key);});

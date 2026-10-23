@@ -5,7 +5,7 @@ await import('./build.mjs');
 const root = fileURLToPath(new URL('../', import.meta.url));
 const localPython = fileURLToPath(new URL('../../venv/bin/python', import.meta.url));
 const python = process.env.DASHBOARD_PYTHON || (existsSync(localPython) ? localPython : 'python3');
-const child = spawn(python, [root + 'server.py', ...process.argv.slice(2)], { cwd: root, stdio: 'inherit' });
+const child = spawn(python, [root + 'server.py', ...process.argv.slice(2).filter(arg=>arg!=='--dev')], { cwd: root, stdio: 'inherit' });
 child.on('error', error => { console.error(error.message); process.exitCode = 1; });
 child.on('exit', code => { process.exitCode = code || 0; });
 for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => child.kill(signal));
