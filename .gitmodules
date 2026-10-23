@@ -18,3 +18,7 @@
 	path = hunt
 	url = https://github.com/GuptaSoujanya/Morrow-hunt.git
 	branch = main
+[submodule ".research"]
+	path = .research
+	url = https://github.com/GuptaSoujanya/Morrow-research.git
+	branch = main
