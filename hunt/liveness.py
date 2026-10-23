@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from check import history_issues, inventory_issues
+from identity import sha256_file
 from parse import parse
 from probe import verify_anchor
 from registry import Context, Instrument
@@ -51,6 +52,8 @@ def _git_fixture(ctx: Context, instrument: Instrument, half: str) -> Path:
 
 def _targets(instrument: Instrument, half: str) -> list[str]:
     name = instrument.name
+    if name == "quality":
+        return [half]
     if name == "semgrep":
         return ["app.py", "web.js", "run.sh"]
     if name in ("bandit", "ruff"):
@@ -63,6 +66,8 @@ def _targets(instrument: Instrument, half: str) -> list[str]:
         return ["supply/python"]
     if name == "trivy-node":
         return ["supply/node"]
+    if name == "trivy-config":
+        return ["container"]
     if name == "pytest-target":
         return ["sandbox/test_pass.py"] if half == "clean" else ["sandbox/test_fire.py"]
     if name == "sandbox":
@@ -131,6 +136,8 @@ def run(ctx: Context, instruments: list[Instrument]) -> list[dict[str, Any]]:
                 instrument, local, _targets(instrument, half), raw, label=f"liveness-{instrument.name}-{half}"
             )
             parser, issues = parse(instrument.name, raw, execution.stdout, root, None)
+            if instrument.name == "quality" and half == "positive" and len(issues) != 4:
+                parser = "failed"
             entry["halves"][half] = {
                 "argv": execution.argv,
                 "cwd": execution.cwd,
@@ -142,6 +149,7 @@ def run(ctx: Context, instruments: list[Instrument]) -> list[dict[str, Any]]:
                 "raw": [
                     p.relative_to(ctx.root).as_posix() if p.is_relative_to(ctx.root) else str(p) for p in execution.raw
                 ],
+                "raw_digests": {p.relative_to(ctx.root).as_posix(): sha256_file(p) for p in execution.raw},
                 "note": execution.note,
             }
         clean = entry["halves"]["clean"]

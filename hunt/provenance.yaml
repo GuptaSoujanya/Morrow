@@ -1,268 +1,142 @@
 schema: hound.provenance.v1
-generated: '2026-10-22T12:23:04+00:00'
+generated: '2026-10-23T06:40:25+00:00'
 target:
   root: /Users/apple/Desktop/apply
-  sha: 53b21e191b772c4e1ecd14c30cc14e57f6ae9a6e
+  sha: 7bc11e7130017787bf6f378f97e86f1d7f440e95
   branch: main
   remote: https://github.com/GuptaSoujanya/apply-bot.git
-  commits: 101
+  commits: 111
   dirty: true
   dirty_entries:
-  - ' M common/ledger.py'
-  - ' M scripts/linkedin_status.sh'
-  - ' M scripts/profile_update_status.sh'
-  - ' M scripts/run_linkedin_post.sh'
-  - ' M scripts/run_profile_update.sh'
-  - ' M sites_bot/cold_email.py'
-  - ' M sites_bot/external.py'
-  - ' M tests/common/test_answers_file.py'
+  - ' M .env.example'
+  - ' M .gitignore'
+  - ' M .research/resume-learning/README.md'
+  - ' M common/ai_cli.py'
+  - ' M course/index.html'
+  - ' M froned-dashbord/ASSETS.md'
+  - ' M froned-dashbord/CAPABILITIES.md'
+  - ' M froned-dashbord/DESIGN.md'
+  - ' M froned-dashbord/QA.md'
+  - ' M froned-dashbord/README.md'
+  - ' M froned-dashbord/app/index.html'
+  - ' M froned-dashbord/app/js/api.js'
+  - ' M froned-dashbord/app/js/components/avatar-picker.js'
+  - ' M froned-dashbord/app/js/components/charts.js'
+  - ' M froned-dashbord/app/js/components/identity.js'
+  - ' M froned-dashbord/app/js/components/nav.js'
+  - ' M froned-dashbord/app/js/components/panel.js'
+  - ' M froned-dashbord/app/js/main.js'
+  - ' M froned-dashbord/app/js/router.js'
+  - ' M froned-dashbord/app/js/views/bots.js'
+  - ' M froned-dashbord/app/js/views/data.js'
+  - ' M froned-dashbord/app/js/views/files.js'
+  - ' M froned-dashbord/app/js/views/overview.js'
+  - ' M froned-dashbord/app/js/views/records.js'
+  - ' M froned-dashbord/app/js/views/reports.js'
+  - ' M froned-dashbord/app/js/views/research.js'
+  - ' M froned-dashbord/app/js/views/setup.js'
+  - ' M froned-dashbord/app/js/views/study.js'
+  - ' M froned-dashbord/app/styles/index.css'
+  - ' M froned-dashbord/commands.py'
+  - ' M froned-dashbord/dashboard_data.py'
+  - ' M froned-dashbord/package-lock.json'
+  - ' M froned-dashbord/package.json'
+  - ' M froned-dashbord/scripts/build.mjs'
+  - ' M froned-dashbord/scripts/start.mjs'
+  - ' M froned-dashbord/server.py'
+  - ' M froned-dashbord/tests/dashboard.spec.js'
+  - ' M froned-dashbord/tests/test_data.py'
+  - ' M froned-dashbord/tests/test_server.py'
+  - ' M hunt/RUNBOOK.md'
+  - ' M hunt/TODO.md'
+  - ' M hunt/emit.py'
+  - ' M hunt/evidence.yaml'
+  - ' M hunt/hound.py'
+  - ' M hunt/liveness.py'
+  - ' M hunt/parse.py'
+  - ' M hunt/probe.py'
+  - ' M hunt/progress.yaml'
+  - ' M hunt/provenance.py'
+  - ' M hunt/provenance.yaml'
+  - ' M hunt/registry.py'
+  - ' M hunt/sandbox/test_pipeline.py'
+  - ' M hunt/scope.py'
+  - ' M hunt/scope.yaml'
+  - ' M hunt/test/conftest.py'
+  - ' M hunt/test/test_verify.py'
+  - ' M hunt/verify.py'
+  - ' M linkedin_bot/cli.py'
+  - ' M linkedin_bot/config.py'
+  - ' M linkedin_bot/news.py'
+  - ' M linkedin_bot/writer.py'
+  - ' M pipeline/learning.py'
   - ' M tests/linkedin/test_linkedin_cli.py'
-  - ' M tests/sites/test_cold_email.py'
-  - ' M tests/sites/test_external.py'
+  - ' M tests/linkedin/test_linkedin_writer.py'
+  - ' M tests/pipeline/test_pipeline.py'
   - ' M web/server.py'
   - ' M web/state.py'
-  - ?? .kiro/agents/opencode-1b11476b.json
-  - ?? .kiro/agents/opencode-2dee807d.json
-  - ?? .kiro/agents/opencode-30080d2f.json
-  - ?? .kiro/agents/opencode-41681d3f.json
-  - ?? .kiro/agents/opencode-883b07c1.json
-  - ?? .kiro/agents/opencode-ab4f6ba3.json
-  - ?? .research/TODAY.md
-  - ?? .research/companies-to-watch.md
-  - ?? .research/daily/2026-10-22.md
-  - ?? .research/daily/2026-10-22/01-goal.md
-  - ?? .research/daily/2026-10-22/02-system-design.md
-  - ?? .research/daily/2026-10-22/03-papers.md
-  - ?? .research/daily/2026-10-22/04-tech-news.md
-  - ?? .research/daily/2026-10-22/05-companies.md
-  - ?? .research/daily/2026-10-22/README.md
-  - ?? .research/learning/README.md
-  - ?? .research/learning/daily/2026-10-22.md
-  - ?? .research/learning/progress.json
-  - ?? .research/learning/today.md
-  - ?? .research/learning/weeks/week-01.md
-  - ?? .research/learning/weeks/week-02.md
-  - ?? .research/learning/weeks/week-03.md
-  - ?? .research/learning/weeks/week-04.md
-  - ?? .research/learning/weeks/week-05.md
-  - ?? .research/learning/weeks/week-06.md
-  - ?? .research/learning/weeks/week-07.md
-  - ?? .research/learning/weeks/week-08.md
-  - ?? .research/learning/weeks/week-09.md
-  - ?? .research/learning/weeks/week-10.md
-  - ?? .research/learning/weeks/week-11.md
-  - ?? .research/learning/weeks/week-12.md
-  - ?? .research/learning/weeks/week-13.md
-  - ?? .research/resume-learning/01-agent-evaluation-harnesses.md
-  - ?? .research/resume-learning/02-llm-as-judge.md
-  - ?? .research/resume-learning/03-inference-gateways-litellm.md
-  - ?? .research/resume-learning/04-langchain-and-rag.md
-  - ?? .research/resume-learning/05-metrics-and-dataset-quality.md
-  - ?? .research/resume-learning/06-fine-tuning-and-prompting-llama.md
-  - ?? .research/resume-learning/07-python-fastapi-pytest.md
-  - ?? .research/resume-learning/08-docker-ci-ec2-gitlfs.md
-  - ?? .research/resume-learning/09-react-nextjs-tailwind-shadcn-redux-tanstack.md
-  - ?? .research/resume-learning/10-node-express-websockets-redis-mongodb.md
-  - ?? .research/resume-learning/11-sql-javascript-typescript-cpp.md
-  - ?? .research/resume-learning/12-whisper-aws.md
-  - ?? .research/resume-learning/README.md
-  - ?? .research/tech-radar.md
-  - ?? QUARRY.md
-  - ?? common/ai_cli.py
-  - ?? common/memory.py
-  - ?? cutshort_bot/__init__.py
-  - ?? cutshort_bot/__main__.py
-  - ?? cutshort_bot/board.py
-  - ?? cutshort_bot/cli.py
-  - ?? cutshort_bot/update_profile.py
-  - ?? froned-dashbord/.gitignore
-  - ?? froned-dashbord/DESIGN.md
-  - ?? froned-dashbord/QA.md
-  - ?? froned-dashbord/README.md
-  - ?? froned-dashbord/app/fonts/fraunces-500.woff2
-  - ?? froned-dashbord/app/fonts/fraunces-OFL.txt
-  - ?? froned-dashbord/app/fonts/jetbrains-mono-400.woff2
-  - ?? froned-dashbord/app/fonts/jetbrains-mono-OFL.txt
-  - ?? froned-dashbord/app/fonts/source-sans-3-OFL.txt
-  - ?? froned-dashbord/app/fonts/source-sans-3.woff2
-  - ?? froned-dashbord/app/index.html
-  - ?? froned-dashbord/app/js/api.js
-  - ?? froned-dashbord/app/js/components/charts.js
-  - ?? froned-dashbord/app/js/components/console.js
-  - ?? froned-dashbord/app/js/components/dialog.js
-  - ?? froned-dashbord/app/js/components/kpi.js
-  - ?? froned-dashbord/app/js/components/nav.js
-  - ?? froned-dashbord/app/js/components/panel.js
-  - ?? froned-dashbord/app/js/components/segmented.js
-  - ?? froned-dashbord/app/js/components/toast.js
-  - ?? froned-dashbord/app/js/dom.js
-  - ?? froned-dashbord/app/js/format.js
-  - ?? froned-dashbord/app/js/forms.js
-  - ?? froned-dashbord/app/js/icons.js
-  - ?? froned-dashbord/app/js/main.js
-  - ?? froned-dashbord/app/js/router.js
-  - ?? froned-dashbord/app/js/state.js
-  - ?? froned-dashbord/app/js/views/automations.js
-  - ?? froned-dashbord/app/js/views/files.js
-  - ?? froned-dashbord/app/js/views/linkedin.js
-  - ?? froned-dashbord/app/js/views/naukri.js
-  - ?? froned-dashbord/app/js/views/overview.js
-  - ?? froned-dashbord/app/js/views/profile.js
-  - ?? froned-dashbord/app/js/views/reports.js
-  - ?? froned-dashbord/app/js/views/resume.js
-  - ?? froned-dashbord/app/js/views/setup.js
-  - ?? froned-dashbord/app/js/views/sites.js
-  - ?? froned-dashbord/app/js/views/study.js
-  - ?? froned-dashbord/app/js/views/todo.js
-  - ?? froned-dashbord/app/styles/base.css
-  - ?? froned-dashbord/app/styles/charts.css
-  - ?? froned-dashbord/app/styles/components.css
-  - ?? froned-dashbord/app/styles/console.css
-  - ?? froned-dashbord/app/styles/forms.css
-  - ?? froned-dashbord/app/styles/index.css
-  - ?? froned-dashbord/app/styles/layout.css
-  - ?? froned-dashbord/app/styles/responsive.css
-  - ?? froned-dashbord/app/styles/tokens.css
-  - ?? froned-dashbord/app/styles/workspace.css
-  - ?? froned-dashbord/package-lock.json
-  - ?? froned-dashbord/package.json
-  - ?? froned-dashbord/playwright.config.js
-  - ?? froned-dashbord/scripts/audit.mjs
-  - ?? froned-dashbord/scripts/build.mjs
-  - ?? froned-dashbord/scripts/inspect.mjs
-  - ?? froned-dashbord/scripts/start.mjs
-  - ?? froned-dashbord/server.py
-  - ?? froned-dashbord/tests/dashboard.spec.js
-  - ?? froned-dashbord/tests/test_server.py
-  - ?? hirist_bot/__init__.py
-  - ?? hirist_bot/__main__.py
-  - ?? hirist_bot/board.py
-  - ?? hirist_bot/cli.py
-  - ?? hirist_bot/update_profile.py
-  - ?? hunt/.gitignore
-  - ?? hunt/RUNBOOK.md
-  - ?? hunt/TODO.md
-  - ?? hunt/check.py
-  - ?? hunt/emit.py
-  - ?? hunt/evidence.yaml
-  - ?? hunt/findings.yaml
-  - ?? hunt/fixture/clean/app.py
-  - ?? hunt/fixture/clean/node/good.ts
-  - ?? hunt/fixture/clean/nodetest/pass.test.mjs
-  - ?? hunt/fixture/clean/run.sh
-  - ?? hunt/fixture/clean/sandbox/test_isolation.py
-  - ?? hunt/fixture/clean/sandbox/test_pass.py
-  - ?? hunt/fixture/clean/supply/node/package-lock.json
-  - ?? hunt/fixture/clean/supply/python/requirements.txt
-  - ?? hunt/fixture/clean/web.js
-  - ?? hunt/fixture/positive/app.py
-  - ?? hunt/fixture/positive/node/bad.ts
-  - ?? hunt/fixture/positive/nodetest/fire.test.mjs
-  - ?? hunt/fixture/positive/run.sh
-  - ?? hunt/fixture/positive/sandbox/test_fire.py
-  - ?? hunt/fixture/positive/supply/node/package-lock.json
-  - ?? hunt/fixture/positive/supply/python/requirements.txt
-  - ?? hunt/fixture/positive/web.js
-  - ?? hunt/hound.py
-  - ?? hunt/identity.py
-  - ?? hunt/liveness.py
-  - ?? hunt/parse.py
-  - ?? hunt/probe.py
-  - ?? hunt/probe/boards.yaml
-  - ?? hunt/probe/core.yaml
-  - ?? hunt/probe/dashboard.yaml
-  - ?? hunt/probe/edge.yaml
-  - ?? hunt/probe/linkedin.yaml
-  - ?? hunt/probe/pipeline.yaml
-  - ?? hunt/probe/sites.yaml
-  - ?? hunt/probe/web.yaml
-  - ?? hunt/progress.yaml
-  - ?? hunt/provenance.py
-  - ?? hunt/provenance.yaml
-  - ?? hunt/pyproject.toml
-  - ?? hunt/registry.py
-  - ?? hunt/review.md
-  - ?? hunt/rule/custom.yaml
-  - ?? hunt/rule/gitleaks.toml
-  - ?? hunt/rule/semgrep.lock.json
-  - ?? hunt/rule/semgrep.yaml
-  - ?? hunt/runner.py
-  - ?? hunt/sandbox/conftest.py
-  - ?? hunt/sandbox/test_core.py
-  - ?? hunt/sandbox/test_linkedin.py
-  - ?? hunt/sandbox/test_pipeline.py
-  - ?? hunt/sandbox/test_sites.py
-  - ?? hunt/sandbox/test_web.py
-  - ?? hunt/schema.py
-  - ?? hunt/scope.py
-  - ?? hunt/scope.yaml
-  - ?? hunt/test/conftest.py
-  - ?? hunt/test/test_parse.py
-  - ?? hunt/test/test_probe_check.py
-  - ?? hunt/test/test_verify.py
-  - ?? hunt/uv.lock
-  - ?? hunt/verify.py
-  - ?? instahyre_bot/__init__.py
-  - ?? instahyre_bot/__main__.py
-  - ?? instahyre_bot/board.py
-  - ?? instahyre_bot/cli.py
-  - ?? instahyre_bot/update_profile.py
-  - ?? pipeline/__init__.py
-  - ?? pipeline/__main__.py
-  - ?? pipeline/briefing.py
-  - ?? pipeline/content.py
-  - ?? pipeline/course.py
-  - ?? pipeline/learning.py
-  - ?? pipeline/links.py
-  - ?? pipeline/run.py
-  - ?? requirements.lock
-  - ?? sites_bot/board.py
-  - ?? tests/pipeline/test_pipeline.py
-  - ?? tests/research/test_research_content.py
-  - ?? wellfound_bot/__init__.py
-  - ?? wellfound_bot/__main__.py
-  - ?? wellfound_bot/board.py
-  - ?? wellfound_bot/cli.py
-  - ?? wellfound_bot/update_profile.py
-  - M  .env.example
-  - M  .gitignore
-  - M  common/browser.py
-  - M  common/models.py
-  - M  course/news.md
-  - M  linkedin_bot/card.py
-  - M  linkedin_bot/config.py
-  - M  naukri_bot/apply.py
-  - M  naukri_bot/cli.py
-  - M  naukri_bot/update_profile.py
-  - M  tests/linkedin/test_linkedin_card.py
-  - M  tests/linkedin/test_linkedin_publisher.py
-  - M  tests/sites/test_browser_agent.py
-  - M  tests/sites/test_platforms.py
-  - MM README.md
-  - MM common/answers.py
-  - MM common/config.py
-  - MM common/llm.py
-  - MM linkedin_bot/cli.py
-  - MM linkedin_bot/news.py
-  - MM linkedin_bot/publisher.py
-  - MM linkedin_bot/writer.py
-  - MM requirements.txt
-  - MM sites_bot/accounts.py
-  - MM sites_bot/browser_agent.py
-  - MM sites_bot/platforms.py
-  - MM tests/linkedin/test_linkedin_writer.py
-  porcelain_digest: 22962eeb4d7edccbf64c325f7efc08c5f6ec49824caa62ab71d01e369cf023d9
+  - ?? common/learning_memory.py
+  - ?? course/learning-progress.js
+  - ?? froned-dashbord/app/assets/morrow-crew.avif
+  - ?? froned-dashbord/app/assets/morrow-crew.webp
+  - ?? froned-dashbord/app/assets/morrow-mark.svg
+  - ?? froned-dashbord/app/fonts/space-grotesk-OFL.txt
+  - ?? froned-dashbord/app/fonts/space-grotesk.woff2
+  - ?? froned-dashbord/app/js/components/pagination.js
+  - ?? froned-dashbord/app/js/components/profile-form.js
+  - ?? froned-dashbord/app/js/components/reader.js
+  - ?? froned-dashbord/app/js/components/resume-preview.js
+  - ?? froned-dashbord/app/js/dev-tools.js
+  - ?? froned-dashbord/app/js/query-client.js
+  - ?? froned-dashbord/app/js/route-shell.js
+  - ?? froned-dashbord/app/js/url-state.js
+  - ?? froned-dashbord/app/js/views/research-desk.js
+  - ?? froned-dashbord/app/styles/morrow.css
+  - ?? froned-dashbord/research_learning.py
+  - ?? froned-dashbord/tests/test_learning.py
+  - ?? hunt/fixture/clean/container/Dockerfile
+  - ?? hunt/fixture/clean/quality/subject.py
+  - ?? hunt/fixture/clean/quality/test_contract.py
+  - ?? hunt/fixture/positive/container/Dockerfile
+  - ?? hunt/fixture/positive/quality/subject.py
+  - ?? hunt/fixture/positive/quality/test_contract.py
+  - ?? hunt/probe/updatebots.yaml
+  - ?? hunt/probe/updatecore.yaml
+  - ?? hunt/probe/updateweb.yaml
+  - ?? hunt/quality.py
+  - ?? hunt/rule/history.toml
+  - ?? hunt/sandbox/test_updatebots.py
+  - ?? hunt/sandbox/test_updatecore.py
+  - ?? hunt/sandbox/test_updateweb.py
+  - ?? hunt/test/test_integrity.py
+  - ?? linkedin_bot/design.py
+  - ?? linkedin_bot/research.py
+  porcelain_digest: 2d1d37b4883f37da0b895a9d834e581508af2df3dab6f6158cb305846a502ad8
 scope:
   path: hunt/scope.yaml
-  sha256: cc1b43413acbff774105eabc84d3e89101a74b815ca667eb72d98df33ff6f480
+  sha256: dda2c8ed784663064ba5c62ed0e8f4d8475652836c6f947d22a8d0fa38d314d8
 environment:
   platform: macOS-26.5-arm64-arm-64bit-Mach-O
   machine: arm64
   hunt_python: 3.13.9
   uv_lock_sha256: 6afb830770e84a2b392ccc2d976bebf6fcffa0757fe57b703046ee0016f7f65e
   pyproject_sha256: 8adc30a298bdf7552a3f451a3568b6b32d8651ab7a2444ada52656e32cee56fa
-  harness_sha256: 02154ed08d6c7fc2253716488a9ee5962d99ed82cfcbeb4ea7b547dbb1f510e7
+  harness_sha256: edf8e487923127f0537d72372e0ece70b3e225d1effb408a31170d5d3a0a6901
 tools:
+  python3:
+    kind: venv
+    binary:
+      path: /Users/apple/Desktop/apply/hunt/.venv/bin/python3
+      resolved: /Users/apple/.local/share/uv/python/cpython-3.13.9-macos-aarch64-none/bin/python3.13
+      sha256: b64058cfba60c56399509ef923a2b39457c621095583aaff7488c93f1ee9e60a
+    version: Python 3.13.9
+  trivy:
+    kind: external
+    binary:
+      path: /opt/homebrew/bin/trivy
+      resolved: /opt/homebrew/Cellar/trivy/0.72.0/bin/trivy
+      sha256: 242c86fa4fb1304014631cd6b89638bb342dea11a1bf9fa56687fed5d2c18d90
+    version: 'Version: 0.72.0'
   semgrep:
     kind: venv
     binary:
@@ -298,20 +172,6 @@ tools:
       resolved: /opt/homebrew/Cellar/gitleaks/8.30.1/bin/gitleaks
       sha256: f414bc2fb952be6c9072b75cb411e3368614ef4b16d48dbd9ad238034afd2302
     version: gitleaks version 8.30.1
-  trivy:
-    kind: external
-    binary:
-      path: /opt/homebrew/bin/trivy
-      resolved: /opt/homebrew/Cellar/trivy/0.72.0/bin/trivy
-      sha256: 242c86fa4fb1304014631cd6b89638bb342dea11a1bf9fa56687fed5d2c18d90
-    version: 'Version: 0.72.0'
-  python3:
-    kind: target-venv
-    binary:
-      path: /Users/apple/Desktop/apply/venv/bin/python3
-      resolved: /opt/homebrew/Cellar/python@3.12/3.12.13/Frameworks/Python.framework/Versions/3.12/bin/python3.12
-      sha256: 31b9c9a8d50289f3a13f014b3efd8ea3534fc3eea7ca7d9809e166139910b805
-    version: Python 3.12.13
   git:
     kind: host
     binary:
@@ -343,6 +203,7 @@ tools:
 configs:
   hunt/rule/custom.yaml: 50c81fa2b7ebb7f74302ed5d8b2507e4f15cb7dde085b986c3d1b3e29404a5bd
   hunt/rule/gitleaks.toml: 6caae02c8c8e77ff02ca6e21c87b3f25d47bf96defc8960da994a8381418ef7b
+  hunt/rule/history.toml: 8dce17ca48ba5439b98018338a72caa4e705f8e6bd9894926dbb313a701e3b73
   hunt/rule/semgrep.lock.json: 5cc8817c01d27b869b466ca9c64060aea9e91d2748b5ea5268a54b0ed33269e3
   hunt/rule/semgrep.yaml: 92cdd2955fd536ac4b3a3c36bb5c476daf8fd90d4b80bdfc258d7c3f40faad94
 databases:

@@ -1,45 +1,141 @@
 schema: hound.evidence.v1
-generated: '2026-10-22T12:24:43+00:00'
+generated: '2026-10-23T04:21:31+00:00'
 target:
   root: /Users/apple/Desktop/apply
-  sha: 53b21e191b772c4e1ecd14c30cc14e57f6ae9a6e
+  sha: 7bc11e7130017787bf6f378f97e86f1d7f440e95
   branch: main
   dirty: true
-  porcelain_digest: 22962eeb4d7edccbf64c325f7efc08c5f6ec49824caa62ab71d01e369cf023d9
-scope_digest: cc1b43413acbff774105eabc84d3e89101a74b815ca667eb72d98df33ff6f480
-provenance_digest: 7a73da10c6364ac5bf83ea43f52569ffcba4300445182a92c3e7db5b41aa55f1
+  porcelain_digest: 3e1c72eb487e0ec92bf8ac0ca8f0034f4da06401b3a02784830a8663488a6cb4
+scope_digest: cab5a115c7ba4571c3b9cdb4507d6cb2d0ad82828dbdcdff91f4b06dbf21ddb2
+provenance_digest: d8ed165e47b9312b67edcc48602e257c618273ab867010048942310856dd418c
 summary:
-  records: 13
-  issues: 257
+  records: 15
+  issues: 294
   by_severity:
-    INFO: 15
-    LOW: 162
-    MEDIUM: 66
+    INFO: 20
+    LOW: 168
+    MEDIUM: 92
     HIGH: 14
     CRITICAL: 0
   by_instrument:
-    bandit: 88
+    bandit: 97
     gitleaks-dir: 3
     gitleaks-git: 3
     history: 3
-    inventory: 46
+    inventory: 57
     probe: 52
     pytest-target: 0
-    ruff: 28
-    sandbox: 0
-    semgrep: 32
+    quality: 0
+    ruff: 30
+    sandbox: 8
+    semgrep: 38
     shellcheck: 2
+    trivy-config: 1
     trivy-node: 0
     trivy-python: 0
   by_status:
-    ok: 13
+    ok: 15
     blocked: 0
     timeout: 0
     failed: 0
   liveness_ok: true
-  gaps: 19
+  gaps: 32
 records:
-- id: EV-738e6d0a54d1
+- id: EV-a98f144bd302
+  instrument: quality
+  category: harness
+  argv:
+  - /Users/apple/Desktop/apply/hunt/.venv/bin/python3
+  - /Users/apple/Desktop/apply/hunt/quality.py
+  - --output
+  - /Users/apple/Desktop/apply/hunt/results/raw/quality.json
+  cwd: /Users/apple/Desktop/apply
+  exit_code: 0
+  status: ok
+  parser: ok
+  started: '2026-10-23T04:20:00+00:00'
+  ended: '2026-10-23T04:20:01+00:00'
+  duration_s: 1.172
+  timeout_s: 900
+  config_digest: b9fd3383b061972d8eb67b5cf55f3a4bb0d97cbaf98c44ae8598ad6012b17c95
+  db_digest: none
+  raw:
+  - hunt/results/raw/quality.json
+  - hunt/results/transcript/quality.stdout.txt
+  - hunt/results/transcript/quality.stderr.txt
+  stdout_digest: c905112b0cf14d13a04c9d1bf3d49c2bbf2af01ebec438aeea517631568e98c5
+  stderr_digest: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+  issues: []
+  pruned: []
+  gaps: []
+  note: formatter exit=0; linter exit=0; types exit=0; controls exit=0
+  issues_digest: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+  raw_digests:
+    hunt/results/raw/quality.json: fcaf2d1f8cbb51bc737f93988997f0167ae340d868f1d773016c072f55ad21e5
+    hunt/results/transcript/quality.stdout.txt: c905112b0cf14d13a04c9d1bf3d49c2bbf2af01ebec438aeea517631568e98c5
+    hunt/results/transcript/quality.stderr.txt: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+- id: EV-a44060056f88
+  instrument: trivy-config
+  category: container
+  argv:
+  - /opt/homebrew/bin/trivy
+  - config
+  - --cache-dir
+  - /Users/apple/Desktop/apply/hunt/results/configcache
+  - --skip-check-update
+  - --skip-version-check
+  - --disable-telemetry
+  - --misconfig-scanners
+  - dockerfile
+  - --format
+  - json
+  - --output
+  - /Users/apple/Desktop/apply/hunt/results/raw/trivy-config.json
+  - --quiet
+  - --exit-code
+  - '0'
+  - docker
+  cwd: /Users/apple/Desktop/apply
+  exit_code: 0
+  status: ok
+  parser: ok
+  started: '2026-10-23T04:20:01+00:00'
+  ended: '2026-10-23T04:20:02+00:00'
+  duration_s: 0.489
+  timeout_s: 300
+  config_digest: fff6f360274754b71bc1d8b2104ac2f43ea6b5bed2a6753dd5f8727d499a029d
+  db_digest: 242c86fa4fb1304014631cd6b89638bb342dea11a1bf9fa56687fed5d2c18d90
+  raw:
+  - hunt/results/raw/trivy-config.json
+  - hunt/results/transcript/trivy-config.stdout.txt
+  - hunt/results/transcript/trivy-config.stderr.txt
+  stdout_digest: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+  stderr_digest: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+  issues:
+  - id: IS-c8bdb98008c0
+    instrument: trivy-config
+    rule: DS-0026
+    severity: LOW
+    critical_class: supply
+    path: Dockerfile
+    line: null
+    anchor: No HEALTHCHECK defined
+    message: Add HEALTHCHECK instruction in your Dockerfile
+    source: instrument
+    extra:
+      resolution: Add HEALTHCHECK instruction in Dockerfile
+      cause:
+        Provider: Dockerfile
+        Service: general
+  pruned: []
+  gaps: []
+  note: ''
+  issues_digest: 29127a2c87ed78c7a19f0010f33d2ed04432381e28d5b215c50c1ae65527131d
+  raw_digests:
+    hunt/results/raw/trivy-config.json: 4673174e64a6e23f951b1a36494be19dccd865509ee95358d0a9f857ac6151f3
+    hunt/results/transcript/trivy-config.stdout.txt: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+    hunt/results/transcript/trivy-config.stderr.txt: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+- id: EV-f4a4d35d0782
   instrument: semgrep
   category: sast
   argv:
@@ -87,30 +183,49 @@ records:
   - web
   - wellfound_bot
   - course/index.html
+  - course/learning-progress.js
   - froned-dashbord/app/index.html
   - froned-dashbord/app/js/api.js
+  - froned-dashbord/app/js/components/avatar-picker.js
   - froned-dashbord/app/js/components/charts.js
   - froned-dashbord/app/js/components/console.js
+  - froned-dashbord/app/js/components/controls.js
   - froned-dashbord/app/js/components/dialog.js
+  - froned-dashbord/app/js/components/identity.js
+  - froned-dashbord/app/js/components/journey.js
   - froned-dashbord/app/js/components/kpi.js
   - froned-dashbord/app/js/components/nav.js
+  - froned-dashbord/app/js/components/pagination.js
   - froned-dashbord/app/js/components/panel.js
+  - froned-dashbord/app/js/components/profile-form.js
+  - froned-dashbord/app/js/components/reader.js
+  - froned-dashbord/app/js/components/resume-preview.js
   - froned-dashbord/app/js/components/segmented.js
   - froned-dashbord/app/js/components/toast.js
+  - froned-dashbord/app/js/dev-tools.js
   - froned-dashbord/app/js/dom.js
   - froned-dashbord/app/js/format.js
   - froned-dashbord/app/js/forms.js
   - froned-dashbord/app/js/icons.js
   - froned-dashbord/app/js/main.js
+  - froned-dashbord/app/js/query-client.js
+  - froned-dashbord/app/js/route-shell.js
   - froned-dashbord/app/js/router.js
   - froned-dashbord/app/js/state.js
+  - froned-dashbord/app/js/url-state.js
   - froned-dashbord/app/js/views/automations.js
+  - froned-dashbord/app/js/views/bots.js
+  - froned-dashbord/app/js/views/data.js
   - froned-dashbord/app/js/views/files.js
   - froned-dashbord/app/js/views/linkedin.js
   - froned-dashbord/app/js/views/naukri.js
+  - froned-dashbord/app/js/views/outreach.js
   - froned-dashbord/app/js/views/overview.js
   - froned-dashbord/app/js/views/profile.js
+  - froned-dashbord/app/js/views/records.js
   - froned-dashbord/app/js/views/reports.js
+  - froned-dashbord/app/js/views/research-desk.js
+  - froned-dashbord/app/js/views/research.js
   - froned-dashbord/app/js/views/resume.js
   - froned-dashbord/app/js/views/setup.js
   - froned-dashbord/app/js/views/sites.js
@@ -124,6 +239,8 @@ records:
   - froned-dashbord/tests/dashboard.spec.js
   - web/static/app.js
   - web/static/index.html
+  - docker/entrypoint.sh
+  - docker/login.sh
   - scripts/google_login.sh
   - scripts/install_linkedin_poster.sh
   - scripts/install_profile_updater.sh
@@ -138,9 +255,9 @@ records:
   exit_code: 0
   status: ok
   parser: ok
-  started: '2026-10-22T12:23:18+00:00'
-  ended: '2026-10-22T12:24:07+00:00'
-  duration_s: 48.998
+  started: '2026-10-23T04:20:02+00:00'
+  ended: '2026-10-23T04:20:53+00:00'
+  duration_s: 50.991
   timeout_s: 1800
   config_digest: 749396843dba257699debcccedecc81d2b9d661cd3be82295db45b3766b6398d
   db_digest: 92cdd2955fd536ac4b3a3c36bb5c476daf8fd90d4b80bdfc258d7c3f40faad94
@@ -149,7 +266,7 @@ records:
   - hunt/results/transcript/semgrep.stdout.txt
   - hunt/results/transcript/semgrep.stderr.txt
   stdout_digest: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-  stderr_digest: 0cdb04c5d85b2a6831d1bf06231abafb987610b2207fc117af55aafdb941fe9b
+  stderr_digest: e2e4f675541a18d1733c61bfea5c915c5986d46ac6d78e01bf5579b6dd0bff67
   issues:
   - id: IS-9b22360389a0
     instrument: semgrep
@@ -157,7 +274,7 @@ records:
     severity: MEDIUM
     critical_class: injection
     path: common/ai_cli.py
-    line: 16
+    line: 17
     anchor: import subprocess
     message: Consider possible security implications associated with subprocess module.
     source: instrument
@@ -263,7 +380,7 @@ records:
     severity: LOW
     critical_class: api_misuse
     path: common/browser.py
-    line: 246
+    line: 253
     anchor: time.sleep(random.uniform(low, high))
     message: 'Depending on the context, generating weak random numbers may expose cryptographic functions, which rely on these
       numbers, to be exploitable. When generating numbers for sensitive values such as tokens, nonces, and cryptographic keys,
@@ -279,7 +396,7 @@ records:
     severity: LOW
     critical_class: api_misuse
     path: common/browser.py
-    line: 258
+    line: 265
     anchor: time.sleep(random.uniform(min_delay, max_delay))
     message: 'Depending on the context, generating weak random numbers may expose cryptographic functions, which rely on these
       numbers, to be exploitable. When generating numbers for sensitive values such as tokens, nonces, and cryptographic keys,
@@ -295,7 +412,7 @@ records:
     severity: LOW
     critical_class: api_misuse
     path: common/browser.py
-    line: 277
+    line: 284
     anchor: delay = (2.0 ** attempt) + random.uniform(0.0, 0.75)
     message: 'Depending on the context, generating weak random numbers may expose cryptographic functions, which rely on these
       numbers, to be exploitable. When generating numbers for sensitive values such as tokens, nonces, and cryptographic keys,
@@ -319,6 +436,20 @@ records:
     extra:
       confidence: null
       cwe: CWE-362
+  - id: IS-b98d33f34e4b
+    instrument: semgrep
+    rule: hunt.rule.python.lang.security.audit.formatted-sql-query.formatted-sql-query
+    severity: MEDIUM
+    critical_class: injection
+    path: common/ledger.py
+    line: 94
+    anchor: self._connection.execute("PRAGMA journal_mode=%s" % mode)
+    message: Detected possible formatted SQL query. Use parameterized queries instead.
+    source: instrument
+    extra:
+      confidence: LOW
+      cwe:
+      - 'CWE-89: Improper Neutralization of Special Elements used in an SQL Command (''SQL Injection'')'
   - id: IS-4db41804cad5
     instrument: semgrep
     rule: hunt.rule.gitlab.bandit.B404
@@ -391,6 +522,19 @@ records:
       confidence: LOW
       cwe:
       - 'CWE-939: Improper Authorization in Handler for Custom URL Scheme'
+  - id: IS-3b12912ad0e1
+    instrument: semgrep
+    rule: hunt.rule.gitlab.bandit.B404
+    severity: MEDIUM
+    critical_class: injection
+    path: froned-dashbord/schedule.py
+    line: 6
+    anchor: import subprocess
+    message: Consider possible security implications associated with subprocess module.
+    source: instrument
+    extra:
+      confidence: null
+      cwe: CWE-78
   - id: IS-8afbac131250
     instrument: semgrep
     rule: hunt.rule.hound.python.log-credential
@@ -404,6 +548,19 @@ records:
     extra:
       confidence: null
       cwe: CWE-532
+  - id: IS-a6cfff6feeb9
+    instrument: semgrep
+    rule: hunt.rule.gitlab.bandit.B404
+    severity: MEDIUM
+    critical_class: injection
+    path: linkedin_bot/design.py
+    line: 12
+    anchor: import subprocess
+    message: Consider possible security implications associated with subprocess module.
+    source: instrument
+    extra:
+      confidence: null
+      cwe: CWE-78
   - id: IS-fa91a83aeb07
     instrument: semgrep
     rule: hunt.rule.gitlab.bandit.B311
@@ -488,7 +645,7 @@ records:
     severity: LOW
     critical_class: api_misuse
     path: naukri_bot/update_profile.py
-    line: 557
+    line: 598
     anchor: delay = random.randint(0, settings.max_start_delay_s)
     message: 'Depending on the context, generating weak random numbers may expose cryptographic functions, which rely on these
       numbers, to be exploitable. When generating numbers for sensitive values such as tokens, nonces, and cryptographic keys,
@@ -498,6 +655,46 @@ records:
     extra:
       confidence: null
       cwe: CWE-330
+  - id: IS-a9e8f71bcbb0
+    instrument: semgrep
+    rule: hunt.rule.gitlab.bandit.B404
+    severity: MEDIUM
+    critical_class: injection
+    path: pipeline/lanes.py
+    line: 26
+    anchor: import subprocess
+    message: Consider possible security implications associated with subprocess module.
+    source: instrument
+    extra:
+      confidence: null
+      cwe: CWE-78
+  - id: IS-e892e3ca4ec9
+    instrument: semgrep
+    rule: hunt.rule.gitlab.bandit.B404
+    severity: MEDIUM
+    critical_class: injection
+    path: pipeline/run.py
+    line: 43
+    anchor: import subprocess
+    message: Consider possible security implications associated with subprocess module.
+    source: instrument
+    extra:
+      confidence: null
+      cwe: CWE-78
+  - id: IS-6846c73fcc85
+    instrument: semgrep
+    rule: hunt.rule.hound.python.subprocess-open-dynamic
+    severity: MEDIUM
+    critical_class: injection
+    path: pipeline/run.py
+    line: 314
+    anchor: subprocess.run(["open", str(page.resolve())], check=False)
+    message: macOS `open` launched with a non-literal target. A caller-controlled string opens arbitrary applications, files,
+      or URLs with the user's privileges.
+    source: instrument
+    extra:
+      confidence: null
+      cwe: CWE-78
   - id: IS-a579a512854d
     instrument: semgrep
     rule: hunt.rule.python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure
@@ -589,7 +786,7 @@ records:
     severity: MEDIUM
     critical_class: injection
     path: web/server.py
-    line: 650
+    line: 657
     anchor: 'with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/meta", timeout=1) as reply:'
     message: The application was found passing in a non-literal value to the `urllib` methods which issue requests. `urllib`
       supports the `file://` scheme, which may allow an adversary who can control the URL value to read arbitrary files on
@@ -605,7 +802,7 @@ records:
     severity: MEDIUM
     critical_class: injection
     path: web/server.py
-    line: 650
+    line: 657
     anchor: 'with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/meta", timeout=1) as reply:'
     message: urllib opens a URL that is not a string literal. When the URL comes from a feed, a page, or a config file this
       is a server-side request forgery sink.
@@ -619,7 +816,7 @@ records:
     severity: MEDIUM
     critical_class: injection
     path: web/server.py
-    line: 650
+    line: 657
     anchor: 'with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/meta", timeout=1) as reply:'
     message: Detected a dynamic value being used with urllib. urllib supports 'file://' schemes, so a dynamic value controlled
       by a malicious actor may allow them to read arbitrary files. Audit uses of urllib calls to ensure user data cannot control
@@ -632,11 +829,11 @@ records:
   pruned: []
   gaps: []
   note: ''
-  issues_digest: e22a65c8e914d3a7a0a9c8174a5b5437d4bb944b9edb4173813377847ef6de87
+  issues_digest: 8fbd5d7c3dc861b8916e9c039cee3c88ea0ca9cefb11e925cd8ce55b1900e5bf
   raw_digests:
-    hunt/results/raw/semgrep.json: d92ae36023842e21161a2ba140ed6d7b0cce01c27932edf23e9d4675caa0d3ac
+    hunt/results/raw/semgrep.json: 12f645502a4ce0943fb758aa502c3a10aff55a3c0b17dce77d4d3b77d9e6df5c
     hunt/results/transcript/semgrep.stdout.txt: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-    hunt/results/transcript/semgrep.stderr.txt: 0cdb04c5d85b2a6831d1bf06231abafb987610b2207fc117af55aafdb941fe9b
+    hunt/results/transcript/semgrep.stderr.txt: e2e4f675541a18d1733c61bfea5c915c5986d46ac6d78e01bf5579b6dd0bff67
 - id: EV-a87b52f3522c
   instrument: bandit
   category: sast
@@ -671,9 +868,9 @@ records:
   exit_code: 1
   status: ok
   parser: ok
-  started: '2026-10-22T12:24:07+00:00'
-  ended: '2026-10-22T12:24:09+00:00'
-  duration_s: 1.666
+  started: '2026-10-23T04:20:53+00:00'
+  ended: '2026-10-23T04:20:55+00:00'
+  duration_s: 1.809
   timeout_s: 600
   config_digest: 21267109c41fa16c928469170afa4be728fba029e03ce89c0a8962c74d6652ef
   db_digest: none
@@ -684,29 +881,29 @@ records:
   stdout_digest: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
   stderr_digest: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
   issues:
-  - id: IS-96e89724a777
+  - id: IS-28b5eed90b28
     instrument: bandit
     rule: B404
     severity: LOW
     critical_class: none
     path: common/ai_cli.py
-    line: 16
-    anchor: 15 import signal 16 import subprocess 17 from typing import List, Optional
+    line: 17
+    anchor: 16 import signal 17 import subprocess 18 from typing import List, Optional
     message: Consider possible security implications associated with the subprocess module.
     source: instrument
     extra:
       confidence: HIGH
       cwe: 78
-  - id: IS-7473a1eb6d96
+  - id: IS-214fb2250da1
     instrument: bandit
     rule: B603
     severity: LOW
     critical_class: injection
     path: common/ai_cli.py
-    line: 70
-    anchor: '69 # Its own process group, so a timeout kills the CLI and everything it started. 70 proc = subprocess.Popen(command_for(chosen,
-      prompt), stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, 71 stderr=subprocess.PIPE, text=True, start_new_session=True)
-      72 except OSError as exc:'
+    line: 82
+    anchor: '81 # Its own process group, so a timeout kills the CLI and everything it started. 82 proc = subprocess.Popen(command_for(chosen,
+      prompt, web), stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, 83 stderr=subprocess.PIPE, text=True, start_new_session=True)
+      84 except OSError as exc:'
     message: subprocess call - check for execution of untrusted input.
     source: instrument
     extra:
@@ -753,40 +950,40 @@ records:
     extra:
       confidence: HIGH
       cwe: 327
-  - id: IS-79059ae80958
+  - id: IS-19aff80819ba
     instrument: bandit
     rule: B311
     severity: LOW
     critical_class: api_misuse
     path: common/browser.py
-    line: 246
-    anchor: 245 """Pause for a random human-like interval.""" 246 time.sleep(random.uniform(low, high)) 247
+    line: 253
+    anchor: 252 """Pause for a random human-like interval.""" 253 time.sleep(random.uniform(low, high)) 254
     message: Standard pseudo-random generators are not suitable for security/cryptographic purposes.
     source: instrument
     extra:
       confidence: HIGH
       cwe: 330
-  - id: IS-c27ebc68de78
+  - id: IS-3dd02113f871
     instrument: bandit
     rule: B311
     severity: LOW
     critical_class: api_misuse
     path: common/browser.py
-    line: 258
-    anchor: 257 element.send_keys(character) 258 time.sleep(random.uniform(min_delay, max_delay)) 259
+    line: 265
+    anchor: 264 element.send_keys(character) 265 time.sleep(random.uniform(min_delay, max_delay)) 266
     message: Standard pseudo-random generators are not suitable for security/cryptographic purposes.
     source: instrument
     extra:
       confidence: HIGH
       cwe: 330
-  - id: IS-93cf1fc2d4d0
+  - id: IS-dcf255833e3b
     instrument: bandit
     rule: B311
     severity: LOW
     critical_class: api_misuse
     path: common/browser.py
-    line: 277
-    anchor: '276 if attempt + 1 < attempts: 277 delay = (2.0 ** attempt) + random.uniform(0.0, 0.75) 278 time.sleep(delay)'
+    line: 284
+    anchor: '283 if attempt + 1 < attempts: 284 delay = (2.0 ** attempt) + random.uniform(0.0, 0.75) 285 time.sleep(delay)'
     message: Standard pseudo-random generators are not suitable for security/cryptographic purposes.
     source: instrument
     extra:
@@ -860,6 +1057,33 @@ records:
     extra:
       confidence: HIGH
       cwe: 22
+  - id: IS-191f8b1d2d6a
+    instrument: bandit
+    rule: B608
+    severity: MEDIUM
+    critical_class: injection
+    path: froned-dashbord/dashboard_data.py
+    line: 55
+    anchor: '54 try: 55 result = state._query(db, f''SELECT COUNT(*) AS total FROM {table}'') 56 item[''count''] = result[0][''total'']
+      if result else 0'
+    message: Possible SQL injection vector through string-based query construction.
+    source: instrument
+    extra:
+      confidence: LOW
+      cwe: 89
+  - id: IS-ea07d2dac6f6
+    instrument: bandit
+    rule: B404
+    severity: LOW
+    critical_class: none
+    path: froned-dashbord/schedule.py
+    line: 6
+    anchor: 5 from pathlib import Path 6 import subprocess 7 import sys
+    message: Consider possible security implications associated with the subprocess module.
+    source: instrument
+    extra:
+      confidence: HIGH
+      cwe: 78
   - id: IS-cd42152f0c35
     instrument: bandit
     rule: B110
@@ -1057,6 +1281,33 @@ records:
     extra:
       confidence: HIGH
       cwe: 703
+  - id: IS-8786f3f20841
+    instrument: bandit
+    rule: B404
+    severity: LOW
+    critical_class: none
+    path: linkedin_bot/design.py
+    line: 12
+    anchor: 11 import shutil 12 import subprocess 13 import tempfile
+    message: Consider possible security implications associated with the subprocess module.
+    source: instrument
+    extra:
+      confidence: HIGH
+      cwe: 78
+  - id: IS-90fd184b8378
+    instrument: bandit
+    rule: B603
+    severity: LOW
+    critical_class: injection
+    path: linkedin_bot/design.py
+    line: 120
+    anchor: '119 try: 120 subprocess.run(command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, 121 stderr=subprocess.DEVNULL,
+      timeout=CHROME_TIMEOUT_S) 122 except (OSError, subprocess.TimeoutExpired) as exc:'
+    message: subprocess call - check for execution of untrusted input.
+    source: instrument
+    extra:
+      confidence: HIGH
+      cwe: 78
   - id: IS-d6a2e4dbf72d
     instrument: bandit
     rule: B311
@@ -1097,20 +1348,88 @@ records:
     extra:
       confidence: HIGH
       cwe: 327
-  - id: IS-dc6ab01b9a0b
+  - id: IS-95423cb77af2
     instrument: bandit
     rule: B311
     severity: LOW
     critical_class: api_misuse
     path: naukri_bot/update_profile.py
-    line: 557
-    anchor: '556 if settings.max_start_delay_s > 0 and not args.dry_run: 557 delay = random.randint(0, settings.max_start_delay_s)
-      558 logger.info("Waiting %d seconds before starting.", delay)'
+    line: 598
+    anchor: '597 if settings.max_start_delay_s > 0 and not args.dry_run: 598 delay = random.randint(0, settings.max_start_delay_s)
+      599 logger.info("Waiting %d seconds before starting.", delay)'
     message: Standard pseudo-random generators are not suitable for security/cryptographic purposes.
     source: instrument
     extra:
       confidence: HIGH
       cwe: 330
+  - id: IS-11cf0e4063ec
+    instrument: bandit
+    rule: B404
+    severity: LOW
+    critical_class: none
+    path: pipeline/lanes.py
+    line: 26
+    anchor: 25 import shutil 26 import subprocess 27 import sys
+    message: Consider possible security implications associated with the subprocess module.
+    source: instrument
+    extra:
+      confidence: HIGH
+      cwe: 78
+  - id: IS-22961e569d4c
+    instrument: bandit
+    rule: B603
+    severity: LOW
+    critical_class: injection
+    path: pipeline/lanes.py
+    line: 130
+    anchor: '129 try: 130 process = subprocess.Popen(argv, env=env, stdout=subprocess.PIPE, 131 stderr=subprocess.STDOUT,
+      text=True, errors="replace") 132 except OSError as exc: # no docker on PATH'
+    message: subprocess call - check for execution of untrusted input.
+    source: instrument
+    extra:
+      confidence: HIGH
+      cwe: 78
+  - id: IS-5bc68a4b26c6
+    instrument: bandit
+    rule: B404
+    severity: LOW
+    critical_class: none
+    path: pipeline/run.py
+    line: 43
+    anchor: 42 import os 43 import subprocess 44 import sys
+    message: Consider possible security implications associated with the subprocess module.
+    source: instrument
+    extra:
+      confidence: HIGH
+      cwe: 78
+  - id: IS-287a57130717
+    instrument: bandit
+    rule: B607
+    severity: LOW
+    critical_class: injection
+    path: pipeline/run.py
+    line: 314
+    anchor: '313 if not getattr(args, "no_watch", False) and sys.platform == "darwin": 314 subprocess.run(["open", str(page.resolve())],
+      check=False) 315'
+    message: Starting a process with a partial executable path
+    source: instrument
+    extra:
+      confidence: HIGH
+      cwe: 78
+  - id: IS-410841c53fc8
+    instrument: bandit
+    rule: B603
+    severity: LOW
+    critical_class: injection
+    path: pipeline/run.py
+    line: 314
+    anchor: '313 if not getattr(args, "no_watch", False) and sys.platform == "darwin": 314 subprocess.run(["open", str(page.resolve())],
+      check=False) 315'
+    message: subprocess call - check for execution of untrusted input.
+    source: instrument
+    extra:
+      confidence: HIGH
+      cwe: 78
   - id: IS-f4df4f377073
     instrument: bandit
     rule: B105
@@ -1878,14 +2197,14 @@ records:
     extra:
       confidence: HIGH
       cwe: 78
-  - id: IS-6201ebfce05c
+  - id: IS-a8ba942bf2cd
     instrument: bandit
     rule: B310
     severity: MEDIUM
     critical_class: injection
     path: web/server.py
-    line: 650
-    anchor: '649 try: 650 with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/meta", timeout=1) as reply: 651 return
+    line: 657
+    anchor: '656 try: 657 with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/meta", timeout=1) as reply: 658 return
       "answer_modes" in json.loads(reply.read())'
     message: Audit url open for permitted schemes. Allowing use of file:/ or custom schemes is often unexpected.
     source: instrument
@@ -1895,12 +2214,12 @@ records:
   pruned: []
   gaps: []
   note: ''
-  issues_digest: 448e889da091fb0705b3b0938a1b7788f153b3e3dcce414d78956f4670d7688e
+  issues_digest: e036c90ee3150c5649de82a40444165545b211379a15a25e83cb77854f1bc4a6
   raw_digests:
-    hunt/results/raw/bandit.json: a41c5ddbf109eb9c95362afd431c2b5a99744995df7269129fef19d5b4cc8fa7
+    hunt/results/raw/bandit.json: 79925c19a9274f275a13c76532c0f87974049d57e3c87eb42ee8805373c56513
     hunt/results/transcript/bandit.stdout.txt: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
     hunt/results/transcript/bandit.stderr.txt: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-- id: EV-1a44e20a0120
+- id: EV-5de86eae9954
   instrument: ruff
   category: lint
   argv:
@@ -1942,9 +2261,9 @@ records:
   exit_code: 1
   status: ok
   parser: ok
-  started: '2026-10-22T12:24:09+00:00'
-  ended: '2026-10-22T12:24:09+00:00'
-  duration_s: 0.053
+  started: '2026-10-23T04:20:55+00:00'
+  ended: '2026-10-23T04:20:55+00:00'
+  duration_s: 0.05
   timeout_s: 300
   config_digest: 6667dc8313fca2e78b19db5751a0406b196eed7bf708ff531ec5b2a9a406fa66
   db_digest: none
@@ -1953,7 +2272,7 @@ records:
   - hunt/results/transcript/ruff.stdout.txt
   - hunt/results/transcript/ruff.stderr.txt
   stdout_digest: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-  stderr_digest: 155eabbc6b4c7f128e6eba6ae8b12eee38b8d9a45c92c8cc86417a8124cd6e4d
+  stderr_digest: a27f9bf3688ad48f6962a1ae6cdfd51c2ce1451dd498a133dd4dfbf8ce606b1f
   issues:
   - id: IS-3d4d7b28bc59
     instrument: ruff
@@ -1961,7 +2280,7 @@ records:
     severity: MEDIUM
     critical_class: error
     path: common/ai_cli.py
-    line: 73
+    line: 85
     anchor: 'raise AIError("%s could not be started: %s" % (chosen, exc))'
     message: Within an `except` clause, raise exceptions with `raise ... from err` or `raise ... from None` to distinguish
       them from errors in exception handling
@@ -1973,7 +2292,7 @@ records:
     severity: MEDIUM
     critical_class: error
     path: common/ai_cli.py
-    line: 78
+    line: 90
     anchor: raise AIError("%s ran past %d seconds" % (chosen, timeout_s))
     message: Within an `except` clause, raise exceptions with `raise ... from err` or `raise ... from None` to distinguish
       them from errors in exception handling
@@ -2018,10 +2337,32 @@ records:
     severity: MEDIUM
     critical_class: error
     path: froned-dashbord/server.py
-    line: 64
+    line: 65
     anchor: raise ValueError("The pipeline checkpoint could not be read. Check .memory/progress.json.")
     message: Within an `except` clause, raise exceptions with `raise ... from err` or `raise ... from None` to distinguish
       them from errors in exception handling
+    source: instrument
+    extra: {}
+  - id: IS-b765ad1776ba
+    instrument: ruff
+    rule: F401
+    severity: INFO
+    critical_class: logic
+    path: froned-dashbord/tests/test_data.py
+    line: 3
+    anchor: import json
+    message: '`json` imported but unused'
+    source: instrument
+    extra: {}
+  - id: IS-f934acf16969
+    instrument: ruff
+    rule: F401
+    severity: INFO
+    critical_class: logic
+    path: froned-dashbord/tests/test_learning.py
+    line: 2
+    anchor: import datetime as dt
+    message: '`datetime` imported but unused'
     source: instrument
     extra: {}
   - id: IS-9b34073de39f
@@ -2129,7 +2470,7 @@ records:
     severity: MEDIUM
     critical_class: error
     path: naukri_bot/update_profile.py
-    line: 206
+    line: 227
     anchor: raise ProfileUpdateError(
     message: Within an `except` clause, raise exceptions with `raise ... from err` or `raise ... from None` to distinguish
       them from errors in exception handling
@@ -2263,7 +2604,7 @@ records:
     severity: MEDIUM
     critical_class: error
     path: tests/sites/test_platforms.py
-    line: 457
+    line: 466
     anchor: 'monkeypatch.setattr(pf, "main", lambda argv=None, only=None: seen.append((argv, only)) or 0)'
     message: Function definition does not bind loop variable `seen`
     source: instrument
@@ -2271,12 +2612,12 @@ records:
   pruned: []
   gaps: []
   note: ''
-  issues_digest: 9ee565e1cc9499a3cd4d85f90f8fc99520c52e955f5f6e5358f1646a486f7af1
+  issues_digest: 9b0291143e775235def29a2f251e5bd984073240619e7e8b18154f811cc495c7
   raw_digests:
-    hunt/results/raw/ruff.json: 6ce60aed00a34ce3251f449028c4220653fd6d0ffef12263cfc3daf8ad29929f
+    hunt/results/raw/ruff.json: 96420417386c36a1765165b34d982138f691cc8451e77da6dc4be46529af81a2
     hunt/results/transcript/ruff.stdout.txt: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-    hunt/results/transcript/ruff.stderr.txt: 155eabbc6b4c7f128e6eba6ae8b12eee38b8d9a45c92c8cc86417a8124cd6e4d
-- id: EV-d5751e0800c6
+    hunt/results/transcript/ruff.stderr.txt: a27f9bf3688ad48f6962a1ae6cdfd51c2ce1451dd498a133dd4dfbf8ce606b1f
+- id: EV-d0c2bf278fc4
   instrument: shellcheck
   category: lint
   argv:
@@ -2287,6 +2628,8 @@ records:
   - info
   - -s
   - bash
+  - docker/entrypoint.sh
+  - docker/login.sh
   - scripts/google_login.sh
   - scripts/install_linkedin_poster.sh
   - scripts/install_profile_updater.sh
@@ -2299,9 +2642,9 @@ records:
   exit_code: 1
   status: ok
   parser: ok
-  started: '2026-10-22T12:24:09+00:00'
-  ended: '2026-10-22T12:24:09+00:00'
-  duration_s: 0.131
+  started: '2026-10-23T04:20:55+00:00'
+  ended: '2026-10-23T04:20:55+00:00'
+  duration_s: 0.134
   timeout_s: 300
   config_digest: a9b2f44fbbb2e5ab8dbb0b157cc123f4d5ce1e262e16bed1a79818e5b14084ac
   db_digest: none
@@ -2340,14 +2683,14 @@ records:
   raw_digests:
     hunt/results/transcript/shellcheck.stdout.txt: cb3f2a0f48d675d5502903e8506bf341c716471ef43bad040ac812f0eea6e8db
     hunt/results/transcript/shellcheck.stderr.txt: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-- id: EV-b6a2c46eb407
+- id: EV-da26c0eda9e8
   instrument: gitleaks-git
   category: secrets
   argv:
   - /opt/homebrew/bin/gitleaks
   - git
   - --config
-  - hunt/rule/gitleaks.toml
+  - hunt/rule/history.toml
   - --redact
   - --no-banner
   - --exit-code
@@ -2360,23 +2703,24 @@ records:
   - hunt/results/raw/gitleaks-git.json
   - --max-target-megabytes
   - '5'
+  - --log-opts=--all --full-history
   - .
   cwd: /Users/apple/Desktop/apply
   exit_code: 1
   status: ok
   parser: ok
-  started: '2026-10-22T12:24:09+00:00'
-  ended: '2026-10-22T12:24:09+00:00'
-  duration_s: 0.403
+  started: '2026-10-23T04:20:55+00:00'
+  ended: '2026-10-23T04:20:55+00:00'
+  duration_s: 0.561
   timeout_s: 900
-  config_digest: 6caae02c8c8e77ff02ca6e21c87b3f25d47bf96defc8960da994a8381418ef7b
+  config_digest: 8dce17ca48ba5439b98018338a72caa4e705f8e6bd9894926dbb313a701e3b73
   db_digest: f414bc2fb952be6c9072b75cb411e3368614ef4b16d48dbd9ad238034afd2302
   raw:
   - hunt/results/raw/gitleaks-git.json
   - hunt/results/transcript/gitleaks-git.stdout.txt
   - hunt/results/transcript/gitleaks-git.stderr.txt
   stdout_digest: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-  stderr_digest: 856b12479551b43c437ea124bbe621a61c31e485d77bd78979fda2886709a989
+  stderr_digest: 5656eb6b4323f42046815a64d5211f474118489492f892498bdec0dfd8104e3b
   issues:
   - id: IS-63df26bae69d
     instrument: gitleaks-git
@@ -2430,8 +2774,8 @@ records:
   raw_digests:
     hunt/results/raw/gitleaks-git.json: 00362f3ac33bc08ae313658aa0bb4bebb37fff84cdd67a174d66e7a6af2ad0f6
     hunt/results/transcript/gitleaks-git.stdout.txt: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-    hunt/results/transcript/gitleaks-git.stderr.txt: 856b12479551b43c437ea124bbe621a61c31e485d77bd78979fda2886709a989
-- id: EV-6f1802198250
+    hunt/results/transcript/gitleaks-git.stderr.txt: 5656eb6b4323f42046815a64d5211f474118489492f892498bdec0dfd8104e3b
+- id: EV-d59f3fefa314
   instrument: gitleaks-dir
   category: secrets
   argv:
@@ -2456,9 +2800,9 @@ records:
   exit_code: 1
   status: ok
   parser: ok
-  started: '2026-10-22T12:24:09+00:00'
-  ended: '2026-10-22T12:24:11+00:00'
-  duration_s: 2.18
+  started: '2026-10-23T04:20:55+00:00'
+  ended: '2026-10-23T04:20:58+00:00'
+  duration_s: 2.431
   timeout_s: 900
   config_digest: 6caae02c8c8e77ff02ca6e21c87b3f25d47bf96defc8960da994a8381418ef7b
   db_digest: f414bc2fb952be6c9072b75cb411e3368614ef4b16d48dbd9ad238034afd2302
@@ -2467,7 +2811,7 @@ records:
   - hunt/results/transcript/gitleaks-dir.stdout.txt
   - hunt/results/transcript/gitleaks-dir.stderr.txt
   stdout_digest: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-  stderr_digest: 856b12479551b43c437ea124bbe621a61c31e485d77bd78979fda2886709a989
+  stderr_digest: 5656eb6b4323f42046815a64d5211f474118489492f892498bdec0dfd8104e3b
   issues:
   - id: IS-afa7727b820f
     instrument: gitleaks-dir
@@ -2521,7 +2865,7 @@ records:
   raw_digests:
     hunt/results/raw/gitleaks-dir.json: 2d276d986e32ea788f14a7fe5c4ec4a6657d3ed980d159e670a6d68fb38b598f
     hunt/results/transcript/gitleaks-dir.stdout.txt: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-    hunt/results/transcript/gitleaks-dir.stderr.txt: 856b12479551b43c437ea124bbe621a61c31e485d77bd78979fda2886709a989
+    hunt/results/transcript/gitleaks-dir.stderr.txt: 5656eb6b4323f42046815a64d5211f474118489492f892498bdec0dfd8104e3b
 - id: EV-1bbaa7116166
   instrument: trivy-python
   category: supply
@@ -2547,9 +2891,9 @@ records:
   exit_code: 0
   status: ok
   parser: ok
-  started: '2026-10-22T12:24:11+00:00'
-  ended: '2026-10-22T12:24:12+00:00'
-  duration_s: 0.413
+  started: '2026-10-23T04:20:58+00:00'
+  ended: '2026-10-23T04:20:58+00:00'
+  duration_s: 0.4
   timeout_s: 900
   config_digest: 10b900a4dca463e351ec4ee58191946f91683a8a70296fe2e7e20b4b373cc6e3
   db_digest: ff1709896fce014f060a1c22353d5f1ec55ec5b720447f29e458625e15a6e5b3
@@ -2565,7 +2909,7 @@ records:
   note: ''
   issues_digest: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
   raw_digests:
-    hunt/results/raw/trivy-python.json: b3d954c11a5122f125ce4dadda40f7c690ef4822682dd2ce7275c5c429c5d1bb
+    hunt/results/raw/trivy-python.json: a9943076b28eb3566a16fa361b72c3436d9194779c06c9c4cf3ac6c4f3353f8f
     hunt/results/transcript/trivy-python.stdout.txt: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
     hunt/results/transcript/trivy-python.stderr.txt: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
 - id: EV-10a199273395
@@ -2593,9 +2937,9 @@ records:
   exit_code: 0
   status: ok
   parser: ok
-  started: '2026-10-22T12:24:12+00:00'
-  ended: '2026-10-22T12:24:12+00:00'
-  duration_s: 0.065
+  started: '2026-10-23T04:20:58+00:00'
+  ended: '2026-10-23T04:20:58+00:00'
+  duration_s: 0.07
   timeout_s: 900
   config_digest: aade47519bfe8aa24509c684d3db1a450a158d8914e6a9af0066e110679d373a
   db_digest: ff1709896fce014f060a1c22353d5f1ec55ec5b720447f29e458625e15a6e5b3
@@ -2611,10 +2955,10 @@ records:
   note: ''
   issues_digest: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
   raw_digests:
-    hunt/results/raw/trivy-node.json: fcd2999d0463450d1d13751599848d958880d7863cc0c8b08aa1265ed6e69408
+    hunt/results/raw/trivy-node.json: 04a8235fc33ae586ebeb373cbeb1046667e7a243498518493e7249d087296e9f
     hunt/results/transcript/trivy-node.stdout.txt: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
     hunt/results/transcript/trivy-node.stderr.txt: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-- id: EV-4601541ae38f
+- id: EV-09e294333e84
   instrument: pytest-target
   category: tests
   argv:
@@ -2635,9 +2979,9 @@ records:
   exit_code: 0
   status: ok
   parser: ok
-  started: '2026-10-22T12:24:12+00:00'
-  ended: '2026-10-22T12:24:39+00:00'
-  duration_s: 27.407
+  started: '2026-10-23T04:20:58+00:00'
+  ended: '2026-10-23T04:21:26+00:00'
+  duration_s: 27.336
   timeout_s: 1200
   config_digest: 5a09d18a6689f49f3bc0c9f9315d4c2add2f91b72cbec024b551eac53c9688a2
   db_digest: none
@@ -2645,18 +2989,18 @@ records:
   - hunt/results/raw/pytest-target.xml
   - hunt/results/transcript/pytest-target.stdout.txt
   - hunt/results/transcript/pytest-target.stderr.txt
-  stdout_digest: 9150235ad8f31fa05c8b364a7cd9d0e8b947ce68e6a066631ab3ec47e6c2caf7
+  stdout_digest: 49d1299f476277d87edf4a4634c9c9da42e27ea90035dd7a065107e8ecf12188
   stderr_digest: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
   issues: []
   pruned: []
   gaps: []
-  note: '759 tests: 759 passed, 0 failed, 0 errors, 0 skipped'
+  note: '778 tests: 778 passed, 0 failed, 0 errors, 0 skipped'
   issues_digest: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
   raw_digests:
-    hunt/results/raw/pytest-target.xml: d804e1a747b895f2bb1e05fbc708db18bb62841fa668b097ddb34e46db974cea
-    hunt/results/transcript/pytest-target.stdout.txt: 9150235ad8f31fa05c8b364a7cd9d0e8b947ce68e6a066631ab3ec47e6c2caf7
+    hunt/results/raw/pytest-target.xml: ec26b4b7953ddf32f3c43ccb98cba9fc3e993d17b9389d253d00246d2decccd9
+    hunt/results/transcript/pytest-target.stdout.txt: 49d1299f476277d87edf4a4634c9c9da42e27ea90035dd7a065107e8ecf12188
     hunt/results/transcript/pytest-target.stderr.txt: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-- id: EV-adb6019ab02d
+- id: EV-280c1d36f54a
   instrument: history
   category: secrets
   argv:
@@ -2667,15 +3011,15 @@ records:
   exit_code: 0
   status: ok
   parser: none
-  started: '2026-10-22T12:24:39+00:00'
-  ended: '2026-10-22T12:24:39+00:00'
+  started: '2026-10-23T04:21:26+00:00'
+  ended: '2026-10-23T04:21:26+00:00'
   duration_s: 0.0
   timeout_s: 300
   config_digest: 6795a4a3f227123bde85c78f1a844c2eea3dc3316310d1b90ab410f0b6c4124f
   db_digest: none
   raw:
   - hunt/results/raw/history.json
-  stdout_digest: 7b3a0a00c35b1b467a98edb40efb04fa4dd6e820bf41c02c2675037d9110a49a
+  stdout_digest: dea0a2627976c0e576bcd6a85c6706ae7f41a22b210d510b06c3a05bcbfdd152
   stderr_digest: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
   issues:
   - id: IS-97ae96564fd8
@@ -2716,11 +3060,11 @@ records:
       tracked: false
   pruned: []
   gaps: []
-  note: 156 paths ever added
+  note: 384 paths ever added
   issues_digest: 01b8c7b21c2a1a1c9c79d990fc08c52f10991e763f67d1d5a77f9c7fe4ae34e5
   raw_digests:
-    hunt/results/raw/history.json: 7b3a0a00c35b1b467a98edb40efb04fa4dd6e820bf41c02c2675037d9110a49a
-- id: EV-d40e3a51e624
+    hunt/results/raw/history.json: dea0a2627976c0e576bcd6a85c6706ae7f41a22b210d510b06c3a05bcbfdd152
+- id: EV-884f1f307a65
   instrument: inventory
   category: supply
   argv:
@@ -2731,15 +3075,15 @@ records:
   exit_code: 0
   status: ok
   parser: none
-  started: '2026-10-22T12:24:40+00:00'
-  ended: '2026-10-22T12:24:40+00:00'
+  started: '2026-10-23T04:21:26+00:00'
+  ended: '2026-10-23T04:21:26+00:00'
   duration_s: 0.0
   timeout_s: 300
   config_digest: 5dd1cf5b0efc3d0c3d17cc474971e8da06ff3163a8e07d13824df06aa4166cc8
   db_digest: none
   raw:
   - hunt/results/raw/inventory.json
-  stdout_digest: 0660a22c4783240f9d9f342ed62f40db06cdd07f12c2bb5f528b7dca84f5ebee
+  stdout_digest: 6324476d0f486d1dde4db36a70f8b9ee1518acb06f00745a266aa6a9d04bfc4c
   stderr_digest: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
   issues:
   - id: IS-2cfed8a38ecc
@@ -2899,6 +3243,149 @@ records:
     source: instrument
     extra:
       distribution: anthropic
+      installed: false
+  - id: IS-002503cab0b9
+    instrument: inventory
+    rule: undeclared-import
+    severity: MEDIUM
+    critical_class: supply
+    path: froned-dashbord/dashboard_data.py
+    line: null
+    anchor: import research_learning
+    message: module 'research_learning' is imported but no requirement declares it (not installed either)
+    source: instrument
+    extra:
+      distribution: research-learning
+      installed: false
+  - id: IS-864b0627c71b
+    instrument: inventory
+    rule: undeclared-import
+    severity: MEDIUM
+    critical_class: supply
+    path: froned-dashbord/research_learning.py
+    line: null
+    anchor: import dashboard_data
+    message: module 'dashboard_data' is imported but no requirement declares it (not installed either)
+    source: instrument
+    extra:
+      distribution: dashboard-data
+      installed: false
+  - id: IS-687a5fd75ba0
+    instrument: inventory
+    rule: undeclared-import
+    severity: MEDIUM
+    critical_class: supply
+    path: froned-dashbord/server.py
+    line: null
+    anchor: import commands
+    message: module 'commands' is imported but no requirement declares it (not installed either)
+    source: instrument
+    extra:
+      distribution: commands
+      installed: false
+  - id: IS-42ceeb768336
+    instrument: inventory
+    rule: undeclared-import
+    severity: MEDIUM
+    critical_class: supply
+    path: froned-dashbord/server.py
+    line: null
+    anchor: import dashboard_data
+    message: module 'dashboard_data' is imported but no requirement declares it (not installed either)
+    source: instrument
+    extra:
+      distribution: dashboard-data
+      installed: false
+  - id: IS-9e337c1f5564
+    instrument: inventory
+    rule: undeclared-import
+    severity: MEDIUM
+    critical_class: supply
+    path: froned-dashbord/server.py
+    line: null
+    anchor: import research_learning
+    message: module 'research_learning' is imported but no requirement declares it (not installed either)
+    source: instrument
+    extra:
+      distribution: research-learning
+      installed: false
+  - id: IS-f34fcf18dadd
+    instrument: inventory
+    rule: undeclared-import
+    severity: MEDIUM
+    critical_class: supply
+    path: froned-dashbord/tests/test_data.py
+    line: null
+    anchor: import commands
+    message: module 'commands' is imported but no requirement declares it (not installed either)
+    source: instrument
+    extra:
+      distribution: commands
+      installed: false
+  - id: IS-6ba73d02af34
+    instrument: inventory
+    rule: undeclared-import
+    severity: MEDIUM
+    critical_class: supply
+    path: froned-dashbord/tests/test_data.py
+    line: null
+    anchor: import dashboard_data
+    message: module 'dashboard_data' is imported but no requirement declares it (not installed either)
+    source: instrument
+    extra:
+      distribution: dashboard-data
+      installed: false
+  - id: IS-bff6fe17dc2c
+    instrument: inventory
+    rule: undeclared-import
+    severity: LOW
+    critical_class: supply
+    path: froned-dashbord/tests/test_data.py
+    line: null
+    anchor: import pytest
+    message: module 'pytest' is imported but no requirement declares it (present in the environment by accident)
+    source: instrument
+    extra:
+      distribution: pytest
+      installed: true
+  - id: IS-98da8b2b3afc
+    instrument: inventory
+    rule: undeclared-import
+    severity: MEDIUM
+    critical_class: supply
+    path: froned-dashbord/tests/test_learning.py
+    line: null
+    anchor: import dashboard_data
+    message: module 'dashboard_data' is imported but no requirement declares it (not installed either)
+    source: instrument
+    extra:
+      distribution: dashboard-data
+      installed: false
+  - id: IS-d31632565104
+    instrument: inventory
+    rule: undeclared-import
+    severity: LOW
+    critical_class: supply
+    path: froned-dashbord/tests/test_learning.py
+    line: null
+    anchor: import pytest
+    message: module 'pytest' is imported but no requirement declares it (present in the environment by accident)
+    source: instrument
+    extra:
+      distribution: pytest
+      installed: true
+  - id: IS-8779786e4621
+    instrument: inventory
+    rule: undeclared-import
+    severity: MEDIUM
+    critical_class: supply
+    path: froned-dashbord/tests/test_learning.py
+    line: null
+    anchor: import research_learning
+    message: module 'research_learning' is imported but no requirement declares it (not installed either)
+    source: instrument
+    extra:
+      distribution: research-learning
       installed: false
   - id: IS-d39b6c9178a4
     instrument: inventory
@@ -3319,10 +3806,10 @@ records:
   pruned: []
   gaps: []
   note: 1 manifests
-  issues_digest: fa629adf885437b0e4b320ccfef3fcfe718c79d23ca713f454e0d7cd7bf04519
+  issues_digest: 272501ba0b7cb6d2055495d7d3c22069d8460aed8de0d1f9ebbca6aae68a8dc6
   raw_digests:
-    hunt/results/raw/inventory.json: 0660a22c4783240f9d9f342ed62f40db06cdd07f12c2bb5f528b7dca84f5ebee
-- id: EV-80bab45a9df7
+    hunt/results/raw/inventory.json: 6324476d0f486d1dde4db36a70f8b9ee1518acb06f00745a266aa6a9d04bfc4c
+- id: EV-03cc58f4f481
   instrument: probe
   category: probe
   argv:
@@ -3333,15 +3820,15 @@ records:
   exit_code: 0
   status: ok
   parser: none
-  started: '2026-10-22T12:24:40+00:00'
-  ended: '2026-10-22T12:24:40+00:00'
+  started: '2026-10-23T04:21:26+00:00'
+  ended: '2026-10-23T04:21:26+00:00'
   duration_s: 0.0
   timeout_s: 300
   config_digest: ca339a6f95f42bbe7129c9b6f1c242e1408c03ac8a7a86c258a5cc770418aa56
   db_digest: none
   raw:
   - hunt/results/raw/probe.yaml
-  stdout_digest: 5ecf512a029699e8f2f2d824c4f6aa2d91514748c403f93645e19e860115e2aa
+  stdout_digest: 0acf9094a4723bb79744f83f72dfd25fdfd6ca255f9c5e60e8822a4aebda11e4
   stderr_digest: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
   issues:
   - id: IS-861d0ed3d2dd
@@ -3362,6 +3849,7 @@ records:
       contract: The board comment says only the posting's own button should be used.
       repro: static-only
       confidence: medium
+      remediation: ''
       anchors:
       - path: cutshort_bot/board.py
         line: 22
@@ -3386,6 +3874,7 @@ records:
       contract: The field is meant to catch only apply-on-company-site buttons.
       repro: static-only
       confidence: medium
+      remediation: ''
       anchors:
       - path: sites_bot/board.py
         line: 25
@@ -3407,6 +3896,7 @@ records:
       contract: The page title should not make the names worse.
       repro: static-only
       confidence: medium
+      remediation: ''
       anchors:
       - path: wellfound_bot/board.py
         line: 18
@@ -3428,6 +3918,7 @@ records:
       contract: job_id accepts an optional trailing slash, implying such URLs are expected.
       repro: static-only
       confidence: low
+      remediation: ''
       anchors:
       - path: cutshort_bot/board.py
         line: 14
@@ -3449,6 +3940,7 @@ records:
       contract: job_id should identify a job from any URL that job_link accepts.
       repro: static-only
       confidence: low
+      remediation: ''
       anchors:
       - path: hirist_bot/board.py
         line: 12
@@ -3470,6 +3962,7 @@ records:
       contract: Link-like strings in code are code, not links.
       repro: static-only
       confidence: high
+      remediation: ''
       anchors:
       - path: pipeline/links.py
         line: 19
@@ -3491,6 +3984,7 @@ records:
       contract: linkify should not damage URLs.
       repro: static-only
       confidence: medium
+      remediation: ''
       anchors:
       - path: pipeline/links.py
         line: 28
@@ -3512,6 +4006,7 @@ records:
       contract: link_problems promises relative links that point at nothing are found.
       repro: static-only
       confidence: high
+      remediation: ''
       anchors:
       - path: pipeline/links.py
         line: 9
@@ -3533,6 +4028,7 @@ records:
       contract: The check is meant to catch the candidate's email or phone.
       repro: static-only
       confidence: medium
+      remediation: ''
       anchors:
       - path: pipeline/content.py
         line: 23
@@ -3554,6 +4050,7 @@ records:
       contract: The message says the file is written when the week comes up.
       repro: static-only
       confidence: medium
+      remediation: ''
       anchors:
       - path: pipeline/content.py
         line: 124
@@ -3575,6 +4072,7 @@ records:
       contract: Fenced content is code, not structure.
       repro: static-only
       confidence: low
+      remediation: ''
       anchors:
       - path: pipeline/content.py
         line: 38
@@ -3627,6 +4125,7 @@ records:
         selectors; drive apply_to_job past the click and assert the result is QUOTA_EXPIRED (or APPLIED with quota_consumed=True
         for the success phrase) although no drawer or confirmation exists.'
       confidence: high
+      remediation: ''
       anchors:
       - path: naukri_bot/apply.py
         line: 46
@@ -3670,6 +4169,7 @@ records:
         == '2.5' and r.answer.source == 'profile' (currently true; contract expects abstain or 0). 4. r = engine.resolve('Enter
         your passport number') asserts r.answer.text == 'Yes'.
       confidence: high
+      remediation: ''
       anchors:
       - path: common/answers.py
         line: 752
@@ -3710,6 +4210,7 @@ records:
         reload the profile shows x'). 3. Run cli.run() with tailor_resume=True and one selected job. 4. Assert _restore_base_resume
         or build_base_pdf/upload_resume(base) was NOT called (currently true), whereas the contract requires a restore.
       confidence: high
+      remediation: ''
       anchors:
       - path: naukri_bot/cli.py
         line: 898
@@ -3720,43 +4221,6 @@ records:
       - path: naukri_bot/cli.py
         line: 1046
         snippet: 'except resume_module.ResumeError as exc:'
-  - id: IS-9c471bb8e5f7
-    instrument: probe
-    rule: core-06
-    severity: MEDIUM
-    critical_class: concurrency
-    path: naukri_bot/cli.py
-    line: 605
-    anchor: remaining = ledger.quota_remaining(settings.daily_quota)
-    message: No mutual exclusion between apply runs, the launchd profile updater and the control site, so quota and browser
-      session are raced
-    source: lane
-    extra:
-      lane: core
-      reachability: 'The user starts an apply run (long: 10-30 s pauses between up to 50 applications, plus LLM calls) while
-        launchd fires run_profile_update.sh at a slot (09:00, 13:30, 18:30) or the 15-minute poll. Or a second apply run is
-        started while the first is going.'
-      defect: grep finds no lock file, flock or pid check anywhere in common/ or naukri_bot/ or scripts/. Both entry points
-        open a Chrome on the same BROWSER_PROFILE_DIR and the same Naukri account. If the profile is held, create_driver (browser.py:~137-148)
-        falls back to a throwaway profile and logs in from scratch with the password, which can trigger OTP or captcha and
-        a signed-out session in the other run. Two apply runs each read quota_remaining once at cli.py:605 and each plans
-        up to that many applications, so together they can exceed DAILY_QUOTA. update_profile marks the slot attempt before
-        its random start delay and retry sleeps (up to 600 s plus 30 s and 60 s), so a second launchd invocation can overlap
-        the first.
-      contract: 'Quota invariant (README.md:12 and cli.py:589-612: plan no more than the remaining daily quota) and the persistent-profile
-        session reuse documented in common/browser.py:create_driver.'
-      repro: static-only
-      confidence: medium
-      anchors:
-      - path: naukri_bot/cli.py
-        line: 605
-        snippet: remaining = ledger.quota_remaining(settings.daily_quota)
-      - path: naukri_bot/cli.py
-        line: 636
-        snippet: driver = browser.create_driver(settings)
-      - path: naukri_bot/update_profile.py
-        line: 543
-        snippet: mark(state_path, slot, done=False)
   - id: IS-fa09cb6e4a38
     instrument: probe
     rule: core-07
@@ -3787,6 +4251,7 @@ records:
         '--disallowedTools', '--permission-mode')) for a in cmd) (currently true). 3. kiro = KiroCLIClient(Settings())._command('x',
         Path('/tmp/a.png')); assert '--trust-tools=fs_read' in kiro and no directory scope argument is present.
       confidence: low
+      remediation: ''
       anchors:
       - path: common/llm.py
         line: 92
@@ -3817,6 +4282,7 @@ records:
       contract: 'assist.py module docstring: ''Every edit is backed up''. The judge path in answers.py makes no backup.'
       repro: static-only
       confidence: low
+      remediation: ''
       anchors:
       - path: common/answers.py
         line: 506
@@ -3842,6 +4308,7 @@ records:
       contract: Only http(s) URLs should become hrefs.
       repro: static-only
       confidence: low
+      remediation: ''
       anchors:
       - path: froned-dashbord/app/js/views/sites.js
         line: 25
@@ -3864,6 +4331,7 @@ records:
       contract: The report should be refetched when the run state changes.
       repro: static-only
       confidence: high
+      remediation: ''
       anchors:
       - path: froned-dashbord/app/js/views/reports.js
         line: 7
@@ -3871,27 +4339,6 @@ records:
       - path: froned-dashbord/app/js/views/reports.js
         line: 31
         snippet: if (!entry) loadReport(day);
-  - id: IS-cd74cc7c5669
-    instrument: probe
-    rule: dashboard-07
-    severity: LOW
-    critical_class: memory
-    path: froned-dashbord/app/js/components/console.js
-    line: 87
-    anchor: for (const [, text] of entries) {
-    message: Run console appends output lines without a cap
-    source: lane
-    extra:
-      lane: dashboard
-      reachability: conditional
-      defect: Every output line is appended as a DOM span with no bound.
-      contract: Keep a bounded tail of lines.
-      repro: static-only
-      confidence: medium
-      anchors:
-      - path: froned-dashbord/app/js/components/console.js
-        line: 87
-        snippet: for (const [, text] of entries) {
   - id: IS-24a1f88fa7c0
     instrument: probe
     rule: dashboard-08
@@ -3909,6 +4356,7 @@ records:
       contract: Discard responses whose request is not the latest for that action.
       repro: static-only
       confidence: low
+      remediation: ''
       anchors:
       - path: froned-dashbord/app/js/forms.js
         line: 85
@@ -3936,6 +4384,7 @@ records:
       repro: static-only. grep -n 'cdn.jsdelivr.net' course/index.html and observe there is no 'integrity=' on any of 14 script
         tags and no version for docsify-pagination.
       confidence: high
+      remediation: ''
       anchors:
       - path: course/index.html
         line: 809
@@ -3970,6 +4419,7 @@ records:
         HOME=$tmp /bin/zsh scripts/run_linkedin_post.sh with the fake bin only in the parent shell's PATH. 3. python -c 'import
         shutil;print(shutil.which("claude"))' under that minimal PATH prints None. Otherwise static-only.
       confidence: medium
+      remediation: ''
       anchors:
       - path: scripts/run_profile_update.sh
         line: 12
@@ -4002,6 +4452,7 @@ records:
       repro: 'static-only. Read the order of operations: cat > $PLIST (line 20), then bootout (38), then bootstrap (39) with
         no check that the job is idle.'
       confidence: medium
+      remediation: ''
       anchors:
       - path: scripts/install_profile_updater.sh
         line: 38
@@ -4033,6 +4484,7 @@ records:
         echoes its args. 2. Run it with HOME and PATH faked. 3. Output shows 'Opening Chrome on <tmp>/"mine"/chrome', a directory
         literally containing quote characters, whereas the bot uses <tmp>/mine/chrome.
       confidence: high
+      remediation: ''
       anchors:
       - path: scripts/google_login.sh
         line: 11
@@ -4064,6 +4516,7 @@ records:
         scripts/run_profile_update.sh. 3. The failure is appended to data/logs/profile_update.log and the script exits non-zero.
         The installer prints 'Installed' without complaint.
       confidence: medium
+      remediation: ''
       anchors:
       - path: scripts/run_profile_update.sh
         line: 11
@@ -4094,6 +4547,7 @@ records:
         its args. 2. Run the installer. 3. Inspect $HOME/Library/LaunchAgents/*.plist: it contains a raw & inside <string>,
         so plutil -lint style parsing fails. The fake launchctl was already called with bootout first.'
       confidence: medium
+      remediation: ''
       anchors:
       - path: scripts/install_profile_updater.sh
         line: 29
@@ -4123,6 +4577,7 @@ records:
       repro: static-only. Add a mermaid fence containing </pre><img src=x onerror=alert(1)> to a temp copy of a course page
         and load it with docsify, or call the renderer function with that string and inspect the return value.
       confidence: medium
+      remediation: ''
       anchors:
       - path: course/index.html
         line: 600
@@ -4152,6 +4607,7 @@ records:
       repro: static-only. Read the >> redirects and the StandardOutPath keys; there is no logrotate, newsyslog entry or size
         cap in scripts/.
       confidence: low
+      remediation: ''
       anchors:
       - path: scripts/install_profile_updater.sh
         line: 32
@@ -4186,6 +4642,7 @@ records:
         and a current pubDate. 2. Call fetch_candidates(LinkedInSettings(feeds=[''x''], topics=[''ai'']), {''posted'': [],
         ''skipped'': []}). 3. Assert it raises ValueError; the expected behaviour is that it returns [] or skips the item.'
       confidence: high
+      remediation: ''
       anchors:
       - path: linkedin_bot/news.py
         line: 235
@@ -4193,275 +4650,6 @@ records:
       - path: linkedin_bot/news.py
         line: 236
         snippet: 'if not key or key in seen:'
-  - id: IS-e4afbb78914b
-    instrument: probe
-    rule: linkedin-05
-    severity: MEDIUM
-    critical_class: logic
-    path: linkedin_bot/cli.py
-    line: 354
-    anchor: 'if url and already_posted(state, url):'
-    message: --post and the retry path ignore the 'day done' record, and an unconfirmed post never records its article URL,
-      so the same article can be posted again
-    source: lane
-    extra:
-      lane: linkedin
-      reachability: A local user running `--post` on a day the poster already posted. Also the next day after an 'unconfirmed'
-        outcome, when the post is in fact live.
-      defect: _post (cli.py:315) never reads state['days'][day]['done']. Only is_due, used by --if-due, honours it. On the
-        unconfirmed branch (lines 376-379) only mark_day is called, and the URL is not appended to state['posted'], so already_posted
-        at line 354 and news._seen_urls do not know about it. Running `--post` again the same day reuses today's draft (draft_path
-        exists) and posts the same text. Otherwise the next day's pick_article can choose the same still-fresh article (max
-        age is 3 days). The code comment says 'Marking the day done is what stops a retry'.
-      contract: 'README: ''One post a day, never two.'' and ''marks the day done so it cannot post twice''. The cli comment
-        at 377-378.'
-      repro: 1. Use the harness from tests/linkedin/test_linkedin_cli.py with the unconfirmed publish stub; run `_post` once,
-        which returns EXIT_FAILED and marks the day done. 2. Run `_post` again with the stub returning ok. 3. Assert that
-        post_with_browser was called twice for the same URL, and that state['posted'] is empty after the first call. The expected
-        behaviour is a refusal.
-      confidence: high
-      anchors:
-      - path: linkedin_bot/cli.py
-        line: 354
-        snippet: 'if url and already_posted(state, url):'
-      - path: linkedin_bot/cli.py
-        line: 379
-        snippet: mark_day(state_path, day, done=True)
-      - path: linkedin_bot/cli.py
-        line: 373
-        snippet: record_posted(state_path, url, title, day, source_path)
-  - id: IS-a7b189e46d2f
-    instrument: probe
-    rule: linkedin-06
-    severity: MEDIUM
-    critical_class: error
-    path: linkedin_bot/publisher.py
-    line: 448
-    anchor: post_button.click()
-    message: An exception raised after Post is clicked, or while recording the post, is uncaught, so the day is not marked
-      done and the next tick posts again
-    source: lane
-    extra:
-      lane: linkedin
-      reachability: 'Scheduler or manual run. Preconditions: a Selenium WebDriverException (StaleElementReferenceException,
-        NoSuchWindow) on `toast.text` or on `post_button.click()` after the click has taken effect, or an OSError from save_state
-        in record_posted.'
-      defect: '_find and _enabled swallow WebDriverException, but toast.text at 454 and the click at 448 do not. The exception
-        skips the ''unconfirmed'' result and propagates through publish and post_with_browser (whose finally only quits the
-        driver) and _post, and main catches only KeyboardInterrupt. mark_day(done=True) is therefore never called. Only attempts=1
-        was recorded at line 426, so is_due is true for another tick and a second full post is made with a new prepare() or
-        the same draft. The same applies when record_posted raises after a verified post: the URL and the done flag are lost.'
-      contract: 'publish docstring: ''Never clicks Post twice''. README: ''cannot post twice''.'
-      repro: 1. Run cli.main(['--if-due']) with auto_post on, post_with_browser patched to a driver whose Post button click
-        works and whose toast element's .text raises StaleElementReferenceException. 2. Assert the exception escapes and that
-        state['days'][day] has attempts=1 and no 'done'. 3. Call is_due(now, post_time, state) and assert it is True, i.e.
-        a second post is allowed.
-      confidence: medium
-      anchors:
-      - path: linkedin_bot/publisher.py
-        line: 448
-        snippet: post_button.click()
-      - path: linkedin_bot/publisher.py
-        line: 454
-        snippet: 'if toast is not None and any(m in _normalise(toast.text) for m in SUCCESS_TEXT):'
-      - path: linkedin_bot/cli.py
-        line: 373
-        snippet: record_posted(state_path, url, title, day, source_path)
-      - path: linkedin_bot/cli.py
-        line: 426
-        snippet: mark_day(state_path, day, done=False)
-  - id: IS-b25b3d359adf
-    instrument: probe
-    rule: linkedin-11
-    severity: LOW
-    critical_class: concurrency
-    path: linkedin_bot/cli.py
-    line: 72
-    anchor: entry = state.get("days", {}).get(now.strftime("%Y-%m-%d"), {})
-    message: No inter-process lock and no overall deadline, so a hung run lets the next 30-minute tick start a second run
-      before the first has recorded anything
-    source: lane
-    extra:
-      lane: linkedin
-      reachability: The scheduler, when an earlier --if-due run is still in progress (slow-drip article server, 300 s manual-login
-        wait, LLM calls, 5 article fetches at 20 s each) and 30 minutes have passed. Also a manual `--post`, which never sets
-        attempts, overlapping a tick.
-      defect: is_due treats 'attempts < 2 and not done' as due, and attempts is incremented before the work starts. An in-flight
-        run is indistinguishable from a failed one, so a second process starts prepare() and the publish flow while the first
-        is still running. Neither has recorded the URL, so both can pass already_posted and both click Post, with the same
-        or different articles.
-      contract: 'README: ''One post a day, never two.'''
-      repro: 'static-only (requires real parallelism). A partial repro: after mark_day(path, day, False), assert is_due(...)
-        is still True, which shows that no in-progress marker exists.'
-      confidence: low
-      anchors:
-      - path: linkedin_bot/cli.py
-        line: 72
-        snippet: entry = state.get("days", {}).get(now.strftime("%Y-%m-%d"), {})
-      - path: linkedin_bot/cli.py
-        line: 73
-        snippet: return not entry.get("done") and entry.get("attempts", 0) < MAX_ATTEMPTS_PER_DAY
-      - path: linkedin_bot/cli.py
-        line: 426
-        snippet: mark_day(state_path, day, done=False)
-  - id: IS-e3d7cd6b757b
-    instrument: probe
-    rule: pipeline-06
-    severity: MEDIUM
-    critical_class: error
-    path: pipeline/learning.py
-    line: 193
-    anchor: 'try: text = path.read_text(encoding="utf-8") except OSError: return ""'
-    message: A missing or unreadable resume file is silently read as empty and the study files are still written, with a prompt
-      that has no resume in it
-    source: lane
-    extra:
-      lane: pipeline
-      reachability: python3 -m pipeline run from any cwd other than the repo root (launchd defaults to /), or with data/resume
-        absent. RESUME_TEX is relative to the cwd.
-      defect: resume_text returns "" on OSError without logging. fill_resume_learning proceeds and sends the prompt "Their
-        resume (LaTeX source):\n" followed by nothing, while still telling the model "How you used it (only what the resume
-        says, never invent numbers)". The check only requires "## Interview questions" in the output, so up to 12 files with
-        invented experience are written and recorded as a done stage. They are not regenerated later. Briefing context() has
-        the same silent-empty skills fallback.
-      contract: 'resume_prompt: "## How you used it (only what the resume says, never invent numbers)". The stage is reported
-        as done in the checkpoint.'
-      repro: '1. Call learning.fill_resume_learning(lambda p: prompts.append(p) or "# T\n\n## Interview questions\n", tmp_path/"rl",
-        tmp_path/"nope.tex") with the nope.tex path nonexistent.
-
-        2. Assert 12 files were written, and assert prompts[0] ends the resume section with an empty body: "Their resume (LaTeX
-        source):\n\n\nSearch the web".
-
-        3. A correct implementation would raise AIError or log and stop when the resume is unreadable.'
-      confidence: high
-      anchors:
-      - path: pipeline/learning.py
-        line: 193
-        snippet: 'try: text = path.read_text(encoding="utf-8") except OSError: return ""'
-      - path: pipeline/learning.py
-        line: 223
-        snippet: resume = resume_text(resume_path)
-      - path: pipeline/learning.py
-        line: 25
-        snippet: RESUME_TEX = Path("data/resume/base.tex")
-  - id: IS-93297f7626e7
-    instrument: probe
-    rule: pipeline-08
-    severity: LOW
-    critical_class: logic
-    path: pipeline/run.py
-    line: 111
-    anchor: 'stages.append(Stage("research:resume", lambda: _ai_stage(lambda: learning.fill_resume_learning(ask)), True))'
-    message: The research:resume stage declares no outputs, so deleting its files does not make the stage run again, contrary
-      to the documented done rule
-    source: lane
-    extra:
-      lane: pipeline
-      reachability: After a research:resume stage is DONE for the day, a user deletes a resume-learning file or the stage
-        wrote a partial set, and then runs python3 -m pipeline continue.
-      defect: Stage.outputs defaults to (), and the research:resume Stage is built without outputs. Memory.is_done therefore
-        never checks any file for that stage. The stage wrote .research/resume-learning/*.md and README.md, but a later run
-        the same day skips it and reports the day done. The learn and brief:* stages do declare outputs, so the README rule
-        holds for them but not for this one.
-      contract: '.memory/README.md text and the run.py docstring: "A stage counts as done only when ... the files it wrote
-        are still there".'
-      repro: '1. stage = next(s for s in run.build_stages(_args(), []) if s.name == "research:resume"). Assert stage.outputs
-        == (), and this is the defect.
-
-        2. Replace stage.work with a stub that writes tmp_path/"x.md" and returns 0, then run_day with that stage. Delete
-        x.md.
-
-        3. Call run_day again and assert the stub ran twice. It runs once because no output is recorded.'
-      confidence: high
-      anchors:
-      - path: pipeline/run.py
-        line: 111
-        snippet: 'stages.append(Stage("research:resume", lambda: _ai_stage(lambda: learning.fill_resume_learning(ask)), True))'
-      - path: pipeline/run.py
-        line: 23
-        snippet: A stage counts as done only when its tool exits 0 and the files it wrote are still
-      - path: common/memory.py
-        line: 38
-        snippet: 'A stage counts as done only while the files it wrote are still there: delete a'
-  - id: IS-8b1409a55321
-    instrument: probe
-    rule: pipeline-09
-    severity: LOW
-    critical_class: logic
-    path: pipeline/run.py
-    line: 102
-    anchor: 'stages = [Stage("learn", lambda: _ai_stage(lambda: learning.write_today(ask, today=day)), False,'
-    message: With --dry-run the learn stage still calls the AI CLI and writes .research files and learning/progress.json
-    source: lane
-    extra:
-      lane: pipeline
-      reachability: python3 -m pipeline --dry-run, or `learn --dry-run`. The dry-run flag is only threaded into the bot flag
-        lists (`dry`).
-      defect: 'build_stages passes dry to the naukri and board stages only. The learn, research:resume and brief:* closures
-        ignore args.dry_run. A dry run therefore spawns up to 1 + 12 + 5 AI CLI processes, each with a 900 s timeout, and
-        writes .research/learning/progress.json (the "start" key), today.md, daily/<date>.md, week and briefing files. Those
-        files are the outputs the later real run treats as already produced: the learn stage is recorded as done only by Memory,
-        but its output file exists. The "record nothing" promise is false, and a dry-run''s progress start date is persisted.'
-      contract: The --dry-run help string, "pass --dry-run to the bots and record nothing".
-      repro: '1. monkeypatch.chdir(tmp_path); monkeypatch.setattr(learning, "ask_cli", lambda cli=None: (lambda prompt: learning_week_text))
-        where learning_week_text is _week(1) from the test module.
-
-        2. stages = run.build_stages(_args(dry_run=True), []); learn = stages[0]; assert learn.work() == run.EXIT_OK.
-
-        3. Assert Path(".research/learning/today.md").exists() and Path(".research/learning/progress.json").exists(). Both
-        are created despite dry_run=True.'
-      confidence: high
-      anchors:
-      - path: pipeline/run.py
-        line: 102
-        snippet: 'stages = [Stage("learn", lambda: _ai_stage(lambda: learning.write_today(ask, today=day)), False,'
-      - path: pipeline/run.py
-        line: 111
-        snippet: 'stages.append(Stage("research:resume", lambda: _ai_stage(lambda: learning.fill_resume_learning(ask)), True))'
-      - path: pipeline/run.py
-        line: 240
-        snippet: parser.add_argument("--dry-run", action="store_true", help="pass --dry-run to the bots and record nothing")
-  - id: IS-b3e1d6e314b6
-    instrument: probe
-    rule: pipeline-10
-    severity: LOW
-    critical_class: logic
-    path: pipeline/learning.py
-    line: 111
-    anchor: 'def mark_done(root: Path = LEARNING, today: Optional[date] = None) -> int:'
-    message: learn --done is not idempotent per day, so a repeat invocation marks the next study day done without it being
-      studied
-    source: lane
-    extra:
-      lane: pipeline
-      reachability: A user who runs `python3 -m pipeline learn --done` twice the same day (shell history, a double click,
-        a wrapper that retries on a non-zero exit).
-      defect: mark_done always marks current_day(progress), the first not-done day, and never compares with the date the current
-        day was served on. A second call the same date marks day N+1 done, although today.md still shows day N and the user
-        never saw N+1. Nothing records which date a day was completed. current_day also caps at 90, so a further call after
-        day 90 prints "Day 90 marked done." forever.
-      contract: 'write_today: "When finished: `python3 -m pipeline learn --done`." and the --done help, "mark today''s study
-        day finished".'
-      repro: '1. Create tmp_path/weeks/week-01.md with _week(1).
-
-        2. Assert learning.mark_done(tmp_path, DAY) == 1.
-
-        3. Assert learning.mark_done(tmp_path, DAY) == 1, since the same date should be a no-op or an error. It returns 2
-        today.'
-      confidence: high
-      anchors:
-      - path: pipeline/learning.py
-        line: 111
-        snippet: 'def mark_done(root: Path = LEARNING, today: Optional[date] = None) -> int:'
-      - path: pipeline/learning.py
-        line: 114
-        snippet: day = current_day(progress)
-      - path: pipeline/learning.py
-        line: 115
-        snippet: progress["done"] = sorted(set(progress.get("done") or []) | {day})
-      - path: pipeline/run.py
-        line: 260
-        snippet: print("Day %d marked done." % learning.mark_done(today=today))
   - id: IS-539c17b6e4d9
     instrument: probe
     rule: lane-failure
@@ -4499,6 +4687,7 @@ records:
       contract: none
       repro: static-only
       confidence: medium
+      remediation: ''
       anchors:
       - path: sites_bot/accounts.py
         line: 322
@@ -4536,6 +4725,7 @@ records:
         generated or the prompt in task.md forbids account creation; today the call has no secrets.env, no --secrets arg in
         mcp.json, and a prompt that allows account creation.
       confidence: medium
+      remediation: ''
       anchors:
       - path: sites_bot/browser_agent.py
         line: 379
@@ -4572,6 +4762,7 @@ records:
         result.status == ERROR and ''submit was clicked'' in result.detail.lower(), and that ext.retryable({''site'': url,
         ''why'': result.detail}) is False. Both assertions fail today.'
       confidence: medium
+      remediation: ''
       anchors:
       - path: sites_bot/external.py
         line: 549
@@ -4613,6 +4804,7 @@ records:
         '--title', 'T', '--company', 'C']). 4. Assert the entry for N is gone and the ledger has a row; today the entry remains
         and there is no ledger row.
       confidence: high
+      remediation: ''
       anchors:
       - path: sites_bot/external.py
         line: 1892
@@ -4646,6 +4838,7 @@ records:
         3. Call plat.update_profile(driver, plat.BOARDS['hirist'], settings, profile). 4. Assert the fake claude was never
         started; today it is started.
       confidence: medium
+      remediation: ''
       anchors:
       - path: sites_bot/platforms.py
         line: 667
@@ -4675,6 +4868,7 @@ records:
       contract: none
       repro: static-only
       confidence: low
+      remediation: ''
       anchors:
       - path: sites_bot/external.py
         line: 1646
@@ -4682,6 +4876,333 @@ records:
       - path: sites_bot/accounts.py
         line: 93
         snippet: write_env_value(settings.env_file, PASSWORD_KEY, password)
+  - id: IS-cecfb7ba081d
+    instrument: probe
+    rule: lane-failure
+    severity: INFO
+    critical_class: none
+    path: hunt/probe/updatebots.yaml
+    line: null
+    anchor: lane:updatebots:initial_reproduction_setup:pytest-both-halves
+    message: 'lane updatebots initial_reproduction_setup did not complete: The pytest basetemp parent directory did not exist;
+      four setup errors were recorded before any test executed.'
+    source: lane
+    extra:
+      task: pytest-both-halves
+      status: failed
+  - id: IS-f90ee93541c1
+    instrument: probe
+    rule: lane-failure
+    severity: INFO
+    critical_class: none
+    path: hunt/probe/updatebots.yaml
+    line: null
+    anchor: lane:updatebots:original_attempt:linkedin-sites-naukri-update-investigation
+    message: 'lane updatebots original_attempt did not complete: Automatic security filter failure reported by the orchestrator;
+      detailed diagnostic unavailable to this lane.'
+    source: lane
+    extra:
+      task: linkedin-sites-naukri-update-investigation
+      status: blocked
+  - id: IS-5b2848b3082a
+    instrument: probe
+    rule: updatebots-01
+    severity: MEDIUM
+    critical_class: error
+    path: linkedin_bot/design.py
+    line: 183
+    anchor: problem = image_problem(out_path)
+    message: A corrupt screenshot escapes the designed-card failure channel and prevents the Pillow fallback
+    source: lane
+    extra:
+      lane: updatebots
+      reachability: prepare uses the AI designer by default. If the renderer leaves an invalid or truncated screenshot file,
+        render_html reports success based only on file existence, and design_card attempts to decode it.
+      defect: image_problem lets PIL.UnidentifiedImageError and other decode errors escape. design_card catches only AIError
+        around generation, so it never returns None and the caller cannot invoke its Pillow fallback. The isolated test injects
+        inert invalid PNG bytes at the renderer boundary and observes the uncaught PIL exception.
+      contract: The design.py module promises that any failure returns None so the caller can draw the Pillow card instead.
+      repro: test_updatebots_01_invalid_rendered_png_falls_back mocks the AI answer with inert HTML and mocks the browser
+        renderer to write invalid fixture bytes. The expected None return instead raises PIL.UnidentifiedImageError. test_updatebots_clean_missing_chrome_falls_back
+        passes on the ordinary fallback path.
+      confidence: high
+      remediation: Convert renderer-output decoding failures to a rejected design or None, preserving the caller's documented
+        Pillow fallback; validate process completion and decoded output before accepting a screenshot.
+      anchors:
+      - path: linkedin_bot/design.py
+        line: 183
+        snippet: problem = image_problem(out_path)
+      - path: linkedin_bot/design.py
+        line: 130
+        snippet: 'with Image.open(path) as image:'
+      - path: linkedin_bot/design.py
+        line: 125
+        snippet: return out_path.is_file()
+      - path: linkedin_bot/cli.py
+        line: 208
+        snippet: 'if card is None:'
+  - id: IS-809b97cb70b5
+    instrument: probe
+    rule: updatebots-02
+    severity: MEDIUM
+    critical_class: logic
+    path: linkedin_bot/writer.py
+    line: 405
+    anchor: 'if critic is None or reviewed is not None or attempt == MAX_ATTEMPTS:'
+    message: The first valid draft bypasses its configured critic when it arrives on the final writing attempt
+    source: lane
+    extra:
+      lane: updatebots
+      reachability: A configured, available critic is supplied by prepare. When the writer returns two unusable responses
+        before a valid third response, this is the first passing draft and reviewed is still None.
+      defect: The attempt == MAX_ATTEMPTS branch returns the valid third draft before review is invoked. The injected critic
+        returns a plain publish verdict but receives zero calls, so the missing review is demonstrated without judging any
+        disputed semantic finding.
+      contract: write_post documents that with a critic, the first draft that passes the checks goes to it once.
+      repro: test_updatebots_02_first_valid_third_draft_still_gets_reviewed supplies None, None, then a payload independently
+        verified to pass check_draft and check_visuals. It asserts one critic call and fails with zero. test_updatebots_clean_first_valid_draft_is_reviewed
+        passes with one critic call on the first writing attempt.
+      confidence: high
+      remediation: Invoke the critic for the first passing draft regardless of writing-attempt index and make an explicit
+        policy decision for revision feedback when no rewrite attempts remain.
+      anchors:
+      - path: linkedin_bot/writer.py
+        line: 405
+        snippet: 'if critic is None or reviewed is not None or attempt == MAX_ATTEMPTS:'
+      - path: linkedin_bot/writer.py
+        line: 406
+        snippet: return draft
+      - path: linkedin_bot/writer.py
+        line: 407
+        snippet: fixes = review(critic, article, draft, notes, voice)
+      - path: linkedin_bot/writer.py
+        line: 386
+        snippet: With a critic, the first draft that passes the checks goes to it once; its fixes
+  - id: IS-d793d04750fb
+    instrument: probe
+    rule: updatecore-01
+    severity: MEDIUM
+    critical_class: logic
+    path: pipeline/run.py
+    line: 245
+    anchor: 'code, detail = _run(stage.name, stage.work) if args.dry_run:'
+    message: Pipeline dry run still calls AI and writes learning notes and durable memory
+    source: lane
+    extra:
+      lane: updatecore
+      reachability: A local caller executes python3 -m pipeline --dry-run --only learn, or previews the full pipeline with
+        --dry-run.
+      defect: The dry-run guard executes after stage.work. The learn stage has no dry-run argument and invokes write_today.
+        Its new load_progress path creates .memory/learning.json before generation, and generation writes the week, dated
+        note, and today.md. The fixture observed one AI request, durable learning memory, and a daily note despite dry_run=True.
+      contract: The CLI promises to record nothing in a dry run. A preview must not create or overwrite durable learning state
+        or generated notes.
+      repro: Run test_updatecore_01_dry_run_does_not_generate_or_record_learning. The AI call is replaced with a deterministic
+        seven-day fixture and all paths resolve under pytest tmp_path. The test expects zero AI requests and no memory or
+        daily note; it observes 1, true, true.
+      confidence: high
+      remediation: Do not execute side-effecting writing stages during dry-run; provide a preview callback or explicit dry-run
+        propagation before load_progress and generation.
+      anchors:
+      - path: pipeline/run.py
+        line: 245
+        snippet: 'code, detail = _run(stage.name, stage.work) if args.dry_run:'
+      - path: pipeline/run.py
+        line: 150
+        snippet: 'stages = [Stage("learn", lambda: _ai_stage(lambda: learning.write_today(ask, today=day)), False,'
+      - path: pipeline/learning.py
+        line: 102
+        snippet: return learning_memory.transact(root.resolve().parent.parent)["plan"]
+      - path: pipeline/run.py
+        line: 339
+        snippet: parser.add_argument("--dry-run", action="store_true", help="pass --dry-run to the bots and record nothing")
+  - id: IS-53695218de7a
+    instrument: probe
+    rule: updatecore-02
+    severity: LOW
+    critical_class: logic
+    path: pipeline/run.py
+    line: 165
+    anchor: 'stages.append(Stage("research:resume", lambda: _ai_stage(lambda: learning.fill_resume_learning(ask)), True))'
+    message: Deleted resume study outputs are skipped by a completed checkpoint
+    source: lane
+    extra:
+      lane: updatecore
+      reachability: After a successful research:resume stage, a generated file is deleted or moved and the user invokes pipeline
+        continue on the same date.
+      defect: research:resume declares the default empty output tuple. Memory records no output paths, so its all() check
+        remains true after a generated topic disappears. A subsequent run reports the stage and day done without invoking
+        fill_resume_learning. The fixture deletes an actually generated topic and proves the second run leaves it absent.
+      contract: The pipeline module documents that a stage counts as done only when its files are still there; missing resume-study
+        files should be written.
+      repro: Run test_updatecore_02_missing_resume_output_is_regenerated. Generate all topics using mocked AI and a synthetic
+        resume, delete the first topic, then resume with a new Memory instance. The expected regenerated file remains absent
+        while the command returns success.
+      confidence: high
+      remediation: Record all resume-study output paths, including the index, or provide a stage-specific completeness predicate
+        that invalidates the checkpoint when a topic is missing.
+      anchors:
+      - path: pipeline/run.py
+        line: 165
+        snippet: 'stages.append(Stage("research:resume", lambda: _ai_stage(lambda: learning.fill_resume_learning(ask)), True))'
+      - path: common/memory.py
+        line: 158
+        snippet: return entry["status"] == DONE and all(Path(p).exists() for p in entry.get("outputs") or ())
+      - path: pipeline/run.py
+        line: 226
+        snippet: 'if all(mem.is_done(s.name) for s in stages):'
+  - id: IS-512033139e86
+    instrument: probe
+    rule: updatecore-03
+    severity: MEDIUM
+    critical_class: concurrency
+    path: common/memory.py
+    line: 88
+    anchor: 'with _PROFILES_LOCK: profiles = load_profiles(folder)'
+    message: Independent profile writers overwrite another process's committed profile history
+    source: lane
+    extra:
+      lane: updatecore
+      reachability: A supported pipeline --bots N or --containers run allows two board-profile subprocesses to call record_profile
+        against the shared .memory directory.
+      defect: _PROFILES_LOCK is a threading.Lock and does not serialize distinct processes. Each writer loads the same old
+        dictionary and later replaces the whole file. In a deterministic valid interleaving, both readers see an empty profile
+        set, hirist commits successfully, then naukri commits its stale snapshot successfully. The final JSON retains only
+        naukri. The fixed shared .tmp path also exposes a separate collision window, but that additional consequence is not
+        claimed as dynamically reproduced.
+      contract: common.memory describes profiles.json as tracking every board profile and its history; the parallel pipeline
+        deliberately runs these writers in independent processes.
+      repro: Run test_updatecore_03_independent_profile_writers_preserve_both_commits. Two real child interpreters import
+        memory.record_profile. A wrapper around load_profiles pauses each after its real read, allowing the parent to schedule
+        commits without modifying target code. Both children exit zero; the expected set {hirist,naukri} contains only naukri
+        on disk.
+      confidence: high
+      remediation: Use an interprocess lock around read-modify-write, reread after acquiring it, and write through a unique
+        temporary file before replacement, as learning_memory.transact already does.
+      anchors:
+      - path: common/memory.py
+        line: 88
+        snippet: 'with _PROFILES_LOCK: profiles = load_profiles(folder)'
+      - path: common/memory.py
+        line: 98
+        snippet: tmp = path.with_suffix(".tmp") tmp.write_text(json.dumps(profiles, indent=1, sort_keys=True), encoding="utf-8")
+          tmp.replace(path)
+      - path: sites_bot/platforms.py
+        line: 619
+        snippet: memory.record_profile(board.name, action, link, notes)
+      - path: naukri_bot/update_profile.py
+        line: 506
+        snippet: memory.record_profile("naukri", memory.PROFILE_UPDATED, PROFILE_URL, "headline re-saved")
+      - path: pipeline/run.py
+        line: 117
+        snippet: lanes_module.run_isolated(lane, command, env, containers))
+  - id: IS-9318366a3b9e
+    instrument: probe
+    rule: updatecore-04
+    severity: MEDIUM
+    critical_class: injection
+    path: common/assist.py
+    line: 252
+    anchor: 'lines[cursor] = "A: %s" % answer lines.insert(start, "# %s" % note)'
+    message: Filling an existing blank with a judged answer still injects trusted Q/A records
+    source: lane
+    extra:
+      lane: updatecore
+      reachability: 'In automatic answer mode with judging enabled, a screening question already exists as a blank in answers.txt,
+        the strict pass abstains, and the model''s judged answer or reason contains newline-delimited Q:/A: text. Model output
+        is the untrusted input; no actual adversarial model prompt success is claimed.'
+      defect: The old injection mitigation flattens newly appended blocks and abstention comments but skips the existing-blank
+        branch. judge_answer only strips outer whitespace, accepts a short newline-bearing answer with a verbatim evidence
+        quote, and _keep_judged passes it to assist.fill_answer, which interpolates it without escaping. The real resolve
+        path accepts a fixture judge reply that fills the original answer with No and creates a separate Are you a US citizen?
+        answer of Yes. Reloaded AnswerBook treats it as the user's answer and the engine can replay it from DATA at confidence
+        1.0, bypassing the judgment restriction for citizenship questions.
+      contract: Screening answers are fail-closed; answers.txt is trusted as the user's own answers. Untrusted text for one
+        question must not create an independent user-authorized answer.
+      repro: 'Run test_updatecore_04_judged_blank_fill_cannot_create_trusted_answers. A local mocked LLM first abstains then
+        returns an accepted judge result with answer No\nQ: Are you a US citizen?\nA: Yes and evidence Python from the synthetic
+        resume. The actual AnswerEngine.resolve path writes the forged record. No model, network, employer form, or user data
+        is used.'
+      confidence: high
+      remediation: Flatten or reject embedded newlines and record delimiters in both answer and note at the shared fill_answer
+        persistence boundary; apply the same boundary protection to direct assist writes and test existing-blank plus new-block
+        paths.
+      anchors:
+      - path: common/assist.py
+        line: 252
+        snippet: 'lines[cursor] = "A: %s" % answer lines.insert(start, "# %s" % note)'
+      - path: common/answers.py
+        line: 496
+        snippet: updated = assist.fill_answer(text, question, answer, note) if key in self.book._by_key else None
+      - path: common/llm.py
+        line: 740
+        snippet: answer, reason, evidence = answer.strip(), reason.strip(), evidence.strip()
+      - path: common/answers.py
+        line: 457
+        snippet: self._keep_judged(question, answer, judged, saved=not options and not judged["depends_on_posting"])
+      - path: common/answers.py
+        line: 589
+        snippet: source=AnswerSource.DATA, confidence=1.0,
+  - id: IS-2f47cc8bac96
+    instrument: probe
+    rule: lane-failure
+    severity: INFO
+    critical_class: none
+    path: hunt/probe/updateweb.yaml
+    line: null
+    anchor: lane:updateweb:first_attempt:web-update-reachable-surfaces
+    message: 'lane updateweb first_attempt did not complete: Orchestrator-observed final status: Agent errored: This content
+      was flagged for possible cybersecurity risk.'
+    source: lane
+    extra:
+      task: web-update-reachable-surfaces
+      status: failed
+  - id: IS-63702e2b4620
+    instrument: probe
+    rule: updateweb-01
+    severity: MEDIUM
+    critical_class: concurrency
+    path: froned-dashbord/server.py
+    line: 228
+    anchor: 'with self.server.file_lock: original = path.read_text() if path.exists() else "" if data.get("revision") != revision(original):'
+    message: Whole-file saves silently overwrite successful concurrent fact and answer edits
+    source: lane
+    extra:
+      lane: updateweb
+      reachability: A local dashboard user saves a whole profile or answers file while another tab or client saves a pending
+        fact or answer; both routes operate on the same target file in the threaded dashboard server.
+      defect: The whole-file route checks a revision under DashboardServer.file_lock, but partial edits use the unrelated
+        state._EDITS lock. A partial edit committed after the revision check and before os.replace is overwritten. Both requests
+        return success, so the saved phone number or screening answer disappears without a conflict response.
+      contract: Successful edits to separate fields must be serialized or merged, or a conflicting whole-file replacement
+        must be rejected before it overwrites a successful partial edit.
+      repro: Run hunt/sandbox/test_updateweb.py with sockets disabled. Each parameter invokes the real POST handlers directly
+        with mocked request and response transport. A checkpoint pauses the whole-file write after revision validation; a
+        second thread commits a fact or answer; then the whole-file save resumes. The safety assertion requires the successful
+        partial edit to remain in the final temporary file. Both actual-lock cases fail and both controls using one shared
+        lock pass without modifying target source.
+      confidence: high
+      remediation: Use one common per-file transaction lock across whole-file replacements and partial fact and answer mutations,
+        keeping revision validation and replacement inside that transaction; retain conflict reporting for stale revisions.
+      anchors:
+      - path: froned-dashbord/server.py
+        line: 228
+        snippet: 'with self.server.file_lock: original = path.read_text() if path.exists() else "" if data.get("revision")
+          != revision(original):'
+      - path: froned-dashbord/server.py
+        line: 241
+        snippet: os.replace(temp.name, path)
+      - path: froned-dashbord/server.py
+        line: 219
+        snippet: 'if urlsplit(self.path).path != "/api/file": return super().do_POST()'
+      - path: web/state.py
+        line: 290
+        snippet: 'def locked(*args: Any, **kwargs: Any) -> T: with _EDITS: return edit(*args, **kwargs)'
+      - path: web/server.py
+        line: 609
+        snippet: 'elif route == "/api/answer": state.save_answer(int(data.get("line") or 0), str(data.get("answer", "")),
+          state.ANSWERS) self.json({"ok": True}) elif route == "/api/fact": state.save_fact(int(data.get("line") or 0), str(data.get("value",
+          "")), state.PROFILE)'
   - id: IS-bc7b0aee1cbb
     instrument: probe
     rule: lane-failure
@@ -4718,6 +5239,7 @@ records:
         to be a JSON request from this site itself.'' The course page is part of ''this site'' but executes third-party code.'
       repro: static-only
       confidence: medium
+      remediation: ''
       anchors:
       - path: course/index.html
         line: 809
@@ -4753,6 +5275,7 @@ records:
         to stop.''). 4. Assert the sleep process (os.killpg(runner.proc.pid, 0)) is still alive and runner.running still True
         after 1 s; a second start() raises RuntimeError. 5. Cleanup: os.killpg(pid, SIGKILL).'
       confidence: high
+      remediation: ''
       anchors:
       - path: web/server.py
         line: 117
@@ -4787,6 +5310,7 @@ records:
         returns a status (400) with a JSON error. It raises http.client.RemoteDisconnected. 3. Likewise POST /api/answer with
         {'line':[1],'answer':'a'}.
       confidence: high
+      remediation: ''
       anchors:
       - path: web/server.py
         line: 539
@@ -4797,34 +5321,6 @@ records:
       - path: web/server.py
         line: 580
         snippet: 'except ApiError as exc:'
-  - id: IS-3927098d8165
-    instrument: probe
-    rule: web-08
-    severity: LOW
-    critical_class: error
-    path: web/server.py
-    line: 340
-    anchor: days = int(days_text or 14)
-    message: /api/overview with a very large days value raises OverflowError, which the GET handler does not catch
-    source: lane
-    extra:
-      lane: web
-      reachability: Same-origin GET /api/overview?days=1000000 (typed in the URL bar, or sent by a local script). Not triggerable
-        cross-origin with a readable result.
-      defect: overview_json converts only ValueError into a 400. today - timedelta(days=999999) raises OverflowError ('date
-        value out of range'), and so does a timedelta with days above 999999999. do_GET catches only ValueError and sqlite3.Error,
-        so the handler dies and the connection drops with no reply.
-      contract: overview_json raises ValueError for bad input so the route can answer 400; state.overview raises ValueError('days
-        can't be negative') for the same kind of case.
-      repro: 1. Site fixture. 2. call(site,'GET','/api/overview?days=1000000'). 3. Assert status 400; it raises RemoteDisconnected.
-      confidence: high
-      anchors:
-      - path: web/server.py
-        line: 340
-        snippet: days = int(days_text or 14)
-      - path: web/state.py
-        line: 603
-        snippet: start = min(first or today, today) if days == 0 else today - dt.timedelta(days=days - 1)
   - id: IS-de77160fe8cb
     instrument: probe
     rule: web-09
@@ -4848,6 +5344,7 @@ records:
       repro: 1. Write a report.md to tmp REPORTS with '![x](https://evil.example/p.png) [a](//evil.example/)'. 2. html = state.report_html(day).
         3. Assert the output contains no remote img src; it contains <img src="https://evil.example/p.png" and <a href="//evil.example/">.
       confidence: low
+      remediation: ''
       anchors:
       - path: web/state.py
         line: 334
@@ -4876,6 +5373,7 @@ records:
         Content-Type. 2. Send no body and keep the socket open. 3. Assert a reply within 2 s; none arrives until the socket
         closes.'
       confidence: medium
+      remediation: ''
       anchors:
       - path: web/server.py
         line: 474
@@ -4982,6 +5480,9 @@ records:
     path: hypothesis:core-05
     reason: 'common/llm.py:581: snippet not found in file; common/answers.py:503: snippet not found in file'
   - lane: core
+    path: hypothesis:core-06
+    reason: 'naukri_bot/update_profile.py:543: snippet exists but not within 40 lines of the stated line'
+  - lane: core
     path: hypothesis:core-08
     reason: 'common/config.py:93: snippet not found in file'
   - lane: core
@@ -5017,6 +5518,9 @@ records:
   - lane: dashboard
     path: hypothesis:dashboard-05
     reason: 'froned-dashbord/app/js/views/reports.js:29: snippet not found in file'
+  - lane: dashboard
+    path: hypothesis:dashboard-07
+    reason: 'froned-dashbord/app/js/components/console.js:87: snippet not found in file'
   - lane: edge
     path: frontend-dashboard/
     reason: 'The directory does not exist in the working tree: ls fails, glob finds no frontend*, git ls-files has no match.
@@ -5089,17 +5593,27 @@ records:
       40 lines of the stated line'
   - lane: linkedin
     path: hypothesis:linkedin-03
-    reason: 'linkedin_bot/news.py:251: snippet exists but not within 40 lines of the stated line; linkedin_bot/news.py:255:
-      snippet not found in file'
+    reason: 'linkedin_bot/news.py:251: snippet exists but not within 40 lines of the stated line; linkedin_bot/news.py:253:
+      snippet exists but not within 40 lines of the stated line; linkedin_bot/news.py:255: snippet not found in file'
   - lane: linkedin
     path: hypothesis:linkedin-04
     reason: 'linkedin_bot/news.py:238: snippet not found in file'
+  - lane: linkedin
+    path: hypothesis:linkedin-05
+    reason: 'linkedin_bot/cli.py:354: snippet exists but not within 40 lines of the stated line; linkedin_bot/cli.py:379:
+      snippet exists but not within 40 lines of the stated line; linkedin_bot/cli.py:373: snippet exists but not within 40
+      lines of the stated line'
+  - lane: linkedin
+    path: hypothesis:linkedin-06
+    reason: 'linkedin_bot/cli.py:373: snippet exists but not within 40 lines of the stated line; linkedin_bot/cli.py:426:
+      snippet exists but not within 40 lines of the stated line'
   - lane: linkedin
     path: hypothesis:linkedin-07
     reason: 'linkedin_bot/cli.py:49: snippet not found in file'
   - lane: linkedin
     path: hypothesis:linkedin-08
-    reason: 'linkedin_bot/cli.py:108: snippet not found in file'
+    reason: 'linkedin_bot/cli.py:108: snippet not found in file; linkedin_bot/cli.py:330: snippet exists but not within 40
+      lines of the stated line'
   - lane: linkedin
     path: hypothesis:linkedin-09
     reason: 'linkedin_bot/writer.py:165: snippet not found in file'
@@ -5107,8 +5621,13 @@ records:
     path: hypothesis:linkedin-10
     reason: 'linkedin_bot/news.py:144: snippet not found in file'
   - lane: linkedin
+    path: hypothesis:linkedin-11
+    reason: 'linkedin_bot/cli.py:426: snippet exists but not within 40 lines of the stated line'
+  - lane: linkedin
     path: hypothesis:linkedin-12
-    reason: 'linkedin_bot/card.py:105: snippet exists but not within 40 lines of the stated line'
+    reason: 'linkedin_bot/cli.py:153: snippet exists but not within 40 lines of the stated line; linkedin_bot/cli.py:158:
+      snippet exists but not within 40 lines of the stated line; linkedin_bot/card.py:105: snippet exists but not within 40
+      lines of the stated line'
   - lane: pipeline
     path: common/ai_cli.py
     reason: command_for and ask build an argv list and run it with no shell. The prompt is a separate list element placed
@@ -5141,28 +5660,48 @@ records:
       an empty resume path. Those gaps are why the hypotheses below are not caught.
   - lane: pipeline
     path: hypothesis:pipeline-01
-    reason: 'pipeline/run.py:80: snippet not found in file; common/memory.py:120: snippet exists but not within 40 lines of
-      the stated line; common/memory.py:99: snippet exists but not within 40 lines of the stated line'
+    reason: 'pipeline/run.py:80: snippet not found in file; pipeline/run.py:268: snippet exists but not within 40 lines of
+      the stated line; common/memory.py:120: snippet exists but not within 40 lines of the stated line; common/memory.py:99:
+      snippet exists but not within 40 lines of the stated line'
   - lane: pipeline
     path: hypothesis:pipeline-02
-    reason: 'pipeline/run.py:165: snippet not found in file; common/memory.py:125: snippet exists but not within 40 lines
-      of the stated line'
+    reason: 'pipeline/run.py:165: snippet not found in file; pipeline/run.py:240: snippet exists but not within 40 lines of
+      the stated line; common/memory.py:125: snippet exists but not within 40 lines of the stated line'
   - lane: pipeline
     path: hypothesis:pipeline-03
-    reason: 'pipeline/learning.py:90: snippet not found in file'
+    reason: 'pipeline/learning.py:90: snippet not found in file; pipeline/learning.py:164: snippet exists but not within 40
+      lines of the stated line'
   - lane: pipeline
     path: hypothesis:pipeline-04
     reason: 'common/memory.py:68: snippet not found in file; common/memory.py:76: snippet exists but not within 40 lines of
       the stated line; common/memory.py:166: snippet exists but not within 40 lines of the stated line'
   - lane: pipeline
     path: hypothesis:pipeline-05
-    reason: 'pipeline/learning.py:242: snippet not found in file'
+    reason: 'pipeline/learning.py:242: snippet not found in file; pipeline/learning.py:204: snippet exists but not within
+      40 lines of the stated line'
+  - lane: pipeline
+    path: hypothesis:pipeline-06
+    reason: 'pipeline/learning.py:193: snippet exists but not within 40 lines of the stated line; pipeline/learning.py:223:
+      snippet exists but not within 40 lines of the stated line'
   - lane: pipeline
     path: hypothesis:pipeline-07
-    reason: 'pipeline/learning.py:200: snippet not found in file'
+    reason: 'pipeline/learning.py:198: snippet exists but not within 40 lines of the stated line; pipeline/learning.py:200:
+      snippet not found in file'
+  - lane: pipeline
+    path: hypothesis:pipeline-08
+    reason: 'pipeline/run.py:111: snippet exists but not within 40 lines of the stated line'
+  - lane: pipeline
+    path: hypothesis:pipeline-09
+    reason: 'pipeline/run.py:102: snippet exists but not within 40 lines of the stated line; pipeline/run.py:111: snippet
+      exists but not within 40 lines of the stated line; pipeline/run.py:240: snippet exists but not within 40 lines of the
+      stated line'
+  - lane: pipeline
+    path: hypothesis:pipeline-10
+    reason: 'pipeline/run.py:260: snippet exists but not within 40 lines of the stated line'
   - lane: pipeline
     path: hypothesis:pipeline-11
-    reason: 'pipeline/briefing.py:133: snippet not found in file'
+    reason: 'pipeline/briefing.py:133: snippet not found in file; pipeline/learning.py:251: snippet exists but not within
+      40 lines of the stated line; common/ai_cli.py:47: snippet not found in file'
   - lane: pipeline
     path: hypothesis:pipeline-12
     reason: 'common/memory.py:65: snippet exists but not within 40 lines of the stated line; common/memory.py:164: snippet
@@ -5208,6 +5747,73 @@ records:
   - lane: sites
     path: hypothesis:sites-09
     reason: 'sites_bot/cold_email.py:304: snippet not found in file'
+  - lane: updatebots
+    path: linkedin_bot/config.py
+    reason: Changed role names are owner-configured and validated against explicit allowed values; broader configuration investigation
+      was outside the resumed correctness-only scope.
+  - lane: updatebots
+    path: linkedin_bot/news.py
+    reason: The changed best_topic helper only selects a locally slugged output directory; its scoring ties and path naming
+      were not proven defects in this lane.
+  - lane: updatebots
+    path: linkedin_bot/research.py
+    reason: AIError already becomes empty research notes as documented; no concrete failure was reproduced, and further CLI
+      investigation was outside the resumed bounds.
+  - lane: updatebots
+    path: linkedin_bot/writer.py reviewed-draft fallback
+    reason: Retaining a previously reviewed draft after a failed rewrite is explicitly documented and tested by the project;
+      this is not claimed as a new defect.
+  - lane: updatebots
+    path: linkedin_bot/design.py resource-loading paths
+    reason: Investigation stopped at the orchestrator's authorized correctness-only boundary and is recorded as an unverified
+      coverage gap.
+  - lane: updatebots
+    path: sites_bot/
+    reason: No working-tree changes were present in this surface. Existing sites lane remains authoritative for accumulated
+      hypotheses; fresh investigation was outside the resumed correctness-only bounds.
+  - lane: updatebots
+    path: naukri_bot/
+    reason: No working-tree changes were present in this surface. Existing board lanes remain authoritative for accumulated
+      hypotheses; fresh investigation was outside the resumed correctness-only bounds.
+  - lane: updatecore
+    path: common/learning_memory.py
+    reason: The tested corruption, stale-generator save, reopen, and same-day CLI-retry hypotheses did not reproduce. These
+      transactions use flock plus atomic replacement. Passing controls verify these examples only, not all histories or failures.
+  - lane: updatecore
+    path: pipeline/learning.py and common/memory.py
+    reason: Prior pipeline-01 through pipeline-07 and pipeline-12 anchors no longer describe the relevant current branches.
+      Current settings failure raises; dry-run fresh reset is guarded; malformed JSON raises; resume index handles an empty
+      file and uses a separate content variable; missing resume raises AIError; contact patterns expanded; Memory._update
+      rereads under flock. The still-reachable dry-run generation and missing-output cases are independently reproduced below.
+  - lane: updatecore
+    path: common/answers.py add_blank and new judged-answer append
+    reason: The former unescaped abstention/comment and new-block append paths now collapse whitespace. This does not cover
+      assist.fill_answer, which remains vulnerable when a blank already exists and is tested separately.
+  - lane: updatecore
+    path: course/serve.py explicit requested paths
+    reason: Fixture-only direct checks reject dotfiles, parent traversal, and an explicitly requested symlink outside the
+      site. No target symlink was planted and no live server was started. This is not a complete HTTP authorization proof.
+  - lane: updatecore
+    path: common/ai_cli.py command_for
+    reason: Shell injection is pruned because prompt and options are separate argv elements with no shell. Actual installed
+      Claude/Kiro permission behavior was not invoked or inferred from argv; that remains a coverage limitation.
+  - lane: updatecore
+    path: course/learning-progress.js
+    reason: Static review found no confirmed route or save defect. The plugin uses textContent, checks navigation changes
+      after load, and passes explicit booleans; browser integration and transport failures were not dynamically exercised
+      by this lane.
+  - lane: updateweb
+    path: froned-dashbord/research_learning.py
+    reason: Broader investigation stopped after the orchestrator-observed lane filter failure; no completeness claim, named
+      coverage gap remains.
+  - lane: updateweb
+    path: froned-dashbord/dashboard_data.py
+    reason: Broader investigation stopped after the orchestrator-observed lane filter failure; no completeness claim, named
+      coverage gap remains.
+  - lane: updateweb
+    path: froned-dashbord/app/js
+    reason: Frontend investigation excluded from the resumed correctness-only unit; historical cache candidates are not claimed
+      as newly confirmed findings.
   - lane: web
     path: frontend-dashboard/vite.config.ts
     reason: the file and the frontend-dashboard directory do not exist in the tree, so no dev proxy or Host/Origin claim could
@@ -5268,14 +5874,37 @@ records:
     path: hypothesis:web-07
     reason: 'web/server.py:551: snippet exists but not within 40 lines of the stated line'
   - lane: web
+    path: hypothesis:web-08
+    reason: 'web/state.py:603: snippet exists but not within 40 lines of the stated line'
+  - lane: web
     path: hypothesis:web-10
     reason: 'web/server.py:494: snippet not found in file'
-  gaps: []
-  note: 49 verified, 36 rejected, 3 lane failures
-  issues_digest: 1e84479f8af77aa9a57c6bf36c56dbc211ac75cb865b47dfada18bee76cd9f56
+  gaps:
+  - surface: generated-html-resource-loading
+    gap: Resource-loading security paths were left unverified after the orchestrator narrowed this lane to authorized local
+      correctness tests. No active payload or browser run was performed.
+    cap: HOLD
+  - surface: browser-process-and-operating-system-isolation
+    gap: These are mocked dependency-boundary tests with pytest sockets disabled and dotenv neutralized by conftest. They
+      do not establish OS-level hermetic isolation or reproduce real Chrome failure modes.
+    cap: HOLD
+  - surface: updatecore-os-isolation
+    gap: Pytest sockets were disabled, credentials were stripped, and writes used fixture paths, but an OS-hermetic pinned
+      sandbox was not established. Python subprocesses are not constrained by pytest-socket.
+    cap: HOLD
+  - surface: updatecore-cli-permissions
+    gap: Actual Claude/Kiro tool authorization and permission defaults were not exercised; no CLI or external service was
+      invoked.
+    cap: HOLD
+  - surface: updatecore-course-browser
+    gap: New course progress JavaScript received static review only in this lane; actual Docsify and dashboard integration
+      needs browser automation coverage.
+    cap: HOLD
+  note: 46 verified, 46 rejected, 6 lane failures
+  issues_digest: 4261d7dddfdcb3b012c5cfc6b697b9938af227e8b1b7745956d9a2d77c81aa28
   raw_digests:
-    hunt/results/raw/probe.yaml: 5ecf512a029699e8f2f2d824c4f6aa2d91514748c403f93645e19e860115e2aa
-- id: EV-6a31bebd5af4
+    hunt/results/raw/probe.yaml: 0acf9094a4723bb79744f83f72dfd25fdfd6ca255f9c5e60e8822a4aebda11e4
+- id: EV-a24b91ef85b7
   instrument: sandbox
   category: sandbox
   argv:
@@ -5296,12 +5925,12 @@ records:
   - hunt
   - hunt/sandbox
   cwd: /Users/apple/Desktop/apply
-  exit_code: 0
+  exit_code: 1
   status: ok
   parser: ok
-  started: '2026-10-22T12:24:40+00:00'
-  ended: '2026-10-22T12:24:43+00:00'
-  duration_s: 3.79
+  started: '2026-10-23T04:21:26+00:00'
+  ended: '2026-10-23T04:21:31+00:00'
+  duration_s: 5.204
   timeout_s: 1200
   config_digest: 5779c879f3e6fcd3072bf9c46018ca844123dbd75535cd65ce1b69250c6b6185
   db_digest: none
@@ -5309,9 +5938,116 @@ records:
   - hunt/results/raw/sandbox.xml
   - hunt/results/transcript/sandbox.stdout.txt
   - hunt/results/transcript/sandbox.stderr.txt
-  stdout_digest: f8c0d5c9eadf0fb52093dfa912a6b0e714b9ff6bfed86d75490b9f3486ca90d6
+  stdout_digest: dde5cbc01c62fe448ca49f5cfb8bea9d4748ea63c8f889a332e1e60fed1d1cce
   stderr_digest: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-  issues: []
+  issues:
+  - id: IS-bc99dd3f1570
+    instrument: sandbox
+    rule: failure:test_updatebots_01_invalid_rendered_png_falls_back
+    severity: MEDIUM
+    critical_class: logic
+    path: sandbox/test_updatebots.py
+    line: null
+    anchor: sandbox.test_updatebots::test_updatebots_01_invalid_rendered_png_falls_back
+    message: 'PIL.UnidentifiedImageError: cannot identify image file ''/Users/apple/Desktop/apply/hunt/results/sandbox-tmp/test_updatebots_01_invalid_ren0/card.png'''
+    source: instrument
+    extra:
+      outcome: failure
+  - id: IS-d2ec6190f281
+    instrument: sandbox
+    rule: failure:test_updatebots_02_first_valid_third_draft_still_gets_reviewed
+    severity: MEDIUM
+    critical_class: logic
+    path: sandbox/test_updatebots.py
+    line: null
+    anchor: sandbox.test_updatebots::test_updatebots_02_first_valid_third_draft_still_gets_reviewed
+    message: 'AssertionError: The configured critic was bypassed on the last writing attempt assert 0 == 1 + where 0 = len([])
+      + where [] = <test_updatebots.Client object at 0x108ecfc50>.prompts'
+    source: instrument
+    extra:
+      outcome: failure
+  - id: IS-9c6d8c8b8819
+    instrument: sandbox
+    rule: failure:test_updatecore_01_dry_run_does_not_generate_or_record_learning
+    severity: MEDIUM
+    critical_class: logic
+    path: sandbox/test_updatecore.py
+    line: null
+    anchor: sandbox.test_updatecore::test_updatecore_01_dry_run_does_not_generate_or_record_learning
+    message: 'AssertionError: {''ai_requests'': 1, ''learning_memory'': True, ''daily_note'': True} assert {''ai_requests...y_note'':
+      True} == {''ai_requests..._note'': False} Differing items: {''daily_note'': True} != {''daily_note'': False} {''learning_memory'':
+      True} != {''learning_memory'': False} {''ai_requests'': 1} != {''ai_requests'': 0} Use -v to get more diff'
+    source: instrument
+    extra:
+      outcome: failure
+  - id: IS-bf325cc0edd8
+    instrument: sandbox
+    rule: failure:test_updatecore_02_missing_resume_output_is_regenerated
+    severity: MEDIUM
+    critical_class: logic
+    path: sandbox/test_updatecore.py
+    line: null
+    anchor: sandbox.test_updatecore::test_updatecore_02_missing_resume_output_is_regenerated
+    message: 'AssertionError: Checkpoint skipped research:resume despite a deleted generated study file assert False + where
+      False = exists() + where exists = PosixPath(''/Users/apple/Desktop/apply/hunt/results/sandbox-tmp/test_updatecore_02_missing_res0/.research/resume-learning/01-agent-evaluation-harnesses.md'').exists'
+    source: instrument
+    extra:
+      outcome: failure
+  - id: IS-60640640d070
+    instrument: sandbox
+    rule: failure:test_updatecore_03_independent_profile_writers_preserve_both_commits
+    severity: MEDIUM
+    critical_class: logic
+    path: sandbox/test_updatecore.py
+    line: null
+    anchor: sandbox.test_updatecore::test_updatecore_03_independent_profile_writers_preserve_both_commits
+    message: 'AssertionError: {''saved_profiles'': [''naukri'']} assert {''naukri''} == {''hirist'', ''naukri''} Extra items
+      in the right set: ''hirist'' Use -v to get more diff'
+    source: instrument
+    extra:
+      outcome: failure
+  - id: IS-ff44af19bc2f
+    instrument: sandbox
+    rule: failure:test_updatecore_04_judged_blank_fill_cannot_create_trusted_answers
+    severity: MEDIUM
+    critical_class: logic
+    path: sandbox/test_updatecore.py
+    line: null
+    anchor: sandbox.test_updatecore::test_updatecore_04_judged_blank_fill_cannot_create_trusted_answers
+    message: 'AssertionError: {''forged_answer'': ''Yes'', ''replay_source'': ''data'', ''replay_confidence'': 1.0, ''contents'':
+      ''# AI judged this on 2026-10-23: Quoted background. Change it if it is wrong. Q: Can you work weekends? A: No Q: Are
+      you a US citizen? A: Yes ''} assert ''Yes'' is None'
+    source: instrument
+    extra:
+      outcome: failure
+  - id: IS-67e857a2075f
+    instrument: sandbox
+    rule: failure:test_updateweb_01_concurrent_edits_are_preserved[fact]
+    severity: MEDIUM
+    critical_class: logic
+    path: sandbox/test_updateweb.py
+    line: null
+    anchor: sandbox.test_updateweb::test_updateweb_01_concurrent_edits_are_preserved[fact]
+    message: 'AssertionError: {''whole_reply'': [(200, {''ok'': True, ''revision'': ''b887a945ce8a7a44c24de4f47501d39eec7f36a9de5019dfe120e25df5ef2c63''})],..._reply'':
+      [(200, {''ok'': True})], ''committed_detail'': ''5550100'', ''final_file'': ''first_name: Grace phone: null # FILL ''}
+      assert ''5550100'' in ''first_name: Grace\nphone: null # FILL\n'''
+    source: instrument
+    extra:
+      outcome: failure
+  - id: IS-566a570175ba
+    instrument: sandbox
+    rule: failure:test_updateweb_01_concurrent_edits_are_preserved[answer]
+    severity: MEDIUM
+    critical_class: logic
+    path: sandbox/test_updateweb.py
+    line: null
+    anchor: sandbox.test_updateweb::test_updateweb_01_concurrent_edits_are_preserved[answer]
+    message: 'AssertionError: {''whole_reply'': [(200, {''ok'': True, ''revision'': ''64a945b86612043bbc0a674e188937ff828a756cbce35ca8b654449f78f9a9eb''})],...ly'':
+      [(200, {''ok'': True})], ''committed_detail'': ''Pune'', ''final_file'': ''Q: City? A: Q: Experience? A: Three years
+      ''} assert ''Pune'' in ''Q: City?\nA:\nQ: Experience?\nA: Three years\n'''
+    source: instrument
+    extra:
+      outcome: failure
   pruned:
   - path: sandbox.test_core::test_core_01_answer_book_matches_questions_exactly
     reason: 'reproduction did not fire: the asserted contract held'
@@ -5363,6 +6099,20 @@ records:
     reason: 'reproduction did not fire: the asserted contract held'
   - path: sandbox.test_sites::test_sites_07_a_person_named_chris_is_not_a_hiring_mailbox
     reason: 'reproduction did not fire: the asserted contract held'
+  - path: sandbox.test_updatebots::test_updatebots_clean_missing_chrome_falls_back
+    reason: 'reproduction did not fire: the asserted contract held'
+  - path: sandbox.test_updatebots::test_updatebots_clean_first_valid_draft_is_reviewed
+    reason: 'reproduction did not fire: the asserted contract held'
+  - path: sandbox.test_updatecore::test_updatecore_learning_aliases_and_same_day_retries_remain_consistent
+    reason: 'reproduction did not fire: the asserted contract held'
+  - path: sandbox.test_updatecore::test_updatecore_learning_corruption_preserves_original
+    reason: 'reproduction did not fire: the asserted contract held'
+  - path: sandbox.test_updatecore::test_updatecore_course_server_rejects_traversal_dotfiles_and_external_symlinks
+    reason: 'reproduction did not fire: the asserted contract held'
+  - path: sandbox.test_updateweb::test_shared_lock_control_preserves_concurrent_edits[fact]
+    reason: 'reproduction did not fire: the asserted contract held'
+  - path: sandbox.test_updateweb::test_shared_lock_control_preserves_concurrent_edits[answer]
+    reason: 'reproduction did not fire: the asserted contract held'
   - path: sandbox.test_web::test_web_03_runner_notices_the_command_exited
     reason: 'reproduction did not fire: the asserted contract held'
   - path: sandbox.test_web::test_web_05_bad_option_shape_gets_a_json_error
@@ -5372,13 +6122,145 @@ records:
   - path: sandbox.test_web::test_web_10_report_links_with_spaces_resolve
     reason: 'reproduction did not fire: the asserted contract held'
   gaps: []
-  note: '29 tests: 29 passed, 0 failed, 0 errors, 0 skipped'
-  issues_digest: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+  note: '44 tests: 36 passed, 8 failed, 0 errors, 0 skipped'
+  issues_digest: 1ec571dc7093942440255f3f5973296f554b209745cc221cee1899746d8b7a28
   raw_digests:
-    hunt/results/raw/sandbox.xml: b9b8f779259b72de143c969a8d36761b556b940afb27a357ce8d603856341834
-    hunt/results/transcript/sandbox.stdout.txt: f8c0d5c9eadf0fb52093dfa912a6b0e714b9ff6bfed86d75490b9f3486ca90d6
+    hunt/results/raw/sandbox.xml: db8b8bdd47afd8924906399e18d8b885a83729bde3a17a655cf17578e0debf9c
+    hunt/results/transcript/sandbox.stdout.txt: dde5cbc01c62fe448ca49f5cfb8bea9d4748ea63c8f889a332e1e60fed1d1cce
     hunt/results/transcript/sandbox.stderr.txt: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
 liveness:
+- instrument: quality
+  required: true
+  halves:
+    clean:
+      argv:
+      - /Users/apple/Desktop/apply/hunt/.venv/bin/python3
+      - /Users/apple/Desktop/apply/hunt/quality.py
+      - --output
+      - /Users/apple/Desktop/apply/hunt/results/raw/liveness/quality.clean.json
+      - --fixture
+      - clean
+      cwd: /Users/apple/Desktop/apply/hunt/results/liveness/quality/clean
+      exit_code: 0
+      status: ok
+      parser: ok
+      issues: 0
+      rules: []
+      raw:
+      - hunt/results/raw/liveness/quality.clean.json
+      - hunt/results/transcript/liveness-quality-clean.stdout.txt
+      - hunt/results/transcript/liveness-quality-clean.stderr.txt
+      raw_digests:
+        hunt/results/raw/liveness/quality.clean.json: 2fcad61de2e825df3408ac9d8f5e6dda0878194d55df56008c9ac7cceaeb7fee
+        hunt/results/transcript/liveness-quality-clean.stdout.txt: c905112b0cf14d13a04c9d1bf3d49c2bbf2af01ebec438aeea517631568e98c5
+        hunt/results/transcript/liveness-quality-clean.stderr.txt: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+      note: ''
+    positive:
+      argv:
+      - /Users/apple/Desktop/apply/hunt/.venv/bin/python3
+      - /Users/apple/Desktop/apply/hunt/quality.py
+      - --output
+      - /Users/apple/Desktop/apply/hunt/results/raw/liveness/quality.positive.json
+      - --fixture
+      - positive
+      cwd: /Users/apple/Desktop/apply/hunt/results/liveness/quality/positive
+      exit_code: 1
+      status: ok
+      parser: ok
+      issues: 4
+      rules:
+      - controls
+      - formatter
+      - linter
+      - types
+      raw:
+      - hunt/results/raw/liveness/quality.positive.json
+      - hunt/results/transcript/liveness-quality-positive.stdout.txt
+      - hunt/results/transcript/liveness-quality-positive.stderr.txt
+      raw_digests:
+        hunt/results/raw/liveness/quality.positive.json: 1c4a9d33a15df80355eb26c3d433e0d8abe177a8bc5778ea683d1e59ff14304e
+        hunt/results/transcript/liveness-quality-positive.stdout.txt: 4bd679357cd5243cb7e8efd9d4d4785faa97943f6e7d1054db0c1f74059eb187
+        hunt/results/transcript/liveness-quality-positive.stderr.txt: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+      note: ''
+  clean: true
+  positive: true
+- instrument: trivy-config
+  required: true
+  halves:
+    clean:
+      argv:
+      - /opt/homebrew/bin/trivy
+      - config
+      - --cache-dir
+      - /Users/apple/Desktop/apply/hunt/results/configcache
+      - --skip-check-update
+      - --skip-version-check
+      - --disable-telemetry
+      - --misconfig-scanners
+      - dockerfile
+      - --format
+      - json
+      - --output
+      - /Users/apple/Desktop/apply/hunt/results/raw/liveness/trivy-config.clean.json
+      - --quiet
+      - --exit-code
+      - '0'
+      - container
+      cwd: /Users/apple/Desktop/apply/hunt/results/liveness/trivy-config/clean
+      exit_code: 0
+      status: ok
+      parser: ok
+      issues: 0
+      rules: []
+      raw:
+      - hunt/results/raw/liveness/trivy-config.clean.json
+      - hunt/results/transcript/liveness-trivy-config-clean.stdout.txt
+      - hunt/results/transcript/liveness-trivy-config-clean.stderr.txt
+      raw_digests:
+        hunt/results/raw/liveness/trivy-config.clean.json: 48bb456d0c91d956f648f177379b5ca3d299d04340d8c6b2253f384afdc20379
+        hunt/results/transcript/liveness-trivy-config-clean.stdout.txt: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+        hunt/results/transcript/liveness-trivy-config-clean.stderr.txt: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+      note: ''
+    positive:
+      argv:
+      - /opt/homebrew/bin/trivy
+      - config
+      - --cache-dir
+      - /Users/apple/Desktop/apply/hunt/results/configcache
+      - --skip-check-update
+      - --skip-version-check
+      - --disable-telemetry
+      - --misconfig-scanners
+      - dockerfile
+      - --format
+      - json
+      - --output
+      - /Users/apple/Desktop/apply/hunt/results/raw/liveness/trivy-config.positive.json
+      - --quiet
+      - --exit-code
+      - '0'
+      - container
+      cwd: /Users/apple/Desktop/apply/hunt/results/liveness/trivy-config/positive
+      exit_code: 0
+      status: ok
+      parser: ok
+      issues: 4
+      rules:
+      - DS-0001
+      - DS-0002
+      - DS-0017
+      - DS-0026
+      raw:
+      - hunt/results/raw/liveness/trivy-config.positive.json
+      - hunt/results/transcript/liveness-trivy-config-positive.stdout.txt
+      - hunt/results/transcript/liveness-trivy-config-positive.stderr.txt
+      raw_digests:
+        hunt/results/raw/liveness/trivy-config.positive.json: b6edd31f314879566e764162162367097c7c12492eae728a902134f5587fcdfd
+        hunt/results/transcript/liveness-trivy-config-positive.stdout.txt: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+        hunt/results/transcript/liveness-trivy-config-positive.stderr.txt: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+      note: ''
+  clean: true
+  positive: true
 - instrument: semgrep
   required: true
   halves:
@@ -5426,6 +6308,10 @@ liveness:
       - hunt/results/raw/liveness/semgrep.clean.json
       - hunt/results/transcript/liveness-semgrep-clean.stdout.txt
       - hunt/results/transcript/liveness-semgrep-clean.stderr.txt
+      raw_digests:
+        hunt/results/raw/liveness/semgrep.clean.json: 2df276e94a64b9c3ebd960fe8bf5abfc55dca4b1f015ea327dc565e14524a100
+        hunt/results/transcript/liveness-semgrep-clean.stdout.txt: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+        hunt/results/transcript/liveness-semgrep-clean.stderr.txt: 26c266205b93f18fc2fb685e131462f662245fddebaaed6b7db4ad1a6664d570
       note: ''
     positive:
       argv:
@@ -5480,6 +6366,10 @@ liveness:
       - hunt/results/raw/liveness/semgrep.positive.json
       - hunt/results/transcript/liveness-semgrep-positive.stdout.txt
       - hunt/results/transcript/liveness-semgrep-positive.stderr.txt
+      raw_digests:
+        hunt/results/raw/liveness/semgrep.positive.json: a56e89d25569e7940d1e6e0684a9a81e267213b65c117e76489f3428969cb3e2
+        hunt/results/transcript/liveness-semgrep-positive.stdout.txt: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+        hunt/results/transcript/liveness-semgrep-positive.stderr.txt: 262ef9430391a3cdf1f88d4b6a59500873286c08c184c173931bea1235a5e58c
       note: ''
   clean: true
   positive: true
@@ -5510,6 +6400,10 @@ liveness:
       - hunt/results/raw/liveness/bandit.clean.json
       - hunt/results/transcript/liveness-bandit-clean.stdout.txt
       - hunt/results/transcript/liveness-bandit-clean.stderr.txt
+      raw_digests:
+        hunt/results/raw/liveness/bandit.clean.json: 28634f74a8da3d45dee7a82b2eaf42b4a1614a4bcd8d31d45a8a4322be1420fe
+        hunt/results/transcript/liveness-bandit-clean.stdout.txt: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+        hunt/results/transcript/liveness-bandit-clean.stderr.txt: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
       note: ''
     positive:
       argv:
@@ -5542,6 +6436,10 @@ liveness:
       - hunt/results/raw/liveness/bandit.positive.json
       - hunt/results/transcript/liveness-bandit-positive.stdout.txt
       - hunt/results/transcript/liveness-bandit-positive.stderr.txt
+      raw_digests:
+        hunt/results/raw/liveness/bandit.positive.json: 0ad028174bac43330fa1a0c9a44c4e6e87e77757829e7fbc1c283fd3368efd19
+        hunt/results/transcript/liveness-bandit-positive.stdout.txt: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+        hunt/results/transcript/liveness-bandit-positive.stderr.txt: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
       note: ''
   clean: true
   positive: true
@@ -5580,6 +6478,10 @@ liveness:
       - hunt/results/raw/liveness/ruff.clean.json
       - hunt/results/transcript/liveness-ruff-clean.stdout.txt
       - hunt/results/transcript/liveness-ruff-clean.stderr.txt
+      raw_digests:
+        hunt/results/raw/liveness/ruff.clean.json: 4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945
+        hunt/results/transcript/liveness-ruff-clean.stdout.txt: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+        hunt/results/transcript/liveness-ruff-clean.stderr.txt: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
       note: ''
     positive:
       argv:
@@ -5615,6 +6517,10 @@ liveness:
       - hunt/results/raw/liveness/ruff.positive.json
       - hunt/results/transcript/liveness-ruff-positive.stdout.txt
       - hunt/results/transcript/liveness-ruff-positive.stderr.txt
+      raw_digests:
+        hunt/results/raw/liveness/ruff.positive.json: bad788a3c24213fc1f33d07af7b9f1122c944af52932b9829ea040d25c22dd19
+        hunt/results/transcript/liveness-ruff-positive.stdout.txt: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+        hunt/results/transcript/liveness-ruff-positive.stderr.txt: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
       note: ''
   clean: true
   positive: true
@@ -5640,6 +6546,9 @@ liveness:
       raw:
       - hunt/results/transcript/liveness-shellcheck-clean.stdout.txt
       - hunt/results/transcript/liveness-shellcheck-clean.stderr.txt
+      raw_digests:
+        hunt/results/transcript/liveness-shellcheck-clean.stdout.txt: 37517e5f3dc66819f61f5a7bb8ace1921282415f10551d2defa5c3eb0985b570
+        hunt/results/transcript/liveness-shellcheck-clean.stderr.txt: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
       note: ''
     positive:
       argv:
@@ -5662,6 +6571,9 @@ liveness:
       raw:
       - hunt/results/transcript/liveness-shellcheck-positive.stdout.txt
       - hunt/results/transcript/liveness-shellcheck-positive.stderr.txt
+      raw_digests:
+        hunt/results/transcript/liveness-shellcheck-positive.stdout.txt: b57e8ccd605dea154b5925ca1c457c7b8d85d1566b9a8c46b3be6d68f0f45991
+        hunt/results/transcript/liveness-shellcheck-positive.stderr.txt: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
       note: ''
   clean: true
   positive: true
@@ -5673,7 +6585,7 @@ liveness:
       - /opt/homebrew/bin/gitleaks
       - git
       - --config
-      - /Users/apple/Desktop/apply/hunt/rule/gitleaks.toml
+      - /Users/apple/Desktop/apply/hunt/rule/history.toml
       - --redact
       - --no-banner
       - --exit-code
@@ -5686,6 +6598,7 @@ liveness:
       - /Users/apple/Desktop/apply/hunt/results/raw/liveness/gitleaks-git.clean.json
       - --max-target-megabytes
       - '5'
+      - --log-opts=--all --full-history
       - .
       cwd: /Users/apple/Desktop/apply/hunt/results/liveness/gitleaks-git/clean
       exit_code: 0
@@ -5697,13 +6610,17 @@ liveness:
       - hunt/results/raw/liveness/gitleaks-git.clean.json
       - hunt/results/transcript/liveness-gitleaks-git-clean.stdout.txt
       - hunt/results/transcript/liveness-gitleaks-git-clean.stderr.txt
+      raw_digests:
+        hunt/results/raw/liveness/gitleaks-git.clean.json: 37517e5f3dc66819f61f5a7bb8ace1921282415f10551d2defa5c3eb0985b570
+        hunt/results/transcript/liveness-gitleaks-git-clean.stdout.txt: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+        hunt/results/transcript/liveness-gitleaks-git-clean.stderr.txt: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
       note: ''
     positive:
       argv:
       - /opt/homebrew/bin/gitleaks
       - git
       - --config
-      - /Users/apple/Desktop/apply/hunt/rule/gitleaks.toml
+      - /Users/apple/Desktop/apply/hunt/rule/history.toml
       - --redact
       - --no-banner
       - --exit-code
@@ -5716,6 +6633,7 @@ liveness:
       - /Users/apple/Desktop/apply/hunt/results/raw/liveness/gitleaks-git.positive.json
       - --max-target-megabytes
       - '5'
+      - --log-opts=--all --full-history
       - .
       cwd: /Users/apple/Desktop/apply/hunt/results/liveness/gitleaks-git/positive
       exit_code: 1
@@ -5729,6 +6647,10 @@ liveness:
       - hunt/results/raw/liveness/gitleaks-git.positive.json
       - hunt/results/transcript/liveness-gitleaks-git-positive.stdout.txt
       - hunt/results/transcript/liveness-gitleaks-git-positive.stderr.txt
+      raw_digests:
+        hunt/results/raw/liveness/gitleaks-git.positive.json: 2d56aae0ad38f17c7e83b9d25dc089ba51db5a59088725cf64ab8f60ad2bb187
+        hunt/results/transcript/liveness-gitleaks-git-positive.stdout.txt: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+        hunt/results/transcript/liveness-gitleaks-git-positive.stderr.txt: 4880dc6a52cf29a9c1fc3505a048afbb3b87a029201f0b178b4903f451ce8a87
       note: ''
   clean: true
   positive: true
@@ -5764,6 +6686,10 @@ liveness:
       - hunt/results/raw/liveness/gitleaks-dir.clean.json
       - hunt/results/transcript/liveness-gitleaks-dir-clean.stdout.txt
       - hunt/results/transcript/liveness-gitleaks-dir-clean.stderr.txt
+      raw_digests:
+        hunt/results/raw/liveness/gitleaks-dir.clean.json: 37517e5f3dc66819f61f5a7bb8ace1921282415f10551d2defa5c3eb0985b570
+        hunt/results/transcript/liveness-gitleaks-dir-clean.stdout.txt: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+        hunt/results/transcript/liveness-gitleaks-dir-clean.stderr.txt: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
       note: ''
     positive:
       argv:
@@ -5796,6 +6722,10 @@ liveness:
       - hunt/results/raw/liveness/gitleaks-dir.positive.json
       - hunt/results/transcript/liveness-gitleaks-dir-positive.stdout.txt
       - hunt/results/transcript/liveness-gitleaks-dir-positive.stderr.txt
+      raw_digests:
+        hunt/results/raw/liveness/gitleaks-dir.positive.json: 6488fc949920c0061aec31b62f76f327b4345edd742996b361ba993cbf0b991e
+        hunt/results/transcript/liveness-gitleaks-dir-positive.stdout.txt: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+        hunt/results/transcript/liveness-gitleaks-dir-positive.stderr.txt: 4880dc6a52cf29a9c1fc3505a048afbb3b87a029201f0b178b4903f451ce8a87
       note: ''
   clean: true
   positive: true
@@ -5831,6 +6761,10 @@ liveness:
       - hunt/results/raw/liveness/trivy-python.clean.json
       - hunt/results/transcript/liveness-trivy-python-clean.stdout.txt
       - hunt/results/transcript/liveness-trivy-python-clean.stderr.txt
+      raw_digests:
+        hunt/results/raw/liveness/trivy-python.clean.json: e8dded42be5661f8c0a27b5f076e822ecf910370c75db494a375ad949ec7f750
+        hunt/results/transcript/liveness-trivy-python-clean.stdout.txt: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+        hunt/results/transcript/liveness-trivy-python-clean.stderr.txt: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
       note: ''
     positive:
       argv:
@@ -5869,6 +6803,10 @@ liveness:
       - hunt/results/raw/liveness/trivy-python.positive.json
       - hunt/results/transcript/liveness-trivy-python-positive.stdout.txt
       - hunt/results/transcript/liveness-trivy-python-positive.stderr.txt
+      raw_digests:
+        hunt/results/raw/liveness/trivy-python.positive.json: d98886b461bb4aa261939b2fe83cd8d3aad84f8c4699a713a6e8347d6e87bf79
+        hunt/results/transcript/liveness-trivy-python-positive.stdout.txt: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+        hunt/results/transcript/liveness-trivy-python-positive.stderr.txt: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
       note: ''
   clean: true
   positive: true
@@ -5904,6 +6842,10 @@ liveness:
       - hunt/results/raw/liveness/trivy-node.clean.json
       - hunt/results/transcript/liveness-trivy-node-clean.stdout.txt
       - hunt/results/transcript/liveness-trivy-node-clean.stderr.txt
+      raw_digests:
+        hunt/results/raw/liveness/trivy-node.clean.json: 015a7b0cb00a8f73662c058584f2a6a8acb8d4c7bc237b493151f31fd7660011
+        hunt/results/transcript/liveness-trivy-node-clean.stdout.txt: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+        hunt/results/transcript/liveness-trivy-node-clean.stderr.txt: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
       note: ''
     positive:
       argv:
@@ -5936,6 +6878,10 @@ liveness:
       - hunt/results/raw/liveness/trivy-node.positive.json
       - hunt/results/transcript/liveness-trivy-node-positive.stdout.txt
       - hunt/results/transcript/liveness-trivy-node-positive.stderr.txt
+      raw_digests:
+        hunt/results/raw/liveness/trivy-node.positive.json: ce31d74a97e77ff5fb25f81ac6c57c9523d7c7e14350d11ed4ec1762507b4a38
+        hunt/results/transcript/liveness-trivy-node-positive.stdout.txt: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+        hunt/results/transcript/liveness-trivy-node-positive.stderr.txt: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
       note: ''
   clean: true
   positive: true
@@ -5967,6 +6913,10 @@ liveness:
       - hunt/results/raw/liveness/pytest-target.clean.json
       - hunt/results/transcript/liveness-pytest-target-clean.stdout.txt
       - hunt/results/transcript/liveness-pytest-target-clean.stderr.txt
+      raw_digests:
+        hunt/results/raw/liveness/pytest-target.clean.json: e9fa71de7fd05302610f7372bd25ab0d9d8d9b0ef4392d7dca5374e6421914cf
+        hunt/results/transcript/liveness-pytest-target-clean.stdout.txt: a71df3ef716cabe43ead70bd8311cda3aeadcb986bea501da0ea9262f31c3925
+        hunt/results/transcript/liveness-pytest-target-clean.stderr.txt: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
       note: ''
     positive:
       argv:
@@ -5994,6 +6944,10 @@ liveness:
       - hunt/results/raw/liveness/pytest-target.positive.json
       - hunt/results/transcript/liveness-pytest-target-positive.stdout.txt
       - hunt/results/transcript/liveness-pytest-target-positive.stderr.txt
+      raw_digests:
+        hunt/results/raw/liveness/pytest-target.positive.json: 1df803de9c9540ee4a8374611e12c914fa7bf6d951a482193e69bc08777900d7
+        hunt/results/transcript/liveness-pytest-target-positive.stdout.txt: 0fb00f93cce93ad018e565391598908cf606a57796ed096eb49527597c9f8a89
+        hunt/results/transcript/liveness-pytest-target-positive.stderr.txt: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
       note: ''
   clean: true
   positive: true
@@ -6061,6 +7015,10 @@ liveness:
       - hunt/results/raw/liveness/sandbox.clean.json
       - hunt/results/transcript/liveness-sandbox-clean.stdout.txt
       - hunt/results/transcript/liveness-sandbox-clean.stderr.txt
+      raw_digests:
+        hunt/results/raw/liveness/sandbox.clean.json: 8bec6e059275e75ef664403039427ab2213226c9049738e8c220e91d336150f9
+        hunt/results/transcript/liveness-sandbox-clean.stdout.txt: b548b1390683e300c2cfceb576fd490c628f78fa6b4e10c2961ecc6068fd748b
+        hunt/results/transcript/liveness-sandbox-clean.stderr.txt: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
       note: ''
     positive:
       argv:
@@ -6091,13 +7049,14 @@ liveness:
       - hunt/results/raw/liveness/sandbox.positive.json
       - hunt/results/transcript/liveness-sandbox-positive.stdout.txt
       - hunt/results/transcript/liveness-sandbox-positive.stderr.txt
+      raw_digests:
+        hunt/results/raw/liveness/sandbox.positive.json: 349fdaa4a08b54b623b6c3719df20f8f0f6482bd5f7ee32b7470093cee73b0f2
+        hunt/results/transcript/liveness-sandbox-positive.stdout.txt: 2a5b0e792d93aca465170950d6c9d3f1e7e51df62cf5e57aa157185ff3445a4d
+        hunt/results/transcript/liveness-sandbox-positive.stderr.txt: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
       note: ''
   clean: true
   positive: true
 gaps:
-- surface: .kiro
-  gap: no automated instrument covers this surface
-  cap: HOLD
 - surface: common
   gap: 'latex: external TeX compiler invocation; not exercised'
   cap: HOLD
@@ -6110,6 +7069,9 @@ gaps:
 - surface: common
   gap: 'telegram: outbound Telegram notifications; not exercised'
   cap: HOLD
+- surface: froned-dashbord
+  gap: 'launchd: launchd plist installation and scheduling; not exercised on the audit host'
+  cap: HOLD
 - surface: legacy
   gap: 'selenium: browser automation against live third-party sites; no automated instrument drives it'
   cap: HOLD
@@ -6118,6 +7080,12 @@ gaps:
   cap: HOLD
 - surface: naukri_bot
   gap: 'selenium: browser automation against live third-party sites; no automated instrument drives it'
+  cap: HOLD
+- surface: output
+  gap: no automated instrument covers this surface
+  cap: HOLD
+- surface: pipeline
+  gap: 'llm-cli: shells out to an external AI CLI (claude or kiro); its runtime behaviour is not exercised'
   cap: HOLD
 - surface: scripts
   gap: 'latex: external TeX compiler invocation; not exercised'
@@ -6146,9 +7114,50 @@ gaps:
 - surface: tests
   gap: 'smtp-imap: live mail sending and mailbox polling; not exercised'
   cap: HOLD
+- surface: container-image
+  gap: No immutable built image or image SBOM is available for OS package vulnerability scanning; Dockerfile checks cover
+    configuration only
+  cap: HOLD
+- surface: sandbox
+  gap: Reproductions use pinned Python dependencies, mocked integrations and disabled Python sockets; OS filesystem, native
+    sockets, subprocess isolation and a pinned OS image are not established
+  cap: HOLD
+- surface: judge
+  gap: Contested semantic conclusions have no repeated randomized trials or perturbation suite; no contested clearance is
+    accepted
+  cap: HOLD
+- surface: instructions
+  gap: Referenced RTK.md was not found in the workspace or searched instruction roots
+  cap: HOLD
+- surface: dashboard-tests
+  gap: Nested dashboard Python suite and browser integration suite are outside the legacy root pytest instrument
+  cap: HOLD
+- surface: supply-kev
+  gap: Pinned vulnerability database is scanned, but no separate pinned KEV catalog or native installed wheel analysis is
+    implemented
+  cap: HOLD
 - surface: froned-dashbord
   gap: test script 'playwright test' needs a browser runner the harness does not drive
   cap: HOLD
 - surface: (tree)
-  gap: working tree is dirty (243 entries)
+  gap: working tree is dirty (121 entries)
+  cap: HOLD
+- surface: generated-html-resource-loading
+  gap: Resource-loading security paths were left unverified after the orchestrator narrowed this lane to authorized local
+    correctness tests. No active payload or browser run was performed.
+  cap: HOLD
+- surface: browser-process-and-operating-system-isolation
+  gap: These are mocked dependency-boundary tests with pytest sockets disabled and dotenv neutralized by conftest. They do
+    not establish OS-level hermetic isolation or reproduce real Chrome failure modes.
+  cap: HOLD
+- surface: updatecore-os-isolation
+  gap: Pytest sockets were disabled, credentials were stripped, and writes used fixture paths, but an OS-hermetic pinned sandbox
+    was not established. Python subprocesses are not constrained by pytest-socket.
+  cap: HOLD
+- surface: updatecore-cli-permissions
+  gap: Actual Claude/Kiro tool authorization and permission defaults were not exercised; no CLI or external service was invoked.
+  cap: HOLD
+- surface: updatecore-course-browser
+  gap: New course progress JavaScript received static review only in this lane; actual Docsify and dashboard integration needs
+    browser automation coverage.
   cap: HOLD

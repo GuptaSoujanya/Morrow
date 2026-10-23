@@ -438,6 +438,23 @@ def parse_trivy(raw: Path | None, stdout: str, root: Path | None, remap: dict[st
         if not isinstance(result, dict):
             continue
         target = _remap(str(result.get("Target", "")), remap)
+        for config in result.get("Misconfigurations") or []:
+            if not isinstance(config, dict) or config.get("Status") != "FAIL":
+                continue
+            cause = config.get("CauseMetadata") or {}
+            issues.append(
+                _issue(
+                    "trivy",
+                    str(config.get("ID", "misconfig")),
+                    floor_severity(config.get("Severity")),
+                    "supply",
+                    target,
+                    cause.get("StartLine"),
+                    str(config.get("Title") or config.get("ID")),
+                    str(config.get("Message") or config.get("Description") or ""),
+                    {"resolution": config.get("Resolution"), "cause": cause},
+                )
+            )
         for vuln in result.get("Vulnerabilities") or []:
             if not isinstance(vuln, dict):
                 continue
@@ -636,6 +653,29 @@ def parse(
     remap: dict[str, str] | None = None,
 ) -> Parsed:
     """Dispatch on instrument name. Internal instruments return parser status `none`."""
+    if instrument == "quality":
+        try:
+            doc = _load_json(raw, stdout)
+        except ValueError:
+            return "failed", []
+        if not isinstance(doc, dict) or len(doc.get("checks", [])) != 4:
+            return "failed", []
+        issues = [
+            _issue(
+                "quality",
+                str(c["name"]),
+                "MEDIUM",
+                "logic",
+                "hunt/quality.py",
+                None,
+                str(c["name"]),
+                f"Harness {c['name']} failed with exit {c['exit_code']}",
+                c,
+            )
+            for c in doc["checks"]
+            if c.get("exit_code") != 0
+        ]
+        return "ok", issues
     if instrument == "semgrep":
         return parse_semgrep(raw, stdout, root, remap)
     if instrument == "bandit":
@@ -650,7 +690,7 @@ def parse(
             issue.instrument = instrument
             issue.id = issue_id(instrument, issue.rule, issue.path, issue.anchor)
         return status, issues
-    if instrument in ("trivy-python", "trivy-node"):
+    if instrument in ("trivy-python", "trivy-node", "trivy-config"):
         status, issues = parse_trivy(raw, stdout, root, remap)
         for issue in issues:
             issue.instrument = instrument

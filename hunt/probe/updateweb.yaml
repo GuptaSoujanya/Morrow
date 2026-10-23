@@ -1,0 +1,73 @@
+lane: updateweb
+lane_run:
+  first_attempt:
+    task: web-update-reachable-surfaces
+    status: failed
+    error: "Orchestrator-observed final status: Agent errored: This content was flagged for possible cybersecurity risk."
+  resumed_attempt:
+    task: cross-endpoint-edit-correctness
+    status: completed
+    bounds: Direct handler calls with temporary files; no HTTP server, network, external account, or source modification.
+    result: Both actual-lock contract checks fail; both shared-lock controls pass.
+    exit_code: 1
+    raw_artifact: hunt/results/updateweb/final.xml
+    limit: Pinned Python dependencies and disabled Python sockets do not establish an OS-hermetic sandbox.
+entry_points:
+- kind: handler
+  name: DashboardHandler.do_POST /api/file
+  path: froned-dashbord/server.py
+  line: 219
+  note: The dashboard file editor submits a whole-file replacement plus a revision hash.
+- kind: handler
+  name: Handler.do_POST /api/fact and /api/answer
+  path: web/server.py
+  line: 609
+  note: DashboardHandler delegates these routes to the base handler, which saves a single pending fact or answer.
+pruned:
+- path: froned-dashbord/research_learning.py
+  reason: Broader investigation stopped after the orchestrator-observed lane filter failure; no completeness claim, named coverage gap remains.
+- path: froned-dashbord/dashboard_data.py
+  reason: Broader investigation stopped after the orchestrator-observed lane filter failure; no completeness claim, named coverage gap remains.
+- path: froned-dashbord/app/js
+  reason: Frontend investigation excluded from the resumed correctness-only unit; historical cache candidates are not claimed as newly confirmed findings.
+hypotheses:
+- key: updateweb-01
+  title: Whole-file saves silently overwrite successful concurrent fact and answer edits
+  critical_class: concurrency
+  severity: MEDIUM
+  anchors:
+  - path: froned-dashbord/server.py
+    line: 228
+    snippet: |
+      with self.server.file_lock:
+          original = path.read_text() if path.exists() else ""
+          if data.get("revision") != revision(original):
+  - path: froned-dashbord/server.py
+    line: 241
+    snippet: os.replace(temp.name, path)
+  - path: froned-dashbord/server.py
+    line: 219
+    snippet: |
+      if urlsplit(self.path).path != "/api/file":
+          return super().do_POST()
+  - path: web/state.py
+    line: 290
+    snippet: |
+      def locked(*args: Any, **kwargs: Any) -> T:
+          with _EDITS:
+              return edit(*args, **kwargs)
+  - path: web/server.py
+    line: 609
+    snippet: |
+      elif route == "/api/answer":
+          state.save_answer(int(data.get("line") or 0), str(data.get("answer", "")), state.ANSWERS)
+          self.json({"ok": True})
+      elif route == "/api/fact":
+          state.save_fact(int(data.get("line") or 0), str(data.get("value", "")), state.PROFILE)
+  reachability: A local dashboard user saves a whole profile or answers file while another tab or client saves a pending fact or answer; both routes operate on the same target file in the threaded dashboard server.
+  defect: The whole-file route checks a revision under DashboardServer.file_lock, but partial edits use the unrelated state._EDITS lock. A partial edit committed after the revision check and before os.replace is overwritten. Both requests return success, so the saved phone number or screening answer disappears without a conflict response.
+  contract: Successful edits to separate fields must be serialized or merged, or a conflicting whole-file replacement must be rejected before it overwrites a successful partial edit.
+  repro: Run hunt/sandbox/test_updateweb.py with sockets disabled. Each parameter invokes the real POST handlers directly with mocked request and response transport. A checkpoint pauses the whole-file write after revision validation; a second thread commits a fact or answer; then the whole-file save resumes. The safety assertion requires the successful partial edit to remain in the final temporary file. Both actual-lock cases fail and both controls using one shared lock pass without modifying target source.
+  reproduction_status: isolated-dynamic-confirmation
+  remediation: Use one common per-file transaction lock across whole-file replacements and partial fact and answer mutations, keeping revision validation and replacement inside that transaction; retain conflict reporting for stale revisions.
+  confidence: high

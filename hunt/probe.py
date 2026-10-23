@@ -72,9 +72,18 @@ def probe(root: Path, probe_dir: Path) -> tuple[list[Issue], list[dict[str, Any]
     """Return (issues, pruned, report) over every lane file."""
     issues: list[Issue] = []
     pruned: list[dict[str, Any]] = []
-    report: dict[str, Any] = {"lanes": [], "verified": 0, "rejected": 0, "lane_failures": 0}
+    report: dict[str, Any] = {"lanes": [], "verified": 0, "rejected": 0, "lane_failures": 0, "gaps": []}
     for path, doc in load_lanes(probe_dir):
         lane = str(doc.get("lane") or path.stem)
+        for gap in doc.get("coverage_gaps") or []:
+            if isinstance(gap, dict):
+                report["gaps"].append(
+                    {
+                        "surface": gap.get("name", lane),
+                        "gap": gap.get("reason", "unverified lane"),
+                        "cap": gap.get("cap", "HOLD"),
+                    }
+                )
         rel = path.relative_to(root).as_posix() if path.is_relative_to(root) else str(path)
         entry: dict[str, Any] = {"lane": lane, "file": rel, "hypotheses": [], "attempts": []}
         if doc.get("invalid"):
@@ -146,6 +155,7 @@ def probe(root: Path, probe_dir: Path) -> tuple[list[Issue], list[dict[str, Any]
                         "contract": str(hyp.get("contract") or ""),
                         "repro": str(hyp.get("repro") or ""),
                         "confidence": str(hyp.get("confidence") or ""),
+                        "remediation": str(hyp.get("remediation") or ""),
                         "anchors": [
                             {"path": a.get("path"), "line": a.get("line"), "snippet": normalize(str(a.get("snippet")))}
                             for a in anchors

@@ -105,7 +105,13 @@ def harness(tmp_path: Path) -> dict[str, Any]:
         record("bandit", []),
     ]
     liveness = [
-        {"instrument": name, "clean": True, "positive": True} for name in ("semgrep", "probe", "ruff", "bandit")
+        {
+            "instrument": name,
+            "clean": True,
+            "positive": True,
+            "halves": {"clean": {"issues": 0, "status": "ok"}, "positive": {"issues": 1, "status": "ok"}},
+        }
+        for name in ("semgrep", "probe", "ruff", "bandit")
     ]
     prov = {
         "schema": PROVENANCE_SCHEMA,

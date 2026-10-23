@@ -87,6 +87,36 @@ class Context:
 
 REGISTRY: tuple[Instrument, ...] = (
     Instrument(
+        name="quality",
+        category="harness",
+        binary="python3",
+        kind="venv",
+        ecosystems=("python",),
+        required=True,
+        critical=("logic",),
+        evidence_class="dynamic",
+        timeout_s=900,
+        database=False,
+        cap_when_absent="BLOCK",
+        exit_ok=(0, 1),
+        description="Formatter, linter, type checker and verifier negative controls with captured child exit codes.",
+    ),
+    Instrument(
+        name="trivy-config",
+        category="container",
+        binary="trivy",
+        kind="external",
+        ecosystems=("container",),
+        required=True,
+        critical=("supply",),
+        evidence_class="static",
+        timeout_s=300,
+        database=True,
+        cap_when_absent="HOLD",
+        exit_ok=(0,),
+        description="Offline Dockerfile checks using the versioned binary's embedded policies in a dedicated cache.",
+    ),
+    Instrument(
         name="semgrep",
         category="sast",
         binary="semgrep",
@@ -470,7 +500,7 @@ def _gitleaks(mode: str, ctx: Context, targets: list[str], raw: Path) -> list[st
         "gitleaks",
         mode,
         "--config",
-        _rel(ctx, ctx.rule / "gitleaks.toml"),
+        _rel(ctx, ctx.rule / ("history.toml" if mode == "git" else "gitleaks.toml")),
         "--redact",
         "--no-banner",
         "--exit-code",
@@ -483,6 +513,7 @@ def _gitleaks(mode: str, ctx: Context, targets: list[str], raw: Path) -> list[st
         _rel(ctx, raw),
         "--max-target-megabytes",
         "5",
+        *(["--log-opts=--all --full-history"] if mode == "git" else []),
         *targets,
     ]
 
@@ -502,6 +533,28 @@ def _trivy(ctx: Context, targets: list[str], raw: Path) -> list[str]:
         "json",
         "--output",
         _rel(ctx, raw),
+        "--quiet",
+        "--exit-code",
+        "0",
+        *targets,
+    ]
+
+
+def _trivy_config(ctx: Context, targets: list[str], raw: Path) -> list[str]:
+    return [
+        "trivy",
+        "config",
+        "--cache-dir",
+        str(ctx.results / "configcache"),
+        "--skip-check-update",
+        "--skip-version-check",
+        "--disable-telemetry",
+        "--misconfig-scanners",
+        "dockerfile",
+        "--format",
+        "json",
+        "--output",
+        str(raw),
         "--quiet",
         "--exit-code",
         "0",
@@ -566,6 +619,14 @@ def _node_test(ctx: Context, targets: list[str], raw: Path) -> list[str]:
 Builder = Callable[[Context, list[str], Path], list[str]]
 
 BUILDERS: dict[str, Builder] = {
+    "quality": lambda ctx, targets, raw: [
+        "python3",
+        str(ctx.hunt / "quality.py"),
+        "--output",
+        str(raw),
+        *(["--fixture", targets[0]] if targets else []),
+    ],
+    "trivy-config": _trivy_config,
     "semgrep": _semgrep,
     "bandit": _bandit,
     "ruff": _ruff,
@@ -584,6 +645,8 @@ BUILDERS: dict[str, Builder] = {
 
 def default_targets(instrument: Instrument, ctx: Context) -> list[str]:
     name = instrument.name
+    if name == "trivy-config":
+        return ["docker"]
     if name == "semgrep":
         extra = [_rel(ctx, p) for key, p in ctx.staged.items() if key in ("notebook", "inline-js")]
         return [*ctx.python_dirs, *ctx.js_targets, *ctx.shell_targets, *extra]
@@ -628,6 +691,7 @@ def environment(instrument: Instrument, ctx: Context, scratch: Path) -> dict[str
     """Child environment: credentials stripped, writable paths redirected, bytecode off."""
     env = {key: value for key, value in os.environ.items() if key not in CREDENTIAL_KEYS}
     env["PYTHONDONTWRITEBYTECODE"] = "1"
+    env["PYTHON_DOTENV_DISABLED"] = "1"
     env["HOUND_TARGET"] = str(ctx.root)
     env["HOUND_SCRATCH"] = str(scratch)
     if instrument.name in ("pytest-target", "sandbox"):
@@ -643,6 +707,9 @@ def environment(instrument: Instrument, ctx: Context, scratch: Path) -> dict[str
     if instrument.name == "semgrep":
         env["SEMGREP_SEND_METRICS"] = "off"
         env["SEMGREP_ENABLE_VERSION_CHECK"] = "0"
+        env["SEMGREP_SETTINGS_FILE"] = str(scratch / "settings.yml")
+        env["SEMGREP_LOG_FILE"] = str(scratch / "semgrep.log")
+        env["XDG_CACHE_HOME"] = str(scratch / "cache")
     if instrument.name.startswith("trivy"):
         env["TRIVY_NO_PROGRESS"] = "true"
     return env

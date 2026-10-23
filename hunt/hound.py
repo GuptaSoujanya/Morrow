@@ -85,7 +85,7 @@ def _config_digest(instrument: Instrument, ctx: Context) -> str:
     if instrument.name == "semgrep":
         return sha256_text(sha256_file(ctx.rule / "semgrep.yaml") + sha256_file(ctx.rule / "custom.yaml"))
     if instrument.name.startswith("gitleaks"):
-        return sha256_file(ctx.rule / "gitleaks.toml")
+        return sha256_file(ctx.rule / ("history.toml" if instrument.name == "gitleaks-git" else "gitleaks.toml"))
     return sha256_text(f"argv-only:{instrument.name}")
 
 
@@ -94,6 +94,8 @@ def _db_digest(instrument: Instrument, prov: dict[str, Any]) -> str:
     tools = prov.get("tools") or {}
     if instrument.name == "semgrep":
         return str((databases.get("semgrep") or {}).get("semgrep_yaml_sha256") or "unpinned")
+    if instrument.name == "trivy-config":
+        return str(((tools.get("trivy") or {}).get("binary") or {}).get("sha256") or "unpinned")
     if instrument.name.startswith("trivy"):
         return str((databases.get("trivy") or {}).get("metadata_sha256") or "unpinned")
     if instrument.name.startswith("gitleaks"):
@@ -163,7 +165,17 @@ def _probe(ctx: Context, instrument: Instrument) -> Record:
         ctx.results / "raw" / "probe.yaml",
         note=f"{report['verified']} verified, {report['rejected']} rejected, {report['lane_failures']} lane failures",
     )
-    return _record(execution, instrument, ctx, "none", issues, _config_digest(instrument, ctx), "none", pruned=pruned)
+    return _record(
+        execution,
+        instrument,
+        ctx,
+        "none",
+        issues,
+        _config_digest(instrument, ctx),
+        "none",
+        pruned=pruned,
+        gaps=report.get("gaps", []),
+    )
 
 
 def _external(ctx: Context, instrument: Instrument, prov: dict[str, Any], remap: dict[str, str]) -> Record:
@@ -184,6 +196,11 @@ def _external(ctx: Context, instrument: Instrument, prov: dict[str, Any], remap:
         gaps.append({"surface": instrument.name, "gap": execution.note, "cap": instrument.cap_when_absent})
     else:
         parser, issues = parse(instrument.name, raw, execution.stdout, ctx.root, remap)
+        if instrument.name == "quality" and raw.exists():
+            payload = json.loads(raw.read_text("utf-8"))
+            execution.note = "; ".join(f"{c['name']} exit={c['exit_code']}" for c in payload.get("checks", []))
+            summary = junit_summary(ctx.results / "quality" / "actual" / "tests.xml")
+            execution.note += f"; controls: {summary['total']} tests, {summary['passed']} passed"
         if instrument.name in ("pytest-target", "sandbox", "node-test"):
             summary = junit_summary(raw)
             execution.note = (
@@ -200,6 +217,10 @@ def _external(ctx: Context, instrument: Instrument, prov: dict[str, Any], remap:
                         pruned.append({"path": case["test"], "reason": f"reproduction skipped: {case['message']}"})
         if execution.status == "timeout":
             gaps.append({"surface": instrument.name, "gap": execution.note, "cap": instrument.cap_when_absent})
+        if instrument.name == "quality" and issues:
+            gaps.append(
+                {"surface": "quality", "gap": "Harness self-verification or negative control failed", "cap": "BLOCK"}
+            )
     return _record(
         execution,
         instrument,
@@ -326,12 +347,35 @@ def run(
         "porcelain_digest": scope_doc["target"]["porcelain_digest"],
     }
     evidence_doc = emit.evidence(target_doc, scope_digest, provenance_digest, records, live, gaps)
+    source_hashes = scope_doc["inventory"]["source_hashes"]
+    changed = [
+        rel
+        for rel, digest in source_hashes.items()
+        if not (target / rel).is_file() or sha256_file(target / rel) != digest
+    ]
+    evidence_doc["integrity"] = {
+        "source_files": len(source_hashes),
+        "changed_during_run": changed,
+        "source_unchanged": not changed,
+        "sandbox": {"dependencies_pinned": True, "os_hermetic": False},
+        "required_instruments": [i.name for i in instruments if i.required],
+    }
+    if changed:
+        evidence_doc["gaps"].append(
+            {
+                "surface": "source-integrity",
+                "cap": "HOLD",
+                "gap": f"Target inputs changed during the scan: {', '.join(changed)}",
+            }
+        )
+        evidence_doc["summary"]["gaps"] = len(evidence_doc["gaps"])
     evidence_digest = emit.write(hunt / "evidence.yaml", evidence_doc)
     phases.append(
         {"phase": "instrument", "status": "complete", "artifact": "hunt/evidence.yaml", "sha256": evidence_digest}
     )
     emit.todo(hunt, evidence_doc, None)
     emit.runbook(hunt, ctx, instruments)
+    emit.review(hunt)
     emit.progress(hunt, phases)
     summary = evidence_doc["summary"]
     typer.echo(f"evidence: {summary['records']} records, {summary['issues']} issues, {summary['by_severity']}")

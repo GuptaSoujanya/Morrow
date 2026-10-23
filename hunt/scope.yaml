@@ -1,36 +1,41 @@
 schema: hound.scope.v1
-generated: '2026-10-22T12:23:01+00:00'
+generated: '2026-10-23T06:40:22+00:00'
 target:
   root: /Users/apple/Desktop/apply
-  sha: 53b21e191b772c4e1ecd14c30cc14e57f6ae9a6e
+  sha: 7bc11e7130017787bf6f378f97e86f1d7f440e95
   branch: main
   remote: https://github.com/GuptaSoujanya/apply-bot.git
   dirty: true
-  dirty_entries: 243
-  porcelain_digest: 22962eeb4d7edccbf64c325f7efc08c5f6ec49824caa62ab71d01e369cf023d9
+  dirty_entries: 103
+  porcelain_digest: 2d1d37b4883f37da0b895a9d834e581508af2df3dab6f6158cb305846a502ad8
 inventory:
-  files: 288
-  tracked: 148
-  untracked: 140
+  files: 333
+  tracked: 312
+  untracked: 21
   by_extension:
-    (none): 4
-    .css: 11
+    (none): 6
+    .avif: 3
+    .css: 16
     .csv: 2
     .example: 1
     .html: 3
     .ipynb: 1
-    .js: 31
-    .json: 9
+    .js: 50
+    .json: 3
     .lock: 1
-    .md: 95
+    .md: 97
     .mjs: 4
-    .py: 110
-    .sh: 7
-    .svg: 1
-    .txt: 4
-    .woff2: 3
+    .py: 121
+    .sh: 9
+    .svg: 2
+    .txt: 5
+    .webp: 3
+    .woff2: 4
     .yaml: 1
+    .yml: 1
   manifests:
+  - docker-compose.yml
+  - docker/Dockerfile
   - froned-dashbord/package-lock.json
   - froned-dashbord/package.json
   - requirements.txt
@@ -55,6 +60,8 @@ inventory:
   - web
   - wellfound_bot
   shell_targets:
+  - docker/entrypoint.sh
+  - docker/login.sh
   - scripts/google_login.sh
   - scripts/install_linkedin_poster.sh
   - scripts/install_profile_updater.sh
@@ -65,30 +72,49 @@ inventory:
   - scripts/web
   js_targets:
   - course/index.html
+  - course/learning-progress.js
   - froned-dashbord/app/index.html
   - froned-dashbord/app/js/api.js
+  - froned-dashbord/app/js/components/avatar-picker.js
   - froned-dashbord/app/js/components/charts.js
   - froned-dashbord/app/js/components/console.js
+  - froned-dashbord/app/js/components/controls.js
   - froned-dashbord/app/js/components/dialog.js
+  - froned-dashbord/app/js/components/identity.js
+  - froned-dashbord/app/js/components/journey.js
   - froned-dashbord/app/js/components/kpi.js
   - froned-dashbord/app/js/components/nav.js
+  - froned-dashbord/app/js/components/pagination.js
   - froned-dashbord/app/js/components/panel.js
+  - froned-dashbord/app/js/components/profile-form.js
+  - froned-dashbord/app/js/components/reader.js
+  - froned-dashbord/app/js/components/resume-preview.js
   - froned-dashbord/app/js/components/segmented.js
   - froned-dashbord/app/js/components/toast.js
+  - froned-dashbord/app/js/dev-tools.js
   - froned-dashbord/app/js/dom.js
   - froned-dashbord/app/js/format.js
   - froned-dashbord/app/js/forms.js
   - froned-dashbord/app/js/icons.js
   - froned-dashbord/app/js/main.js
+  - froned-dashbord/app/js/query-client.js
+  - froned-dashbord/app/js/route-shell.js
   - froned-dashbord/app/js/router.js
   - froned-dashbord/app/js/state.js
+  - froned-dashbord/app/js/url-state.js
   - froned-dashbord/app/js/views/automations.js
+  - froned-dashbord/app/js/views/bots.js
+  - froned-dashbord/app/js/views/data.js
   - froned-dashbord/app/js/views/files.js
   - froned-dashbord/app/js/views/linkedin.js
   - froned-dashbord/app/js/views/naukri.js
+  - froned-dashbord/app/js/views/outreach.js
   - froned-dashbord/app/js/views/overview.js
   - froned-dashbord/app/js/views/profile.js
+  - froned-dashbord/app/js/views/records.js
   - froned-dashbord/app/js/views/reports.js
+  - froned-dashbord/app/js/views/research-desk.js
+  - froned-dashbord/app/js/views/research.js
   - froned-dashbord/app/js/views/resume.js
   - froned-dashbord/app/js/views/setup.js
   - froned-dashbord/app/js/views/sites.js
@@ -102,7 +128,342 @@ inventory:
   - froned-dashbord/tests/dashboard.spec.js
   - web/static/app.js
   - web/static/index.html
+  source_hashes:
+    common/learning_memory.py: 171e75fd4be7ba71b709a98471e4a42acf2cd1f2e8afb0a5d80049f11c3294d0
+    course/learning-progress.js: bb2a632b5d6ea6c4d82b8db3ae1e3f334674a12f437a33e421bba4cf20d5458d
+    froned-dashbord/app/assets/morrow-crew.avif: e1171a8701f0fe164e86eebbb94538f583e60e339589143c4e8d63fa645f3c47
+    froned-dashbord/app/assets/morrow-crew.webp: 02bee94817c59cbd69d7f7df29355e107a048705c3a8fbe89fad4c5d2f6998e7
+    froned-dashbord/app/assets/morrow-mark.svg: 8b855c39dd7dd4ead087278093181309f873fa1f42910e76c3c0d2311d396b4f
+    froned-dashbord/app/fonts/space-grotesk-OFL.txt: 564ce565c371c5e5bbf286006565a7c9aa55a9f56e7ca58d56e05d649dd61a72
+    froned-dashbord/app/fonts/space-grotesk.woff2: 0640890476fc1198ab4de571fb658de443c4d85b66466ec09534a8737ab1ce9d
+    froned-dashbord/app/js/components/pagination.js: 74df9dc01869357a3a86d67ea6ef3157949884b6a7fd43ee1e1f7b3eb1484ead
+    froned-dashbord/app/js/components/profile-form.js: cac88e3bcfd006781838482c64a68d260d3340eed5a576f6e2f35c3d516f287c
+    froned-dashbord/app/js/components/reader.js: dfc6d7d3b9b4d92e86941fe29d415a57a79479e908206d3efcf031ef954862d9
+    froned-dashbord/app/js/components/resume-preview.js: 1a34ebf26dbbae34cdec088e5929364351cb2a601970642ff963292ada43db8c
+    froned-dashbord/app/js/dev-tools.js: 6a909cc8a325004325f9975584a0604f6061a7cb1e1ee579ac059b381e6202fa
+    froned-dashbord/app/js/query-client.js: 19e0738fad1b12fe68021cd68fe46ab189123be8809962e7f3304ded714bf5b6
+    froned-dashbord/app/js/route-shell.js: e15e5c995ff7b5d92993fc07778e1bd1f5041184a30ca25edf29df58c18dbd82
+    froned-dashbord/app/js/url-state.js: 6f725fc2dfc28456e6b957be02441dc722899b399eeeb5d7e90dac33d4a4d60b
+    froned-dashbord/app/js/views/research-desk.js: 977a349e105245dbfc3179700eae233cb419e74c450d788efe973e5222ec9685
+    froned-dashbord/app/styles/morrow.css: d7e1c71b97af49b47d4165323665a0f75c62ae822bb996cd6179efc76f59ef4a
+    froned-dashbord/research_learning.py: 7b05dd4aca8e9f386f7ab52e9fe1d939eb97a6afc87f54f33611a3a80de6753e
+    froned-dashbord/tests/test_learning.py: 2c603c721fe59394d4aad5ae7abbf4750a4bb8f2d0fa0ea70f52d0e1503a6cf1
+    linkedin_bot/design.py: a2f7e494d89e2c28452a60eb1d29d4380b0ddc7b303e756693df85f1a40f9c79
+    linkedin_bot/research.py: 8bf72e66b028bc682db59b4cd669bea0f87effbe05ef732d92564ca881348a46
+    .dockerignore: a5a397fd575566f6b312784c511dd3fddc768e1e309559e30b561f94a8cf5578
+    .env.example: ae36fbefe668c56d05366b42f0a0123423bf84a24a1d357dc65254dbc75c43d7
+    .gitignore: f247ef4ae640d2d73ce16361a976be5d32de49c622c8ab217f648dafb9693649
+    .research/TODAY.md: dd94a6c1d9bbfaf24cf93bd27ca8e61f6d4bc74e3c8e0a6c23fff92ba0847a44
+    .research/companies-to-watch.md: b323462b7983e0ec6bb72e332e87e0fcd8719a4791401ac38cf02fa48194e1a6
+    .research/daily/2026-10-22.md: b6daae98b8c118ab9bef5e6d3d1ebc049be151fe5a82d0d3a0d226081cdbff53
+    .research/daily/2026-10-22/01-goal.md: fd2bc1470e630a4877756b77b970745856fa481248b514e1e9e0f70c9b0d056f
+    .research/daily/2026-10-22/02-system-design.md: 7d8f47f52a6aab5e9c87947f3703bdfbf47ee18840cf5f9944d8458466da9c32
+    .research/daily/2026-10-22/03-papers.md: 95c1771d5963754cde991079c6e2c2053610476e7760e6fbf7289ea4e15c8f9d
+    .research/daily/2026-10-22/04-tech-news.md: ef03cf4a9d0cf79450ae7b9d39bcfb2a11153107acfa619a5930265f70ff4b4a
+    .research/daily/2026-10-22/05-companies.md: ce2035229df413a24c22501323e1e1d9add818b6bcf22763c3ebddffc8575073
+    .research/daily/2026-10-22/README.md: d8ce3e3222dc6f0b4e6d33ae559b0345e042d69018d4eaac2132c8123d734d12
+    .research/learning/README.md: d496686abf33ed7e3982d4321937786a0d72cdcfccce274212a9a057bf8488e3
+    .research/learning/daily/2026-10-22.md: 087b7ee39732e250febbfcee7350d9a05f5daa1307db11886b52cfaae73c563f
+    .research/learning/daily/2026-10-23.md: bab9a14574f8a41d30d0e67fd6eaa857843ca95ab3f83f221e929587dfc8286b
+    .research/learning/progress.json: 4d88d067f79290386543d11daac0b0a8f7078cb31cecd6a61ff6fb9135a60f83
+    .research/learning/today.md: b17371ace54db2ba73e613aea886a29991ead01b9bd5a7c96ea3a50ebc7ebad4
+    .research/learning/weeks/week-01.md: b6fed0a0f87558c6cf35ce7be84cfe730280878042431fc72fb6e37e1b4c690e
+    .research/learning/weeks/week-02.md: fe5e7a47d91e8387cf4d8bb94ff0cc9101c38bd1d7a3e4cc7093babfa0ef39f3
+    .research/learning/weeks/week-03.md: 8f9cb1f37cb06861c08165a7abd421b9caa3b50123a5f5c645155e8f20294bde
+    .research/learning/weeks/week-04.md: bee2476e99181ea9d5a20263075d7badd59520c29fcf17be64aa6d0d966e0a96
+    .research/learning/weeks/week-05.md: 033d38d43b1756f105b9556212501e70972e76d8479204a28591bd553674018b
+    .research/learning/weeks/week-06.md: c45df5e6f3987a6612b8be97ff2dd0d864f561c1983624c874f101e210a44ee7
+    .research/learning/weeks/week-07.md: e919dcc91169dc03660ba0cff2735084f9b64b3912e38550f5fdef56c0e34af1
+    .research/learning/weeks/week-08.md: 6cad6e36c76879ae4b8098c426be129a01e0b49399b40825bafdf4252e2f0304
+    .research/learning/weeks/week-09.md: 1458fdbf7e2b91d2ea4b2e59780243dac25cede29882e6efebfbd0fafb21c4ed
+    .research/learning/weeks/week-10.md: 944b78bbf73072882b9780d3e67ddf13f021fa86b476b904b8ee5a37677a5661
+    .research/learning/weeks/week-11.md: 3a4bf8321947dedca47c6aefbf79bfa0a917ec2c7834945af432ab725f2728b2
+    .research/learning/weeks/week-12.md: 0b01cb725629e7553c2133557f25b3f57a75a028400525486339a20d0ba7eafe
+    .research/learning/weeks/week-13.md: 6c077dfffabeff5799a51b4439c499b01679c7b9415444b323640cbcd297b26b
+    .research/resume-learning/01-agent-evaluation-harnesses.md: 3d941e1bd8be4bd08ff6eab3e50fa4494758365759e46b889e7094cadb98b971
+    .research/resume-learning/02-llm-as-judge.md: 34b805e7d1d81f9de8c183e499e4e479404fa715fee829b04092a9fa9a006415
+    .research/resume-learning/03-inference-gateways-litellm.md: 822605279e3fc5e504edf4d21ad5bd0671e607da54f7a5d5426d0b24adc7e645
+    .research/resume-learning/04-langchain-and-rag.md: 3b4b4fb046b6774c807d2c4104d5df9c7ad6e36c1864a75a812c030071064e4a
+    .research/resume-learning/05-metrics-and-dataset-quality.md: cce477b9439535b0dde8be7cbcc3e4d289a1753fbbb1b818a7f561f39250f006
+    .research/resume-learning/06-fine-tuning-and-prompting-llama.md: b11308a0a9357e964b9fce01f5514a10e30b469dced2abf81ad955de65875acb
+    .research/resume-learning/07-python-fastapi-pytest.md: e9cf78bca7748821a117c896766f2d8c07f4f9cf7493718077aaf43451ecb123
+    .research/resume-learning/08-docker-ci-ec2-gitlfs.md: 0409ebb469a124a350967f346dcdf12d82976ea9e197f199dbe29fac4725b7b7
+    .research/resume-learning/09-react-nextjs-tailwind-shadcn-redux-tanstack.md: 1d6d40b257c62bf61350dc5d58e5ed15c7dbafa94963f8007f9f3b13745124c9
+    .research/resume-learning/10-node-express-websockets-redis-mongodb.md: 9423750dbe3b16f2683be8facd9d24029b2b710457376e855262020f387a0221
+    .research/resume-learning/11-sql-javascript-typescript-cpp.md: b4546a26c0114bb8360ce88f44cf73435f9cc7b8cd22d9c348d59138961c9e92
+    .research/resume-learning/12-whisper-aws.md: 4aa27c149266a07922aacdfd068ae1b2fda05b3f40fe6d94cc7aa6b53099966d
+    .research/resume-learning/README.md: 2a9c1dd99e7130e83b3a8b315a2e482a75d335c51b77cc6a6d5cae047c773783
+    .research/tech-radar.md: 04e49a55b1eba012e16079b25f0c684ec3ec090070ae9f1c478c6fd2cec51165
+    README.md: fd47999cce31d82d899d14ab15bf50247184d0bedb98f85222b14eb51c3b4479
+    common/__init__.py: 0a181543beb724dd6df112fa35255d0ed0c7a35a054272bbcfdb186d92dce4b4
+    common/ai_cli.py: 0b2735ca1f08a810088fbce6fe5687e33512163b56809fab0c157097357d3829
+    common/answers.py: 8faf9aad470d80c8d5eb935733751a52f0f58475f1bee410bbfdc9f61fc4615f
+    common/assist.py: feeda7289c83a189a1b6c5dd7d4a0f69e132946bf72babf9b0aef353ee8b9503
+    common/browser.py: a3ac017d31ec07b0edd45d73cf6749763f82228c2ba37b977e88a0630e9117f1
+    common/config.py: 80ed0eb97179b2377a38f4fd51dbfb0ae2447203b8765cd1ef04caf5636868a2
+    common/ledger.py: 64546b459de65cbf9e29e77c98e02fb95b160a8c54625b1be2e34dc2b6e96f9c
+    common/llm.py: 94e81546cef3d5756425b4d297ec027d52e917145eb0359b92fb1d84fd36bf1d
+    common/memory.py: ddc9a73770d067f7df9e9fe971c99380bf6bd8127452d3cbf26f363d52f9dbab
+    common/models.py: 35c403f29ed6e610f108895b24a45a03d44459786847a6206166c34fd0d80320
+    common/profile.example.yaml: 9b68e40c42598b6461d229508a8471fbc3516f4b671d3b053baa17ad6382d267
+    common/profile.py: 8e990a17bff5bb7aac0f7fc9058530f6ee1972b2401e7089c9008cc64d4fb216
+    common/report.py: 6f09a12efea202bf8e884d989dee955fb1e5406900396582d8e05c43df8e6613
+    common/resume.py: 6798f5e3a53568196ed87a21a3df5ac23d0f8a235dfa8e32748567bc1443ac6f
+    common/run.py: e98cf6cdec460845dd59a7bdc78879b467c7c112df26686528a764962e355cbe
+    course/.nojekyll: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+    course/01-system-design/01-fundamentals.md: 4c38c79fe53439183a4c5377018a8b0b042b0f4d575df4e7c0695c25b30ea046
+    course/01-system-design/02-storage-and-databases.md: 21cc487cb4b047fff34682000e50f981a7d4f345c77faafc2bc2c811a3796b29
+    course/01-system-design/03-caching-and-queues.md: 2cc3e59832afc5d4079f0ee045c65663430b818c356cccf1fdcb2b962a030602
+    course/01-system-design/04-distributed-systems-advanced.md: 890786e8a7033d215780561c61b9009972e41b04626a5dd600f883853153ec3d
+    course/01-system-design/05-scalability-patterns.md: 650e69cda50abf7e111c49c717b1ee5f4662439996cec8390dee39ea9602775a
+    course/01-system-design/06-observability-and-reliability.md: 3a8ac0a52f80d896ccaa0251f3ce652c2e62f239d3cde6e030fecf681094a846
+    course/01-system-design/07-case-studies.md: 756da1ea9e56e19cb3c8f192f854d0096e48d8dd7828ab04c1f5a216188da2d0
+    course/01-system-design/08-interview-framework-and-questions.md: 850cd53631a745399392cc5996317ac36724f02519c80ac8a56402567a97723d
+    course/01-system-design/README.md: 7e8b3ec8765b8104ecdf7105f3effba8a37f7560aa72b151d37ed6a4dfd3af06
+    course/02-dsa/01-arrays-strings-hashing.md: 8cdc2f1e7352322583a2b12bf48c1177c35c35eb7a5516d085dd4f49058811d4
+    course/02-dsa/02-two-pointers-sliding-window.md: 2d899c53b09dfef73a069e08b24361f73e81492c718a43a3a8be29b166fc78a5
+    course/02-dsa/03-stack-queue-linkedlist.md: 4c939e85dba1dfa67527c904ee2c73aaff9cedd2167d7ba8feed1bd49f70ccef
+    course/02-dsa/04-binary-search.md: d1c58555ca80c689f4778725967c23c7f906a6ed1f8cacfdc08b36e8cdee6430
+    course/02-dsa/05-trees-bst.md: f81a3aacc83108cea5670d2845fe2b8f14e826cc4d0593cb232f3b7da866e46d
+    course/02-dsa/06-heaps-priority-queues.md: c733c62ef5a77d3fa25b7dc27b7b2101627f7a30e67e79643bde160da4851a5f
+    course/02-dsa/07-graphs.md: 5d4e7a0c967da3f19a86d36e1630cfd3206260053ca9cff7f8170bb6ba6ae847
+    course/02-dsa/08-backtracking.md: 5cf052f411f5878099b123ebc08e243928bfc9fe1f1db3f4105500b3b3babc13
+    course/02-dsa/09-dynamic-programming.md: 4c026f2e23d751a79a93eec0eb4e711e87d773b500edf5de76754e747d33cbb2
+    course/02-dsa/10-greedy-intervals.md: e7ebc2ea9357b0dc26e87d81186c1b9cad4fa377351b599a527fbf9c190f1b08
+    course/02-dsa/11-tries-bit-manipulation.md: 14616fce747f2fd269bb19af76d3fbf1e9446b61d6f649f57724111dfb1e643a
+    course/02-dsa/12-mock-interview-sets.md: 77e2ebb2cac1bb837fb798ec6fc3c1e38a1c2b31352a9a4bb06be96513290ddd
+    course/02-dsa/README.md: 839f6c5a5f24dc69d7c553b525d12758d211b6ca6d2f161a27068bf3ad8bc4c3
+    course/03-fullstack-mern-kubernetes/01-nodejs-express.md: 7b9144a424af06bcb90f9d6a0a843dfcc87ebde26d835239e8276a71642981b3
+    course/03-fullstack-mern-kubernetes/02-mongodb.md: ab9759733b54d07e099907f952e260f98ba711e926b139b9da394e1806f217ab
+    course/03-fullstack-mern-kubernetes/03-react-advanced.md: 6e95fcd8eea85f085e38329f3d37588787e9ebdff6b222385be469e42b92c44a
+    course/03-fullstack-mern-kubernetes/04-auth-and-api-security.md: a3e90e9a838d2826e2e03fb0776a97e7e6f602f8117aee074a1daca58066bcf6
+    course/03-fullstack-mern-kubernetes/05-fullstack-project-architecture.md: ce611d064b70868d29dc7babc8c045171db97118d37b747c0cd6a250ce3733e7
+    course/03-fullstack-mern-kubernetes/06-docker-cicd.md: 628980e4cf5b8369957e1aa181ddd65b7ca2b275f3fc84268a8bf7b482a40ae6
+    course/03-fullstack-mern-kubernetes/07-kubernetes.md: 40f1b9a66daf6f650efe781c128e2f94eecc324d9cca079f904fcdcf1266a8bd
+    course/03-fullstack-mern-kubernetes/08-production-operations.md: 0a9a830cb9e319a36ae7a81034e6b5169a04dc332fe9b2e6dd54d1d5f8c94844
+    course/03-fullstack-mern-kubernetes/09-interview-questions.md: 778e7af33d4a95b76fddeed1c1e38e485c16b088cbf30f29eb96d943403f10aa
+    course/03-fullstack-mern-kubernetes/README.md: cc008dbcf051e5e05256de446f7ab725c58082f30c046ec1f8c318b5cbf98cd9
+    course/04-ml-genai-agents/01-ml-fundamentals.md: ed4ecd95a9289f4f8357ff4c4676e98c4f983f8fd69ac3effdbe1c4065297dd1
+    course/04-ml-genai-agents/02-deep-learning.md: f1f784501093e7dd549d0d52ceee5dbe67aba30b9b69c2b213e203f3bdb3e009
+    course/04-ml-genai-agents/03-transformers-and-llms.md: 76abfa010e82c9e7fe66f57154b06f369cb7776fa8bb09d0ffb9b4e919de5fe5
+    course/04-ml-genai-agents/04-prompt-engineering.md: ff3509cf742f23a20cefd15fa121557b11a339563d5a6a2a8b8f0edd040cd5ea
+    course/04-ml-genai-agents/05-rag.md: 1fb4e63dd793ce9e33b97d815dc320771fb1aa138bdb1c8cb22afeea5b0ee2d6
+    course/04-ml-genai-agents/06-agents-and-tool-use.md: 813f2916314bcccbfee20e853d1647dce7a6df57ac740a83f0d484875d759e38
+    course/04-ml-genai-agents/07-evaluation-and-harness.md: 04b80fd90acfefb0dcd87e6c8b862a238cd96872c72770299fe277c004a2f3d8
+    course/04-ml-genai-agents/08-fine-tuning-and-llmops.md: ec657e2db139b9d4fa6a7a334349c9bdeea3aa3c0a3db6669d836da63103f743
+    course/04-ml-genai-agents/09-ml-system-design.md: 52ed1e428a1868ab34ac51236d5eb9cfd289123f9f37eaef516c79302d1028be
+    course/04-ml-genai-agents/10-interview-questions.md: 48a0483b92976b8761305c3a9f377a2b6f046768fcaed8e330e6a6076a89091d
+    course/04-ml-genai-agents/11-latest-ai-trends.md: 196057e35ed4d0d5057878c3a93417902e693d927753b268b3d9ef90b6e4329d
+    course/04-ml-genai-agents/README.md: 17933a20706dc127dec77624efb4d428651056b554031d80b9590699864ad223
+    course/05-behavioral-leadership/01-star-framework-and-stories.md: 3258dc1f07d6c676f5c4bcc27a6961fe14e5bfacda93ec6b1e976f501994068c
+    course/05-behavioral-leadership/02-leadership-principles-and-company-guides.md: 8f261f39e958c47bf6f5c2d6bb532fcb86b78ba3f0dea9867a92df74e988c798
+    course/05-behavioral-leadership/03-senior-staff-questions-and-negotiation.md: 7b9a48c31675e1b3694d1a59f663a62fbffee2634af436d1a36da168f2c080d2
+    course/05-behavioral-leadership/README.md: 99e2ec119a0f56a81d036b5ef9758a83f60d8c02a2ec081ccb654dd364da7b4f
+    course/README.md: 922e65a2ee761a05c01f2bb21fd9050f5dfa2d70cca5b2f681706208e91dc679
+    course/_sidebar.md: 6e0ecc6a3bf358b230e6ea37904504ab4f1af1dd38367b0eee9b5359ab218397
+    course/index.html: 1d1867107639e30444d3f047afb02d85ed55aa304d9766cd926be1688bab2483
+    course/logo.svg: 52740345e6e2047b49a1c2c2e9ae6b4d996d3bb556be34ff5e62e3491cb1cb45
+    course/news.md: 2513e69b9dda907d9c14dffdd0b6add9947d1ab79f9b8a3d41c5c77a31654d11
+    course/serve.py: 598ae303a6d62c26f40338bfdfb5df2bd9c91f896970ccf9ba71f9ab29bd9382
+    cutshort_bot/__init__.py: 78b69ee4ee759b1074b6a6088715569736b217f85c7b8a3f6d2c8ecc18e37539
+    cutshort_bot/__main__.py: 7695e181053ecf1b19225fff261e1cf7778f4a42f2e0b359826231dcafebaf97
+    cutshort_bot/board.py: d5760464cf11b6fd1df0cc68a0d6d5aa85a782d7cd7724deffa1b58c9a9f55b8
+    cutshort_bot/cli.py: 1f25402f76e31dd201c5389a7418d4d263183a04d307935c64741661cc6f33d1
+    cutshort_bot/update_profile.py: a6598d43b9e9a1e8d1bdf111f2f4ebd534a62fd34e8aaec66ba593f62e957e62
+    docker-compose.yml: 56e6efe313b7eb6ca52263704223a5d7b7a7660b1dfc244ab678f3943ba05266
+    docker/Dockerfile: 1278175d1448f5d08c2a3315caa16a959d9fbb0fe87401e8b4ef3edf5523d6c7
+    docker/entrypoint.sh: 90a2a68bdd9e75d7c48593c1a1025e2465fc18d3938573ea39fbb70377701903
+    docker/login.sh: fe7289903723cc5731b5006f57077e7bec4312832654d0976c1ec2840772f49e
+    froned-dashbord/.gitignore: af2fcac20a4c7e919b5f9febb3a428ec53098863356b82ae7113d3b2809438c6
+    froned-dashbord/ASSETS.md: 2265bb323dc03fa426d1e1c95db501e6d29506c8b8eac5d662d6b08791628fd6
+    froned-dashbord/CAPABILITIES.md: 6dc4eaa5b17942aa299a21213475f0a781be99ab4220be93a8cd2c970c7aeb2e
+    froned-dashbord/DESIGN.md: 19dccbae2ed88a307ab788127277255d2cb77e5968886863b28ed12da93d3c22
+    froned-dashbord/QA.md: 7d2080e0384fc0b12c71f0ab2d9c4a3ed96d8825dfeaa7c1a0dc7a0ed2b86912
+    froned-dashbord/README.md: 774340a8d5f3d3241eeaedf20057f44e6dd82d0e9a082273a84f5345a6c041d4
+    froned-dashbord/app/assets/orbit-crew.avif: 8fa3132376e27846c89e453996e0d7ec9bec58f55d7a729a419bf0cd5e1be254
+    froned-dashbord/app/assets/orbit-crew.webp: f62447d0015b0dde47ee289e7c936f22c43b898caef18f71101f2ec1dc1cd740
+    froned-dashbord/app/assets/orbit-world.avif: 1a25538002dec031505ab88b6074bef124e991281e5f5545db8e50fc869c9479
+    froned-dashbord/app/assets/orbit-world.webp: 33933884940144aa8432a4244a731b2e3e204ec57e34184d863bb1454d50d494
+    froned-dashbord/app/fonts/fraunces-500.woff2: c63d7a1c08a9e6194bce28934e372ed1251c27e89a77dfceeea3f68307b5fcea
+    froned-dashbord/app/fonts/fraunces-OFL.txt: bdf4c22802eaf804f998195871c6b8938aac2ac14b2d78a8bd66a6f1eced833b
+    froned-dashbord/app/fonts/jetbrains-mono-400.woff2: d3dcdccdaba31643defe2317942155d4af3ee03951d058adbe8bc02b13e61b0a
+    froned-dashbord/app/fonts/jetbrains-mono-OFL.txt: b2fe5e8987594e9ffd1d2ca52a2f5d73eb8335243893c5d6254b5ad69269591d
+    froned-dashbord/app/fonts/source-sans-3-OFL.txt: 09746787287a289323b0ec3cff4d1a4a801331b82b7207c1e186f5d26619a392
+    froned-dashbord/app/fonts/source-sans-3.woff2: 587435ca9d90732b8c1ce4958222c6ad3ade2b875500188e1d318efbcb61f4c5
+    froned-dashbord/app/index.html: f80bb3d2d44a025bc2c3cb7af54b1c22ead5aad85d5fd7782346f5cb896c9c08
+    froned-dashbord/app/js/api.js: 5efdc14da955f19a769acb9da093cb5214c54ee3285a9ad1f07388b2a6936087
+    froned-dashbord/app/js/components/avatar-picker.js: efa201f3da974b594b0ecde97e9b514ef5ad4b59da7aea4912445c0c0defca57
+    froned-dashbord/app/js/components/charts.js: cb0858b84295b44e4ed0e171d3f2ace40b6986a7fd8e80062b94b8e0d57353ef
+    froned-dashbord/app/js/components/console.js: bb2082f2efccf2074b5f39359d9bb590019479c68eb02c88fb183b8d41d46c26
+    froned-dashbord/app/js/components/controls.js: 079677c5e076ec18288a608d4ddef41e5c34efe4204d83027dd3da62582c48f1
+    froned-dashbord/app/js/components/dialog.js: 639b3ae759ecee7686c770b2c82faa967480fc08a65468eb3f6236e6b25a1443
+    froned-dashbord/app/js/components/identity.js: 8129818b192ed237756e704d9255936d1bc63ef2f00c8bac9bc3c92cd14f90c8
+    froned-dashbord/app/js/components/journey.js: 3c5f61b97b50ab7682eab8e074ce3335ce3380dd640b38fdb16e09371d2978e7
+    froned-dashbord/app/js/components/kpi.js: cd071e10cc27b00885b9cbb241f6b350febfba9041fc056189bf0462e9279631
+    froned-dashbord/app/js/components/nav.js: 361237ba1db38981e53e03ec8b358a1ba66009505da86c64045e17673d5059bd
+    froned-dashbord/app/js/components/panel.js: 0cfffabc6d36c5556741e975fb575bcbcc571462993e1bc71085ea6a15c92fc8
+    froned-dashbord/app/js/components/segmented.js: 0a1926ecfa19e752ea59b438ee154ab2831dfe71db08dff26024a5a7a1982d2f
+    froned-dashbord/app/js/components/toast.js: a16ec020ad10d1aeb53f7d26b973a6e76d5fbe03cb33ddc89c35603a6b947b82
+    froned-dashbord/app/js/dom.js: dba0ec3c9fb707f55099e116acc826e514b03380c9ee78261c1bdd3056df80e8
+    froned-dashbord/app/js/format.js: cd01a9d0028f9aa036b55895f01cd1adb833d5a457ea4b98e4f6cdb71ca5e020
+    froned-dashbord/app/js/forms.js: 4df561ea5624b1beda052f4d0d2fc9304bf60128aea37538fa4f04db272e4578
+    froned-dashbord/app/js/icons.js: 48f278b3f457f5eedee3df04bfe504ebd1532608e971f6e3565a151bb0c58769
+    froned-dashbord/app/js/main.js: 33545e030c14df777215f2bf825d16227013e71d945363cb2a0c5f996bf50762
+    froned-dashbord/app/js/router.js: 4f9029bfc71ccf928c8275dc2396333b55099bb3752e92a8796da6831a87486b
+    froned-dashbord/app/js/state.js: 115a6f351ffc5ce330ea2ea521d2f1d51b995184609c1686c65a0f726c135dac
+    froned-dashbord/app/js/views/automations.js: 93c3f26a56bf3042a08285ecf72f068e9d916d02b967bc76b890c19c1344219c
+    froned-dashbord/app/js/views/bots.js: 47d8c2e5410265decb96ebc64348d53d746337169306d70cc8e487207abeaf01
+    froned-dashbord/app/js/views/data.js: edfe062755499524a256e462cec2e4a5b5dc45ebf64186c805d4fc8b7228c4db
+    froned-dashbord/app/js/views/files.js: 73b7162ec9ada9c7e0a148f5d01f153a064968f3a56689d62ed0ffcb936ee040
+    froned-dashbord/app/js/views/linkedin.js: bc5b57530fd5d52b7ea7f34ec8ac10f79c9000f14cf825590d6e93b0ba023f3c
+    froned-dashbord/app/js/views/naukri.js: 88d295e65d062ed16b9ad86dcf77d8fdeb2d4540bdfddecbe835efbff62cc8f3
+    froned-dashbord/app/js/views/outreach.js: cd5409f34dc306fd3cc88be4e7a14f6ba66d6fd93dc6757c7d67d2720ca2b796
+    froned-dashbord/app/js/views/overview.js: 16e02d07bcad094c1006552f5e2da0e9646543f2ae0989f71b08db79c7222422
+    froned-dashbord/app/js/views/profile.js: 170a16bfe7da5541705389d03e0c78e9ee42d9072e6d2f1d9be4f9a753150785
+    froned-dashbord/app/js/views/records.js: 3be2cd16b32ff2de2a9f5e634bd3d4cb683f9a5bcf278e7208fbb3a4a03e789e
+    froned-dashbord/app/js/views/reports.js: 143125a275010dda43f30c395fd8671bca2816c34d07ef6c6d0cd08bb8084df7
+    froned-dashbord/app/js/views/research.js: cc9196353190172f4c04a5b63e873a1beea1490c7e3c93601b5e81bb81c19bcb
+    froned-dashbord/app/js/views/resume.js: 7a3b1e4f3c7501d2ac82f68005aefa74c6b4208e6a65864cf45722ff06cf7d67
+    froned-dashbord/app/js/views/setup.js: 1358f07fc6ea1dcb991cbf5e7430710a0ce4f7f5aef02ce40218ab9d6fc72161
+    froned-dashbord/app/js/views/sites.js: 79bc74821bf75b582a83bfc1b4776376fc4ef90c6976f8eb2a269503f4dd2207
+    froned-dashbord/app/js/views/study.js: 1df327904cc169857cda3ec4b35cb7c2e138d6b8568dcb3db700b528fc59c36e
+    froned-dashbord/app/js/views/todo.js: 8fb48495df5ca9ae130432bbea62a75225d941c8ab7e1aff799f71f4c20d1f12
+    froned-dashbord/app/styles/base.css: 4d06a6ba8d0f0e6aa9cba0bf90c579649fa211878ece6f818863e47587bd76d6
+    froned-dashbord/app/styles/charts.css: 8f2cc47e4f358869c96f687c6c7dad889ad3ecc589d83e349d02d6e5e1455d13
+    froned-dashbord/app/styles/collections.css: 022f712fcf412723a9ac0c1a3adafce90e10dc54a666c78013a3175fea17faa9
+    froned-dashbord/app/styles/components.css: 23bf503cdd19c6aa1e93945d2391eb41feaa4d5a09526444c834de45763bbf0f
+    froned-dashbord/app/styles/console.css: 093519dde711d565995821dc108bc4dc4bd2d03c4f5191a09fa50c418753019e
+    froned-dashbord/app/styles/data-workspace.css: e3d3a04db643d72f949fa7cfbaf6cd80da5aec199435a6e2a16f800bbff9db62
+    froned-dashbord/app/styles/experience.css: 04ea309ddefec7cd6cf341e6dc9bdf878fc21072a24fa6828717976138cc35bc
+    froned-dashbord/app/styles/forms.css: 852aa535ad365701b4981e8adfb352e0c7213ffd9b36e5eb5f3556ce732747c7
+    froned-dashbord/app/styles/index.css: 578a77a5587b06a0b53b9842d63ffeb27f3d7b192e1099a03db7f2a38fba6267
+    froned-dashbord/app/styles/layout.css: 3a5e9e290b19c57933d64f206a981a80b9cd29f0a919980661b1732e20af5dd6
+    froned-dashbord/app/styles/orbit.css: c922740223a8f131e442d363716f57b79399e87b8688f7c31f5601eaaf71dfb2
+    froned-dashbord/app/styles/responsive.css: 69b5e02893ab0da91962e951a70db607a5af17bf854896cb30f7158c586fc461
+    froned-dashbord/app/styles/tokens.css: 2b28d3f3e14b74f9a45daedc950ae7d667b68cf18f356c9dd4c44386717356a2
+    froned-dashbord/app/styles/workspace.css: 507f0e1e1c645d45119ccc254d8d71bc668962b0d27f371a2e496399f286c937
+    froned-dashbord/commands.py: 2b5a7421fb9b45a5b623b1f2f7736d4fe6a83a4757d38ed320c99b8752b74b42
+    froned-dashbord/dashboard_data.py: 0f98103d65846a34c50da67f50e4637f9078bb4ca061b4365a39b25f5e41d121
+    froned-dashbord/package-lock.json: 37f464dcf8c593b4c8019cdb2ffa268b30d5eaa851e5c11f4f3875f09ba6d6ee
+    froned-dashbord/package.json: 2d4422d43377022d0fbb5129450d6bf97c5465304b2dccc5bdc981787bd61ebe
+    froned-dashbord/playwright.config.js: 8e976ded3651c0492c2dbf83206809cbb07baccbb699f9458e665ae028306bd9
+    froned-dashbord/schedule.py: 7a880e8a77c227e0c7eda394ab0cab25cf984f745f1f304fbb1407e0f61a25ef
+    froned-dashbord/scripts/audit.mjs: aec96a87be80790730521425c3052c6dfe705745b8a81ad4f2c3a6da7c7d947e
+    froned-dashbord/scripts/build.mjs: 23328ccdb5353f2afa3a979459d3789b20116cfd42a92b265f7687f60ae69ad2
+    froned-dashbord/scripts/inspect.mjs: 88c2e4fd576a2acf2ef7537aa98042a76febc8ee3846d81e027f58a4ebcdb2dd
+    froned-dashbord/scripts/start.mjs: b5ff9fc80bcea4620824f0264824b2e2adc1e7c057ed8447d82650020dd1beb3
+    froned-dashbord/server.py: 23040705061872273846761318472dae09cf009d7f2b3a94085db0911d77b9dc
+    froned-dashbord/tests/dashboard.spec.js: 2cdc52921b909672effab3892c6bf62b9820cc49a2ba73fd356581d4941772cb
+    froned-dashbord/tests/test_data.py: 3e534c2912edc19bd6a19777c243bced0a4711f36fb4db03b2ae2fe6b12cde84
+    froned-dashbord/tests/test_server.py: 8bbd0696d8e12cfe545e58d9c15a3b718e0cc090a91e50698b8b37782c7eda91
+    hirist_bot/__init__.py: be219e7f48a1055186315a7f495b7c2e27d3d55e0d4092312602c306c20e22d9
+    hirist_bot/__main__.py: 9395193757d090584de546f423ce1633e77e4bdd2730b7631bd78e7a38d8fcfe
+    hirist_bot/board.py: 6562e222142a1ec763e12f994de79ea4238fc1c409c0153fa6d0d038913cd0c0
+    hirist_bot/cli.py: 1487982c808594c527077070f4f0f44cef1a089da0f7b9474defcadc6cf12539
+    hirist_bot/update_profile.py: 090270ca255fa22ad8176d837a2ca7186d99fa3a0a4ebf7882b6932c813acdca
+    instahyre_bot/__init__.py: d766a97762597fb008d3ccd95f8562cceedd4e285962ad84e0b1fb6c469b25fd
+    instahyre_bot/__main__.py: fc94d13524c376dc491489465f763df80df25dcccd7f9325f9f025b40a4cacfb
+    instahyre_bot/board.py: 8203cc0c78b599db43567f6a1d09c2dbd6275d6a08227c880417e334af35dc67
+    instahyre_bot/cli.py: e4310598e2480a22399acf0bef54fdac81cb6fa97b81bb9fffaf9a95ccf5a92a
+    instahyre_bot/update_profile.py: 918e7be47e77130dd86104d4220e29d59ede011737affa465a57a0b66414c8ae
+    legacy/Naukri autoapply jobs.ipynb: 0e315a90ef0aff7bccab339a835a89f45bcd86e8f1c16988ea1daa1b9ec7c400
+    legacy/Naukri-Edge.py: 896fd0bba32ab504e04e2d4447a351338a3a0862806b50d750f02f0483f1d302
+    legacy/Naukri-Recommended.py: c05b9aa8141c282ba120333b8f3adec5c3de55e904f0fb7a058297b2a4da5d77
+    legacy/application_answers.csv: 072a1540c30f4b4c2abaaabeac7bb57245ca3801bc7262df2aebe0ef4e4b2e66
+    legacy/naukriapplied.csv: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+    linkedin_bot/__init__.py: c1aab96de3068927c3c3e98bb36ec7cf1117f193d6cfaee6e5c6df1bb9a955e4
+    linkedin_bot/__main__.py: 13a1a5b340cdcfc1902b62be90e508c7c71886000d5bf087e7854aadf09fb35e
+    linkedin_bot/card.py: abe18650726f7947e5177bb73fe8c82ec0412870ef1c4b12af79de09971aa5f0
+    linkedin_bot/cli.py: 83f3e156d3a405b8f51f8d8bb2d5d220ceec5fe377bbc71faee517c411050ee6
+    linkedin_bot/config.py: 63e81b3a8e59714c331e2edd0c7b79159967953bdb01df9293030bd7cab87375
+    linkedin_bot/news.py: f5a5cb175c8e3d200d787b30b04bbb24a579edbdd179d94b29e850e29150ff3c
+    linkedin_bot/publisher.py: c745709827c61f2943e6049e484bd4ee32e6df9de09c82e6d306dd25464e78f8
+    linkedin_bot/update_profile.py: cfe05b25e5c273bf74a15a29eb12de90fcb180693a0779229b0b34d3dbbfde07
+    linkedin_bot/writer.py: 978163331360c077f7fb36ceba88b9b8b6ef3cec418cda10f376d359c05f0f53
+    naukri_bot/__init__.py: ab7dfe739d296c4cc8a35eb106ac9dbc7f7df8176f6bebfef70d0ee44a269a5f
+    naukri_bot/__main__.py: f757f3a0cd8d3a657cb3db7d79a54c06b893e087a5ec6beb5c3e8779b9fa2c91
+    naukri_bot/apply.py: 5bc902285503721eeac174528f28e6ad682a9ba54af95e69637adf007a8b97e0
+    naukri_bot/auth.py: fbef9559a370b0ec64ac3ac74a7acbed7b85cedbf6502e3ef26c5252a02ec7a9
+    naukri_bot/chatbot.py: 4ab6f212849e8406ae417b3039c484c617c658da0c810441709f10e31a5c0ef3
+    naukri_bot/cli.py: 1464e9c6ce1e54d953f3b8be284b0a7ddea7469639b93bfc8d65c06da78c897a
+    naukri_bot/early_access.py: 7a49bc45b4158bd9312c3a50947b9c87911621129712d8fd862df04abdbd6479
+    naukri_bot/ranking.py: 29b15b834bf4501f2bf7d0c12992203da47081880b439c936d50aa9c4e0a4643
+    naukri_bot/sources.py: a7256262aa09955eedccef60bfee7e5c21b958a031a12940c969b95a00a99afd
+    naukri_bot/update_profile.py: 1302003c5ffb00bedc3ce2265d89e0363107f8799d0b9100157ec1951ae62c74
+    pipeline/__init__.py: 0674fb579145e167eca3a38771f0268cd8fb2ac86b01885fc9a37842be69d6e6
+    pipeline/__main__.py: 79534f56e7f0d70c58324791b955294b39b6daf8825d36cd11ded2abf478522d
+    pipeline/briefing.py: 363b471443e8ca502d7e4e3da50cc76365ef607267c641f28242fa641dd6c7b8
+    pipeline/content.py: 6ec3273d8d352880241059607c80fa285270fa50ea8758f0e7834674fe4574d2
+    pipeline/course.py: 68c9c30482bbb3b11dfa1836675966386b48ea386779392438fa026ba1ad0a0e
+    pipeline/lanes.py: 55b6e5f50cc66bbb12fa8d2b0ddc9a874c169fbe504f441c3dad08469b4e1065
+    pipeline/learning.py: 28d184f3b267a22d2ead6e09c977ccec007aa41a686994b428f64a9f7d044530
+    pipeline/links.py: 2289c80f4222df472e81d6811927dbf086495696ffbea0be9b1acc7b6ef3b7bf
+    pipeline/run.py: 7bc7f051fd56a7b298c285ddd56a618878cae74eb797f58ee8874011976becac
+    requirements.lock: 39529562824057dc866a138ec7666b1cba7eedfe302bb8cb623788f10ed824a3
+    requirements.txt: 632604f75864f4d3859f1067bf2fccc8112e6661bef6de12b8c37294e6650cf2
+    scripts/google_login.sh: b6799d62b5627804e7b324c0644c137faa0e69bd6dba5898e1da0fe156cd7230
+    scripts/install_linkedin_poster.sh: 240e388bba66b0eaa9bf5fe07a8726ed3c4383fefdbf77449048f26c9988ba9b
+    scripts/install_profile_updater.sh: 5573ba5f511d7f6a74160e4042f9b11253efac79f2eb9f928ffd4789ba32f444
+    scripts/linkedin_status.sh: 87b89229cc27511bd3ef13e5d5af8b1c568fcc9a450c12a1b2ff3df4e4043c6b
+    scripts/profile_update_status.sh: e3481ef311767ced24e47918106dc2c02d9bbee3d85c3c6d97a806ce33493479
+    scripts/run_linkedin_post.sh: e9b95c11c0089d88ecb1060af90afc0a27b5d53bcd2a40cccb08d161f96810cc
+    scripts/run_profile_update.sh: 84b6cec0537605ee7de0f9e2532e00407a0d6df9014f958beebc71135a67a0a0
+    scripts/web: 64bf67f00aabe4c6ef070882a4395f7b4b5561816c65e27b98d0c9fc7115813e
+    sites_bot/__init__.py: 5622027accfb3ad4e8bbb485d6b79cbdb45767628621ad10c9bcda59e452ca66
+    sites_bot/accounts.py: 1a8739705557e19d2f2e104b2a461e9a6a8566ccb4896aaced26c98d7cd6a5ee
+    sites_bot/board.py: a93256c8c2fb0d2994198014dce40fef55dad6c49123a5714b497dd559638184
+    sites_bot/browser_agent.py: 534e8cc8a8bbf2b893b71d8952e6b6dd05ff9d5814319a02dcb5f987993dde7b
+    sites_bot/cold_email.py: 001be0dc4fc3e483caba45edfd7104ed11b9c4a51b04df93f89b81ccb7944de6
+    sites_bot/external.py: 0b4ebe48cbd33f4ce66b98350b65738e90f778a5bfef43daa3c9c36a500d4a85
+    sites_bot/page_brain.py: 6516d8213f8097d4cbed1592d41228e9e7286fb0e097ea3a3c7f215a888dae01
+    sites_bot/platforms.py: 740ef6ab7a6e549e2ee6e328b1032ad0e3ca0336e4eb97bde7fa3bf457a2e07e
+    tests/common/test_answer_text_handling.py: 51c0b019810b1af07249b140b635d6d05aed71ad01bfcaceeb6bd77e9bed879d
+    tests/common/test_answers_file.py: f8448545e39c2ac45397eabbfa5b357dba82205460bdc706840ec0e7450249ec
+    tests/common/test_assist.py: d630499facabb17fe2dd071a236cbf0c1677c40518f1c3f693b7d38d431e6394
+    tests/common/test_browser_profile_and_delay.py: bdcbf2f5eac224b47593236c2db2380fcbe7f06b91c2dc4d7c52722167b4049f
+    tests/common/test_choice_questions.py: f7e769c2fa122133bee670b02ebe19fcb84240b0d35613514213f103a2c7d104
+    tests/common/test_job_context_answers.py: 584af23bc138a8ac7898065ecefe409b60720dacc62086d6af27e5b92de40ade
+    tests/common/test_judge.py: fe1f59517b57eba404967b49c60d5547dfa7160203b548138361fa54bf531669
+    tests/common/test_long_answers.py: 2493547308daa1b977ee75d6ba22eb5cf1eefe8ea57317025f2789e30f4c3ab5
+    tests/common/test_report.py: b752179b6845f0956d6ba5dd263de141545d4a355bffdf2b4465d86f3d2dfba6
+    tests/common/test_resume.py: d14b1b053516d00bc5b0535f1cb82b41b798463f6270992c6a6e5468b237b580
+    tests/common/test_skill_years_rule.py: 5356193224e13895d6da3535febb93730fdec30431b939f53709e71fbb5326d0
+    tests/conftest.py: 48dcbd7a54288898c145b40277e5fcc174c64ff87c6d4794132675ff9d94536c
+    tests/linkedin/test_linkedin_card.py: 8dbc8f25d80dfc2ae513f90a278e11b903e32b2030fb978d8117de41e32c64c2
+    tests/linkedin/test_linkedin_cli.py: 894442a85cc4ab36c045690c8a3d48129f2e7af7ed7e9a89188449064e0dab8d
+    tests/linkedin/test_linkedin_news.py: a805a77b69e4b3275df865d55f8e0182f50052f5bcf3d21c41962da277184940
+    tests/linkedin/test_linkedin_publisher.py: d1225af1ca77ddd36dac2ec96acb8fb1066ec9a2374b748fb8b4a1cc44f2a934
+    tests/linkedin/test_linkedin_writer.py: 594e2f68ef3fa1e51fc8453d9cc47d30c4716649a1e9ad1cd99d1cdd5877d5eb
+    tests/naukri/test_apply_loop.py: ef7715f50730e697522e42715932934acd7844d44c73c7be404afe9950efea0e
+    tests/naukri/test_experience_filter.py: 540f2601c6e0f7fd2b486160be729ac1a6e7e6342eb96d7fb780e5d477eadbdd
+    tests/naukri/test_login_detection.py: 4f4c4e43dc2fd417e38052a871085b536128007de2409303bb3e028388171e2a
+    tests/naukri/test_profile_update.py: b638420b42763655197df9eb23bf0af95820c2fefc23e0add9f7774b91ca1bc9
+    tests/naukri/test_ranking_guard.py: b7239d6d6eb73ecc5362b4e741439f49de5744b56793f42a4c7c9f884cf46b78
+    tests/naukri/test_scoring_and_worklist.py: 8cb27685464dde72196779c30c8ac03b681e1b25a2bc60bcc8d6cc5fa1c70a11
+    tests/naukri/test_search_outage.py: aa6d88c84abe8a7817c897d135cb37da9a1fae2d96df2ca6c3a08857cbcb0330
+    tests/naukri/test_send_and_checkboxes.py: 054702dfc00a63fe200aba0d7bed2d998ea8a7fc7b9ae836e13926224409d3bb
+    tests/naukri/test_stale_prefilter.py: a578c8523e7d0595aaf4401696e24d44a1106346ca8ef65eab29a83b27498d5c
+    tests/pipeline/test_pipeline.py: bf11921f383c9753c94bfa886ae5c2608e90de839bf1f83ddb6e6c58f4dd4b85
+    tests/research/test_research_content.py: 663311c02eb006b01479c75ec8edb4256fd7cbc81620bd8c0ebdb85aa26ceb92
+    tests/sites/test_browser_agent.py: 0849b3fcff5cd4f47ade8559753dcfbf9381e09dd78956ebd0f85cb16914a9db
+    tests/sites/test_cold_email.py: ae7b007366c3d908183f77c7ed8336faa26a0e351bd14e6696bdb48240b0c2c3
+    tests/sites/test_external.py: 6077db2d5c61d145c923ba98d68a58f511d6e23c98f4d64f2a5e0ffd8cb7071a
+    tests/sites/test_platforms.py: f0010126cfddbcaf1f311bdf58b9aa1b137034dfdc592f279c2f04971658ff06
+    tests/web/test_web.py: b5067aa445018498e552886a80118dc5908cccb2aaef00b9f9ebfd22f6c3a9df
+    web/__init__.py: 6dc202c37e2482f253801d128ba4777526a0435d4723cd422e6f2125d000d71b
+    web/__main__.py: 540fd0a5992ca535482a9d44b2e268ce3a39bb47a0576f301214afa5ef4494b9
+    web/server.py: bf5c2a305bee4335ba84ed6b166ed3fd3633e03577fa7ba9ef3130971401e1a1
+    web/state.py: 42af61ca81dbaf1bcad3b255720cf95ea6132e8020b46e008b507f0225975c0a
+    web/static/app.css: 48d94075e81ad4e901daf7dc1670e285309ff775bfda661612e0a67ca6da0722
+    web/static/app.js: 8baf8ca7ce988a0699ee6cfc8f05f3ec99086481a3b5549d35466abe534a1fea
+    web/static/index.html: cea2a445ba6b7280bb9891e9fe2856836a6c0448e2583a3d95bab05b6f3e70f9
+    wellfound_bot/__init__.py: 5192c79cbb961ce4336d14a57bffb61b2435ba738f2ddfb36284a3faf400c2f9
+    wellfound_bot/__main__.py: 3221cf6f6ad3d38bd9e076a8ef005252428adedea29cef4818822ca1086acec2
+    wellfound_bot/board.py: bdec19c5093f1ed576e3e05cc5536ee44eacbd817e77bfbc8e9758ab7ef1d2ba
+    wellfound_bot/cli.py: 462e6ec03bae977ee67be7156e806d275bc75d91b7f5268ae936fea9bb338931
+    wellfound_bot/update_profile.py: 1f78a17c3e2ccc1897a418bb2045565a2c1654492adef4ab91c48f74aa944372
 ecosystems:
+- container
 - docs
 - javascript
 - python
@@ -127,7 +488,7 @@ product_types:
 surfaces:
 - name: (root)
   kind: docs
-  files: 6
+  files: 7
   note: ''
   uses: []
   instruments:
@@ -135,17 +496,11 @@ surfaces:
   - gitleaks-git
   - history
   - probe
-  untracked: 2
-- name: .kiro
-  kind: other
-  files: 6
-  note: ''
-  uses: []
-  instruments: []
-  untracked: 6
+  sha256: 0ba1f6f3c2dc812bf437d62c203abb3680689ba5bf02fdfdb85f446b86b3c0a1
+  untracked: 0
 - name: .research
   kind: docs
-  files: 40
+  files: 41
   note: ''
   uses: []
   instruments:
@@ -153,10 +508,11 @@ surfaces:
   - gitleaks-git
   - history
   - probe
-  untracked: 40
+  sha256: 5e379c8036da0cb01889be4459e24147ca3621a2fe4347f767e3adee4159dcf3
+  untracked: 0
 - name: common
   kind: python
-  files: 15
+  files: 16
   note: ''
   uses:
   - latex
@@ -171,14 +527,16 @@ surfaces:
   - inventory
   - probe
   - pytest-target
+  - quality
   - ruff
   - sandbox
   - semgrep
   - trivy-python
-  untracked: 2
+  sha256: b8247b868c3814a8fd48a0cc36c39babd430b7ce819333058934ad9dd4560c7d
+  untracked: 1
 - name: course
   kind: python+web+docs
-  files: 55
+  files: 56
   note: ''
   uses: []
   instruments:
@@ -189,11 +547,13 @@ surfaces:
   - inventory
   - probe
   - pytest-target
+  - quality
   - ruff
   - sandbox
   - semgrep
   - trivy-python
-  untracked: 0
+  sha256: d3b08afe32fcfd30d22e508e402b75827eb89520e5762a2a804062ea0fa3a20b
+  untracked: 1
 - name: cutshort_bot
   kind: python
   files: 5
@@ -207,16 +567,33 @@ surfaces:
   - inventory
   - probe
   - pytest-target
+  - quality
   - ruff
   - sandbox
   - semgrep
   - trivy-python
-  untracked: 5
-- name: froned-dashbord
-  kind: python+web+docs
-  files: 59
+  sha256: 528bb7798a60bd03fb3eb17c4e1add7d6d452e650a63293d2bcebd5159261f87
+  untracked: 0
+- name: docker
+  kind: shell
+  files: 3
   note: ''
   uses: []
+  instruments:
+  - gitleaks-dir
+  - gitleaks-git
+  - history
+  - probe
+  - semgrep
+  - shellcheck
+  sha256: 98fda7d874afe5bb41bcb614ee09eb4cd6a3924b389966ccf30b4d727a15cb36
+  untracked: 0
+- name: froned-dashbord
+  kind: python+web+docs
+  files: 99
+  note: ''
+  uses:
+  - launchd
   instruments:
   - bandit
   - gitleaks-dir
@@ -225,11 +602,13 @@ surfaces:
   - inventory
   - probe
   - pytest-target
+  - quality
   - ruff
   - sandbox
   - semgrep
   - trivy-python
-  untracked: 59
+  sha256: 7121ba7e829baa7ff8464f17926875c2a336e052360f860ec35d3202f93ca5a9
+  untracked: 17
 - name: hirist_bot
   kind: python
   files: 5
@@ -243,11 +622,13 @@ surfaces:
   - inventory
   - probe
   - pytest-target
+  - quality
   - ruff
   - sandbox
   - semgrep
   - trivy-python
-  untracked: 5
+  sha256: cca4035fd83281382d577408f6d1314f0cb854023e61c78e33ab47332a7d8e98
+  untracked: 0
 - name: instahyre_bot
   kind: python
   files: 5
@@ -261,11 +642,13 @@ surfaces:
   - inventory
   - probe
   - pytest-target
+  - quality
   - ruff
   - sandbox
   - semgrep
   - trivy-python
-  untracked: 5
+  sha256: 7f88ba06fa885763fbf6e20cd4054ac3cb9d48e751fe23a576c523c15e2467bc
+  untracked: 0
 - name: legacy
   kind: python+notebook+data
   files: 5
@@ -280,14 +663,16 @@ surfaces:
   - inventory
   - probe
   - pytest-target
+  - quality
   - ruff
   - sandbox
   - semgrep
   - trivy-python
+  sha256: 90dc1c73c023ec0066c7b5c54c176b75667de3cf6d001aac6c739ed1c99ca85a
   untracked: 0
 - name: linkedin_bot
   kind: python
-  files: 8
+  files: 11
   note: ''
   uses:
   - selenium
@@ -299,11 +684,13 @@ surfaces:
   - inventory
   - probe
   - pytest-target
+  - quality
   - ruff
   - sandbox
   - semgrep
   - trivy-python
-  untracked: 0
+  sha256: 2dc7c583252a065f6b4c287c9ece398431cd8dac931b01ffcae8711f7b80ac39
+  untracked: 2
 - name: naukri_bot
   kind: python
   files: 10
@@ -318,16 +705,19 @@ surfaces:
   - inventory
   - probe
   - pytest-target
+  - quality
   - ruff
   - sandbox
   - semgrep
   - trivy-python
+  sha256: e1bf5f53d2c68854104aa8b75419c9bc369bcd52ec9b5b4de4f59b98aef16687
   untracked: 0
 - name: pipeline
   kind: python
-  files: 8
+  files: 9
   note: ''
-  uses: []
+  uses:
+  - llm-cli
   instruments:
   - bandit
   - gitleaks-dir
@@ -336,11 +726,13 @@ surfaces:
   - inventory
   - probe
   - pytest-target
+  - quality
   - ruff
   - sandbox
   - semgrep
   - trivy-python
-  untracked: 8
+  sha256: 70ca93ab67e15dfce3d51e304ecc984c4c26b4b328e2ad476eaaf9925d13351e
+  untracked: 0
 - name: scripts
   kind: shell
   files: 8
@@ -355,6 +747,7 @@ surfaces:
   - probe
   - semgrep
   - shellcheck
+  sha256: 6d0f38fe00cc675ae4c271229e5589ea54696a263ed756ca203d0715550a4769
   untracked: 0
 - name: sites_bot
   kind: python
@@ -372,11 +765,13 @@ surfaces:
   - inventory
   - probe
   - pytest-target
+  - quality
   - ruff
   - sandbox
   - semgrep
   - trivy-python
-  untracked: 1
+  sha256: 3f3a28bccc41f14e1f822081372399ce9a03f58f206235d2ce05e14c4763d559
+  untracked: 0
 - name: tests
   kind: python
   files: 33
@@ -394,11 +789,13 @@ surfaces:
   - inventory
   - probe
   - pytest-target
+  - quality
   - ruff
   - sandbox
   - semgrep
   - trivy-python
-  untracked: 2
+  sha256: ccfb3e37ea64efd7ce5619c6ca397968f2404cbc2e217a5fb8989f34267b6dad
+  untracked: 0
 - name: web
   kind: python+web
   files: 7
@@ -412,10 +809,12 @@ surfaces:
   - inventory
   - probe
   - pytest-target
+  - quality
   - ruff
   - sandbox
   - semgrep
   - trivy-python
+  sha256: b80553475acae6507a81750a9ee5e2c30b174445678c9af3fc9789e7db1387a4
   untracked: 0
 - name: wellfound_bot
   kind: python
@@ -430,12 +829,73 @@ surfaces:
   - inventory
   - probe
   - pytest-target
+  - quality
   - ruff
   - sandbox
   - semgrep
   - trivy-python
-  untracked: 5
+  sha256: 4fcbd82276fb3789976c844355bfb2ccb826332e4e0110a112091dfa074b9d07
+  untracked: 0
 instruments:
+- name: quality
+  category: harness
+  required: true
+  critical:
+  - logic
+  evidence_class: dynamic
+  timeout_s: 900
+  database: false
+  cap_when_absent: BLOCK
+  available: true
+  binary: python3
+  conditions: []
+  parser_required: true
+  raw_required: true
+  exit_ok:
+  - 0
+  - 1
+  argv:
+  - /Users/apple/Desktop/apply/hunt/.venv/bin/python3
+  - /Users/apple/Desktop/apply/hunt/quality.py
+  - --output
+  - /Users/apple/Desktop/apply/hunt/results/raw/quality.json
+  targets: []
+- name: trivy-config
+  category: container
+  required: true
+  critical:
+  - supply
+  evidence_class: static
+  timeout_s: 300
+  database: true
+  cap_when_absent: HOLD
+  available: true
+  binary: trivy
+  conditions: []
+  parser_required: true
+  raw_required: true
+  exit_ok:
+  - 0
+  argv:
+  - /opt/homebrew/bin/trivy
+  - config
+  - --cache-dir
+  - /Users/apple/Desktop/apply/hunt/results/configcache
+  - --skip-check-update
+  - --skip-version-check
+  - --disable-telemetry
+  - --misconfig-scanners
+  - dockerfile
+  - --format
+  - json
+  - --output
+  - /Users/apple/Desktop/apply/hunt/results/raw/trivy-config.json
+  - --quiet
+  - --exit-code
+  - '0'
+  - docker
+  targets:
+  - docker
 - name: semgrep
   category: sast
   required: true
@@ -450,6 +910,13 @@ instruments:
   database: true
   cap_when_absent: HOLD
   available: true
+  binary: semgrep
+  conditions: []
+  parser_required: true
+  raw_required: true
+  exit_ok:
+  - 0
+  - 1
   argv:
   - /Users/apple/Desktop/apply/hunt/.venv/bin/semgrep
   - scan
@@ -495,30 +962,49 @@ instruments:
   - web
   - wellfound_bot
   - course/index.html
+  - course/learning-progress.js
   - froned-dashbord/app/index.html
   - froned-dashbord/app/js/api.js
+  - froned-dashbord/app/js/components/avatar-picker.js
   - froned-dashbord/app/js/components/charts.js
   - froned-dashbord/app/js/components/console.js
+  - froned-dashbord/app/js/components/controls.js
   - froned-dashbord/app/js/components/dialog.js
+  - froned-dashbord/app/js/components/identity.js
+  - froned-dashbord/app/js/components/journey.js
   - froned-dashbord/app/js/components/kpi.js
   - froned-dashbord/app/js/components/nav.js
+  - froned-dashbord/app/js/components/pagination.js
   - froned-dashbord/app/js/components/panel.js
+  - froned-dashbord/app/js/components/profile-form.js
+  - froned-dashbord/app/js/components/reader.js
+  - froned-dashbord/app/js/components/resume-preview.js
   - froned-dashbord/app/js/components/segmented.js
   - froned-dashbord/app/js/components/toast.js
+  - froned-dashbord/app/js/dev-tools.js
   - froned-dashbord/app/js/dom.js
   - froned-dashbord/app/js/format.js
   - froned-dashbord/app/js/forms.js
   - froned-dashbord/app/js/icons.js
   - froned-dashbord/app/js/main.js
+  - froned-dashbord/app/js/query-client.js
+  - froned-dashbord/app/js/route-shell.js
   - froned-dashbord/app/js/router.js
   - froned-dashbord/app/js/state.js
+  - froned-dashbord/app/js/url-state.js
   - froned-dashbord/app/js/views/automations.js
+  - froned-dashbord/app/js/views/bots.js
+  - froned-dashbord/app/js/views/data.js
   - froned-dashbord/app/js/views/files.js
   - froned-dashbord/app/js/views/linkedin.js
   - froned-dashbord/app/js/views/naukri.js
+  - froned-dashbord/app/js/views/outreach.js
   - froned-dashbord/app/js/views/overview.js
   - froned-dashbord/app/js/views/profile.js
+  - froned-dashbord/app/js/views/records.js
   - froned-dashbord/app/js/views/reports.js
+  - froned-dashbord/app/js/views/research-desk.js
+  - froned-dashbord/app/js/views/research.js
   - froned-dashbord/app/js/views/resume.js
   - froned-dashbord/app/js/views/setup.js
   - froned-dashbord/app/js/views/sites.js
@@ -532,6 +1018,8 @@ instruments:
   - froned-dashbord/tests/dashboard.spec.js
   - web/static/app.js
   - web/static/index.html
+  - docker/entrypoint.sh
+  - docker/login.sh
   - scripts/google_login.sh
   - scripts/install_linkedin_poster.sh
   - scripts/install_profile_updater.sh
@@ -558,30 +1046,49 @@ instruments:
   - web
   - wellfound_bot
   - course/index.html
+  - course/learning-progress.js
   - froned-dashbord/app/index.html
   - froned-dashbord/app/js/api.js
+  - froned-dashbord/app/js/components/avatar-picker.js
   - froned-dashbord/app/js/components/charts.js
   - froned-dashbord/app/js/components/console.js
+  - froned-dashbord/app/js/components/controls.js
   - froned-dashbord/app/js/components/dialog.js
+  - froned-dashbord/app/js/components/identity.js
+  - froned-dashbord/app/js/components/journey.js
   - froned-dashbord/app/js/components/kpi.js
   - froned-dashbord/app/js/components/nav.js
+  - froned-dashbord/app/js/components/pagination.js
   - froned-dashbord/app/js/components/panel.js
+  - froned-dashbord/app/js/components/profile-form.js
+  - froned-dashbord/app/js/components/reader.js
+  - froned-dashbord/app/js/components/resume-preview.js
   - froned-dashbord/app/js/components/segmented.js
   - froned-dashbord/app/js/components/toast.js
+  - froned-dashbord/app/js/dev-tools.js
   - froned-dashbord/app/js/dom.js
   - froned-dashbord/app/js/format.js
   - froned-dashbord/app/js/forms.js
   - froned-dashbord/app/js/icons.js
   - froned-dashbord/app/js/main.js
+  - froned-dashbord/app/js/query-client.js
+  - froned-dashbord/app/js/route-shell.js
   - froned-dashbord/app/js/router.js
   - froned-dashbord/app/js/state.js
+  - froned-dashbord/app/js/url-state.js
   - froned-dashbord/app/js/views/automations.js
+  - froned-dashbord/app/js/views/bots.js
+  - froned-dashbord/app/js/views/data.js
   - froned-dashbord/app/js/views/files.js
   - froned-dashbord/app/js/views/linkedin.js
   - froned-dashbord/app/js/views/naukri.js
+  - froned-dashbord/app/js/views/outreach.js
   - froned-dashbord/app/js/views/overview.js
   - froned-dashbord/app/js/views/profile.js
+  - froned-dashbord/app/js/views/records.js
   - froned-dashbord/app/js/views/reports.js
+  - froned-dashbord/app/js/views/research-desk.js
+  - froned-dashbord/app/js/views/research.js
   - froned-dashbord/app/js/views/resume.js
   - froned-dashbord/app/js/views/setup.js
   - froned-dashbord/app/js/views/sites.js
@@ -595,6 +1102,8 @@ instruments:
   - froned-dashbord/tests/dashboard.spec.js
   - web/static/app.js
   - web/static/index.html
+  - docker/entrypoint.sh
+  - docker/login.sh
   - scripts/google_login.sh
   - scripts/install_linkedin_poster.sh
   - scripts/install_profile_updater.sh
@@ -618,6 +1127,13 @@ instruments:
   database: false
   cap_when_absent: HOLD
   available: true
+  binary: bandit
+  conditions: []
+  parser_required: true
+  raw_required: true
+  exit_ok:
+  - 0
+  - 1
   argv:
   - /Users/apple/Desktop/apply/hunt/.venv/bin/bandit
   - -r
@@ -672,6 +1188,13 @@ instruments:
   database: false
   cap_when_absent: HOLD
   available: true
+  binary: ruff
+  conditions: []
+  parser_required: true
+  raw_required: true
+  exit_ok:
+  - 0
+  - 1
   argv:
   - /Users/apple/Desktop/apply/hunt/.venv/bin/ruff
   - check
@@ -735,6 +1258,13 @@ instruments:
   database: false
   cap_when_absent: HOLD
   available: true
+  binary: shellcheck
+  conditions: []
+  parser_required: true
+  raw_required: true
+  exit_ok:
+  - 0
+  - 1
   argv:
   - /Users/apple/Desktop/apply/hunt/.venv/bin/shellcheck
   - -f
@@ -743,6 +1273,8 @@ instruments:
   - info
   - -s
   - bash
+  - docker/entrypoint.sh
+  - docker/login.sh
   - scripts/google_login.sh
   - scripts/install_linkedin_poster.sh
   - scripts/install_profile_updater.sh
@@ -752,6 +1284,8 @@ instruments:
   - scripts/run_profile_update.sh
   - scripts/web
   targets:
+  - docker/entrypoint.sh
+  - docker/login.sh
   - scripts/google_login.sh
   - scripts/install_linkedin_poster.sh
   - scripts/install_profile_updater.sh
@@ -770,11 +1304,19 @@ instruments:
   database: true
   cap_when_absent: HOLD
   available: true
+  binary: gitleaks
+  conditions:
+  - git-history
+  parser_required: true
+  raw_required: true
+  exit_ok:
+  - 0
+  - 1
   argv:
   - /opt/homebrew/bin/gitleaks
   - git
   - --config
-  - hunt/rule/gitleaks.toml
+  - hunt/rule/history.toml
   - --redact
   - --no-banner
   - --exit-code
@@ -787,6 +1329,7 @@ instruments:
   - hunt/results/raw/gitleaks-git.json
   - --max-target-megabytes
   - '5'
+  - --log-opts=--all --full-history
   - .
   targets:
   - .
@@ -800,6 +1343,13 @@ instruments:
   database: true
   cap_when_absent: HOLD
   available: true
+  binary: gitleaks
+  conditions: []
+  parser_required: true
+  raw_required: true
+  exit_ok:
+  - 0
+  - 1
   argv:
   - /opt/homebrew/bin/gitleaks
   - dir
@@ -830,6 +1380,13 @@ instruments:
   database: true
   cap_when_absent: HOLD
   available: true
+  binary: trivy
+  conditions:
+  - python-environment
+  parser_required: true
+  raw_required: true
+  exit_ok:
+  - 0
   argv:
   - /opt/homebrew/bin/trivy
   - fs
@@ -860,6 +1417,13 @@ instruments:
   database: true
   cap_when_absent: HOLD
   available: true
+  binary: trivy
+  conditions:
+  - node-lockfile
+  parser_required: true
+  raw_required: true
+  exit_ok:
+  - 0
   argv:
   - /opt/homebrew/bin/trivy
   - fs
@@ -891,6 +1455,15 @@ instruments:
   database: false
   cap_when_absent: HOLD
   available: true
+  binary: python3
+  conditions:
+  - python-tests
+  - python-environment
+  parser_required: true
+  raw_required: true
+  exit_ok:
+  - 0
+  - 1
   argv:
   - /Users/apple/Desktop/apply/venv/bin/python3
   - -m
@@ -901,7 +1474,7 @@ instruments:
   - --basetemp
   - hunt/results/pytest-tmp
   - --junitxml
-  - hunt/results/raw/pytest-target.json
+  - hunt/results/raw/pytest-target.xml
   - -o
   - addopts=
   - tests
@@ -917,6 +1490,13 @@ instruments:
   database: false
   cap_when_absent: HOLD
   available: true
+  binary: git
+  conditions:
+  - git-history
+  parser_required: true
+  raw_required: true
+  exit_ok:
+  - 0
   argv:
   - hound
   - internal
@@ -933,6 +1513,12 @@ instruments:
   database: false
   cap_when_absent: HOLD
   available: true
+  binary: hound
+  conditions: []
+  parser_required: true
+  raw_required: true
+  exit_ok:
+  - 0
   argv:
   - hound
   - internal
@@ -947,6 +1533,12 @@ instruments:
   database: false
   cap_when_absent: HOLD
   available: true
+  binary: hound
+  conditions: []
+  parser_required: true
+  raw_required: true
+  exit_ok:
+  - 0
   argv:
   - hound
   - internal
@@ -961,6 +1553,14 @@ instruments:
   database: false
   cap_when_absent: HOLD
   available: true
+  binary: python3
+  conditions:
+  - sandbox-reproductions
+  parser_required: true
+  raw_required: true
+  exit_ok:
+  - 0
+  - 1
   argv:
   - /Users/apple/Desktop/apply/hunt/.venv/bin/python3
   - -m
@@ -972,7 +1572,7 @@ instruments:
   - --basetemp
   - hunt/results/sandbox-tmp
   - --junitxml
-  - hunt/results/raw/sandbox.json
+  - hunt/results/raw/sandbox.xml
   - -o
   - addopts=
   - --rootdir
@@ -997,9 +1597,11 @@ remap:
   hunt/results/staged/inline-js/course__03-fullstack-mern-kubernetes__08-production-operations.md.js: course/03-fullstack-mern-kubernetes/08-production-operations.md
   hunt/results/staged/inline-js/course__index.html.js: course/index.html
   hunt/results/staged/inline-js/course__news.md.js: course/news.md
+  hunt/results/staged/inline-js/froned-dashbord__app__index.html.js: froned-dashbord/app/index.html
 configs:
   hunt/rule/custom.yaml: 50c81fa2b7ebb7f74302ed5d8b2507e4f15cb7dde085b986c3d1b3e29404a5bd
   hunt/rule/gitleaks.toml: 6caae02c8c8e77ff02ca6e21c87b3f25d47bf96defc8960da994a8381418ef7b
+  hunt/rule/history.toml: 8dce17ca48ba5439b98018338a72caa4e705f8e6bd9894926dbb313a701e3b73
   hunt/rule/semgrep.lock.json: 5cc8817c01d27b869b466ca9c64060aea9e91d2748b5ea5268a54b0ed33269e3
   hunt/rule/semgrep.yaml: 92cdd2955fd536ac4b3a3c36bb5c476daf8fd90d4b80bdfc258d7c3f40faad94
 ignore:
@@ -1090,12 +1692,11 @@ ignore:
   - .memory/
   - '# HOUND volatile scanner artifacts'
   - hunt/results/
+  - .kiro/agents/
+  - output/morrow-launch/
   note: scans walk tracked plus untracked-not-ignored files; ignored directories such as data/ and venv/ are out of scope
     except where gitleaks-dir walks the working tree under its allowlist
 gaps:
-- surface: .kiro
-  gap: no automated instrument covers this surface
-  cap: HOLD
 - surface: common
   gap: 'latex: external TeX compiler invocation; not exercised'
   cap: HOLD
@@ -1108,6 +1709,9 @@ gaps:
 - surface: common
   gap: 'telegram: outbound Telegram notifications; not exercised'
   cap: HOLD
+- surface: froned-dashbord
+  gap: 'launchd: launchd plist installation and scheduling; not exercised on the audit host'
+  cap: HOLD
 - surface: legacy
   gap: 'selenium: browser automation against live third-party sites; no automated instrument drives it'
   cap: HOLD
@@ -1116,6 +1720,9 @@ gaps:
   cap: HOLD
 - surface: naukri_bot
   gap: 'selenium: browser automation against live third-party sites; no automated instrument drives it'
+  cap: HOLD
+- surface: pipeline
+  gap: 'llm-cli: shells out to an external AI CLI (claude or kiro); its runtime behaviour is not exercised'
   cap: HOLD
 - surface: scripts
   gap: 'latex: external TeX compiler invocation; not exercised'
@@ -1144,14 +1751,35 @@ gaps:
 - surface: tests
   gap: 'smtp-imap: live mail sending and mailbox polling; not exercised'
   cap: HOLD
+- surface: container-image
+  gap: No immutable built image or image SBOM is available for OS package vulnerability scanning; Dockerfile checks cover
+    configuration only
+  cap: HOLD
+- surface: sandbox
+  gap: Reproductions use pinned Python dependencies, mocked integrations and disabled Python sockets; OS filesystem, native
+    sockets, subprocess isolation and a pinned OS image are not established
+  cap: HOLD
+- surface: judge
+  gap: Contested semantic conclusions have no repeated randomized trials or perturbation suite; no contested clearance is
+    accepted
+  cap: HOLD
+- surface: instructions
+  gap: Referenced RTK.md was not found in the workspace or searched instruction roots
+  cap: HOLD
+- surface: dashboard-tests
+  gap: Nested dashboard Python suite and browser integration suite are outside the legacy root pytest instrument
+  cap: HOLD
+- surface: supply-kev
+  gap: Pinned vulnerability database is scanned, but no separate pinned KEV catalog or native installed wheel analysis is
+    implemented
+  cap: HOLD
 - surface: froned-dashbord
   gap: test script 'playwright test' needs a browser runner the harness does not drive
   cap: HOLD
 - surface: (tree)
-  gap: working tree is dirty (243 entries)
+  gap: working tree is dirty (103 entries)
   cap: HOLD
 ambiguities:
-- 'pipeline/ and common/ai_cli.py, common/memory.py are untracked: in scope as deliverable code, provenance unverifiable'
 - .env exists in the working tree (ignored); gitleaks-dir scope excludes it by allowlist, history checks cover whether it
   was ever committed
 harness:
@@ -1439,4 +2067,80 @@ iteration:
   changed:
   - froned-dashbord
   removed: []
+  added: []
+- date: '2026-10-22T20:57:57+00:00'
+  kind: update
+  unchanged: []
+  changed:
+  - (root)
+  - .research
+  - common
+  - course
+  - cutshort_bot
+  - froned-dashbord
+  - hirist_bot
+  - instahyre_bot
+  - legacy
+  - linkedin_bot
+  - naukri_bot
+  - pipeline
+  - scripts
+  - sites_bot
+  - tests
+  - web
+  - wellfound_bot
+  removed:
+  - .kiro
+  added:
+  - docker
+  - output
+- date: '2026-10-23T04:19:41+00:00'
+  kind: update
+  unchanged:
+  - (root)
+  - .research
+  - common
+  - course
+  - cutshort_bot
+  - docker
+  - froned-dashbord
+  - hirist_bot
+  - instahyre_bot
+  - legacy
+  - linkedin_bot
+  - naukri_bot
+  - output
+  - pipeline
+  - scripts
+  - sites_bot
+  - tests
+  - web
+  - wellfound_bot
+  changed: []
+  removed: []
+  added: []
+- date: '2026-10-23T06:40:22+00:00'
+  kind: update
+  unchanged:
+  - .research
+  - common
+  - course
+  - cutshort_bot
+  - docker
+  - froned-dashbord
+  - hirist_bot
+  - instahyre_bot
+  - legacy
+  - linkedin_bot
+  - naukri_bot
+  - pipeline
+  - scripts
+  - sites_bot
+  - tests
+  - web
+  - wellfound_bot
+  changed:
+  - (root)
+  removed:
+  - output
   added: []

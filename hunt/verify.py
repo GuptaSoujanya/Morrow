@@ -174,6 +174,10 @@ def _verify_docs(
         records[str(rid)] = record
         for issue in record.get("issues") or []:
             iid = issue.get("id")
+            previous = issues.get(str(iid))
+            if previous and any(previous.get(key) != issue.get(key) for key in ("severity", "critical_class")):
+                verdict.reject(f"conflicting duplicate issue {iid}")
+                verdict.cap("BLOCK", "duplicate identity changes the deterministic severity or class")
             want = issue_id(
                 issue.get("instrument", ""), issue.get("rule", ""), issue.get("path", ""), issue.get("anchor", "")
             )
@@ -192,6 +196,7 @@ def _verify_docs(
             raw_path = hunt.parent / str(rel)
             if not raw_path.exists():
                 verdict.notes.append(f"record {rid} raw artifact {rel} is absent (volatile results)")
+                verdict.cap("HOLD", f"required raw artifact absent: {rel}")
             elif sha256_file(raw_path) != digest:
                 verdict.reject(f"record {rid} raw artifact {rel} does not match its recorded digest")
         try:
@@ -210,6 +215,8 @@ def _verify_docs(
             verdict.cap(
                 instrument.cap_when_absent, f"{name} failed with exit {record.get('exit_code')} and no parsable output"
             )
+        elif record.get("status") == "failed":
+            verdict.cap(instrument.cap_when_absent, f"{name} exited outside its allowed exit codes")
         elif record.get("parser") == "failed":
             verdict.cap(instrument.cap_when_absent, f"{name} output unparsable")
     scope_path = hunt / "scope.yaml"
@@ -227,6 +234,26 @@ def _verify_docs(
     for entry in evidence_doc.get("liveness") or []:
         if not (isinstance(entry.get("clean"), bool) and isinstance(entry.get("positive"), bool)):
             verdict.reject(f"liveness proof for {entry.get('instrument')} is not boolean")
+        halves = entry.get("halves")
+        if not isinstance(halves, dict):
+            verdict.cap("HOLD", f"liveness for {entry.get('instrument')} lacks underlying half results")
+            continue
+        for half in ("clean", "positive"):
+            result = halves.get(half, {})
+            count = result.get("issues")
+            supported = (
+                result.get("status") == "ok"
+                and result.get("parser", "none") in ("none", "ok")
+                and isinstance(count, int)
+                and (count == 0 if half == "clean" else count > 0)
+            )
+            if entry.get(half) != supported:
+                verdict.reject(f"liveness {entry.get('instrument')} {half} contradicts its underlying result")
+                verdict.cap("BLOCK", "liveness proof inconsistent")
+            for rel, digest in result.get("raw_digests", {}).items():
+                path = hunt.parent / rel
+                if not path.is_file() or sha256_file(path) != digest:
+                    verdict.cap("BLOCK", f"liveness artifact missing or changed: {rel}")
     liveness = {str(e.get("instrument")): e for e in evidence_doc.get("liveness") or []}
     for name in sorted(required_present):
         entry = liveness.get(name)
@@ -268,6 +295,8 @@ def _verify_docs(
                 verdict.cap("BLOCK", f"blocked run {rid} cited as evidence")
             elif record.get("status") == "failed" and record.get("parser") != "ok":
                 verdict.reject(f"{fid} cites {rid} which failed without parsable output")
+            if record.get("parser") == "failed":
+                verdict.reject(f"{fid} cites {rid} whose parser failed")
         if not cited_issues:
             verdict.reject(f"{fid} cites no issues")
         max_rank = -1
@@ -281,6 +310,8 @@ def _verify_docs(
             max_rank = max(max_rank, severity_rank(str(issue.get("severity", "MEDIUM"))))
             cited_issue_ids.add(iid)
         severity = str(finding.get("severity"))
+        if max_rank == severity_rank("CRITICAL") and severity != "CRITICAL":
+            verdict.cap("BLOCK", f"{fid} lowered a hash-bound CRITICAL issue below its severity floor")
         if max_rank >= 0 and severity_rank(severity) > max_rank:
             verdict.reject(f"{fid} severity {severity} is above every cited issue ({SEVERITIES[max_rank]})")
         if not finding.get("anchors"):
@@ -340,6 +371,8 @@ def _verify_docs(
             f"omitted issue {iid} ({issue.get('instrument')} {issue.get('rule')} "
             f"{issue.get('severity')} {issue.get('path')})"
         )
+    if any(i.get("severity") == "CRITICAL" for i in issues.values()):
+        verdict.cap("HOLD", "hash-bound CRITICAL evidence cannot be waived or triaged into SHIP")
 
     # Empty all-clear over nonempty evidence.
     if not findings and not triaged and issues:
@@ -403,3 +436,23 @@ def _verify_provenance(verdict: Verdict, evidence_doc: dict[str, Any], hunt: Pat
     for record in evidence_doc.get("records") or []:
         if record.get("instrument") not in known:
             verdict.cap("HOLD", f"record for unregistered instrument {record.get('instrument')}")
+    scope_doc = _load(scope_path) if scope_path.exists() else {}
+    if not isinstance(scope_doc, dict):
+        return
+    for rel, expected in (scope_doc.get("inventory") or {}).get("source_hashes", {}).items():
+        path = hunt.parent / rel
+        if not path.is_file() or sha256_file(path) != expected:
+            verdict.cap("HOLD", f"target source changed since scoping: {rel}")
+    commands = {i["name"]: i.get("argv") for i in scope_doc.get("instruments", []) if i.get("argv")}
+    for record in evidence_doc.get("records", []):
+        name = record.get("instrument")
+        if name in commands and record.get("argv") != commands[name]:
+            verdict.cap("HOLD", f"instrument command differs from bound scope: {name}")
+    for rel, expected in prov.get("configs", {}).items():
+        path = hunt.parent / rel
+        if not path.is_file() or sha256_file(path) != expected:
+            verdict.cap("BLOCK", f"scanner configuration changed since provenance: {rel}")
+    database = (prov.get("databases") or {}).get("trivy", {})
+    db_path = hunt / "results" / "trivy" / "db" / "trivy.db"
+    if database.get("db_sha256") and (not db_path.is_file() or sha256_file(db_path) != database["db_sha256"]):
+        verdict.cap("BLOCK", "pinned vulnerability database no longer matches its digest")

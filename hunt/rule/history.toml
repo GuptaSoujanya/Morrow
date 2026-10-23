@@ -1,0 +1,8 @@
+title = "HOUND full-history rules, includes historical secret stores"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Only audit fixtures and rules are excluded from history"
+paths = ['''^hunt/''']

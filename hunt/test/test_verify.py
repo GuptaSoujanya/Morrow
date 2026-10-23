@@ -201,7 +201,13 @@ def test_unknown_issue_citation_is_rejected(harness: dict[str, Any]) -> None:
 def test_coverage_gap_caps_hold_even_when_clean(harness: dict[str, Any]) -> None:
     harness["evidence"]["records"] = [record(name, []) for name in ("bandit", "semgrep", "ruff")]
     harness["evidence"]["liveness"] = [
-        {"instrument": name, "clean": True, "positive": True} for name in ("bandit", "semgrep", "ruff")
+        {
+            "instrument": name,
+            "clean": True,
+            "positive": True,
+            "halves": {"clean": {"issues": 0, "status": "ok"}, "positive": {"issues": 1, "status": "ok"}},
+        }
+        for name in ("bandit", "semgrep", "ruff")
     ]
     harness["evidence"]["gaps"] = [{"surface": "scripts", "gap": "launchd not exercised", "cap": "HOLD"}]
     harness["findings"]["findings"] = []
@@ -219,7 +225,13 @@ def test_coverage_gap_caps_hold_even_when_clean(harness: dict[str, Any]) -> None
 def test_clean_evidence_with_intact_provenance_supports_ship(harness: dict[str, Any]) -> None:
     harness["evidence"]["records"] = [record(name, []) for name in ("bandit", "semgrep", "ruff")]
     harness["evidence"]["liveness"] = [
-        {"instrument": name, "clean": True, "positive": True} for name in ("bandit", "semgrep", "ruff")
+        {
+            "instrument": name,
+            "clean": True,
+            "positive": True,
+            "halves": {"clean": {"issues": 0, "status": "ok"}, "positive": {"issues": 1, "status": "ok"}},
+        }
+        for name in ("bandit", "semgrep", "ruff")
     ]
     harness["findings"]["findings"] = []
     harness["findings"]["counts"] = {

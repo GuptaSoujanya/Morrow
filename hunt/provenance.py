@@ -26,6 +26,7 @@ HARNESS_GLOBS: tuple[str, ...] = (
     "fixture/**/*",
     "test/*.py",
     "sandbox/*.py",
+    "probe/*.yaml",
 )
 
 

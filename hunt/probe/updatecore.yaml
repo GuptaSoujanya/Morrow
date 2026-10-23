@@ -1,0 +1,235 @@
+lane: updatecore
+lane_run:
+  update_attempt:
+    task: /root/core
+    status: completed
+    note: >-
+      Current source reinspection and fixture-only dynamic reproductions; no target edits or external actions.
+entry_points:
+  - kind: cli
+    name: python3 -m pipeline --dry-run --only learn
+    path: pipeline/run.py
+    line: 369
+    note: >-
+      Builds the learning stage and invokes the writing callback even in a dry run.
+  - kind: cli
+    name: python3 -m pipeline continue --only research:resume
+    path: pipeline/run.py
+    line: 165
+    note: >-
+      Resume-study generation uses the same persisted checkpoint as other stages.
+  - kind: cli
+    name: python3 -m pipeline --bots 2
+    path: pipeline/lanes.py
+    line: 119
+    note: >-
+      Naukri and board profile writers run in independent subprocesses and share .memory/profiles.json.
+  - kind: import
+    name: AnswerEngine.resolve
+    path: common/answers.py
+    line: 368
+    note: >-
+      Recruiter questions trigger strict answers followed by a judge; judged typed answers fill existing answers.txt blanks.
+  - kind: import
+    name: learning_memory.transact, set_document, finish_plan_day
+    path: common/learning_memory.py
+    line: 58
+    note: >-
+      Shared durable state is called by the dashboard, course completion API, and learning CLI.
+  - kind: http
+    name: standalone course HTTP server and dashboard-hosted progress plugin
+    path: course/serve.py
+    line: 29
+    note: >-
+      The standalone server listens on loopback; the new progress plugin activates only on /course/ routes.
+pruned:
+  - path: common/learning_memory.py
+    reason: >-
+      The tested corruption, stale-generator save, reopen, and same-day CLI-retry hypotheses did not reproduce. These transactions use flock plus atomic replacement. Passing controls verify these examples only, not all histories or failures.
+  - path: pipeline/learning.py and common/memory.py
+    reason: >-
+      Prior pipeline-01 through pipeline-07 and pipeline-12 anchors no longer describe the relevant current branches. Current settings failure raises; dry-run fresh reset is guarded; malformed JSON raises; resume index handles an empty file and uses a separate content variable; missing resume raises AIError; contact patterns expanded; Memory._update rereads under flock. The still-reachable dry-run generation and missing-output cases are independently reproduced below.
+  - path: common/answers.py add_blank and new judged-answer append
+    reason: >-
+      The former unescaped abstention/comment and new-block append paths now collapse whitespace. This does not cover assist.fill_answer, which remains vulnerable when a blank already exists and is tested separately.
+  - path: course/serve.py explicit requested paths
+    reason: >-
+      Fixture-only direct checks reject dotfiles, parent traversal, and an explicitly requested symlink outside the site. No target symlink was planted and no live server was started. This is not a complete HTTP authorization proof.
+  - path: common/ai_cli.py command_for
+    reason: >-
+      Shell injection is pruned because prompt and options are separate argv elements with no shell. Actual installed Claude/Kiro permission behavior was not invoked or inferred from argv; that remains a coverage limitation.
+  - path: course/learning-progress.js
+    reason: >-
+      Static review found no confirmed route or save defect. The plugin uses textContent, checks navigation changes after load, and passes explicit booleans; browser integration and transport failures were not dynamically exercised by this lane.
+coverage_gaps:
+  - name: updatecore-os-isolation
+    cap: HOLD
+    reason: >-
+      Pytest sockets were disabled, credentials were stripped, and writes used fixture paths, but an OS-hermetic pinned sandbox was not established. Python subprocesses are not constrained by pytest-socket.
+  - name: updatecore-cli-permissions
+    cap: HOLD
+    reason: >-
+      Actual Claude/Kiro tool authorization and permission defaults were not exercised; no CLI or external service was invoked.
+  - name: updatecore-course-browser
+    cap: HOLD
+    reason: >-
+      New course progress JavaScript received static review only in this lane; actual Docsify and dashboard integration needs browser automation coverage.
+executions:
+  - name: preliminary-reproduction-setup
+    exit_code: 1
+    parser_status: setup-error
+    result: >-
+      Seven pytest fixture setup errors because the new lane artifact parent directory did not exist; no defect claim relies on this execution.
+  - name: fixture-reproductions
+    exit_code: 1
+    parser_status: ok
+    artifact: hunt/results/updatecore/junit.xml
+    result: >-
+      Four contract assertions fail and three narrow controls pass; failure details are to be ingested by the orchestrator into evidence.yaml.
+hypotheses:
+  - key: updatecore-01
+    title: >-
+      Pipeline dry run still calls AI and writes learning notes and durable memory
+    critical_class: logic
+    severity: MEDIUM
+    anchors:
+      - path: pipeline/run.py
+        line: 245
+        snippet: |-
+          code, detail = _run(stage.name, stage.work)
+          if args.dry_run:
+      - path: pipeline/run.py
+        line: 150
+        snippet: |-
+          stages = [Stage("learn", lambda: _ai_stage(lambda: learning.write_today(ask, today=day)), False,
+      - path: pipeline/learning.py
+        line: 102
+        snippet: |-
+          return learning_memory.transact(root.resolve().parent.parent)["plan"]
+      - path: pipeline/run.py
+        line: 339
+        snippet: |-
+          parser.add_argument("--dry-run", action="store_true", help="pass --dry-run to the bots and record nothing")
+    reachability: >-
+      A local caller executes python3 -m pipeline --dry-run --only learn, or previews the full pipeline with --dry-run.
+    defect: >-
+      The dry-run guard executes after stage.work. The learn stage has no dry-run argument and invokes write_today. Its new load_progress path creates .memory/learning.json before generation, and generation writes the week, dated note, and today.md. The fixture observed one AI request, durable learning memory, and a daily note despite dry_run=True.
+    contract: >-
+      The CLI promises to record nothing in a dry run. A preview must not create or overwrite durable learning state or generated notes.
+    repro: >-
+      Run test_updatecore_01_dry_run_does_not_generate_or_record_learning. The AI call is replaced with a deterministic seven-day fixture and all paths resolve under pytest tmp_path. The test expects zero AI requests and no memory or daily note; it observes 1, true, true.
+    reproduction_status: dynamically-confirmed-with-mocked-AI
+    remediation: >-
+      Do not execute side-effecting writing stages during dry-run; provide a preview callback or explicit dry-run propagation before load_progress and generation.
+    confidence: high
+  - key: updatecore-02
+    title: >-
+      Deleted resume study outputs are skipped by a completed checkpoint
+    critical_class: logic
+    severity: LOW
+    anchors:
+      - path: pipeline/run.py
+        line: 165
+        snippet: |-
+          stages.append(Stage("research:resume", lambda: _ai_stage(lambda: learning.fill_resume_learning(ask)), True))
+      - path: common/memory.py
+        line: 158
+        snippet: |-
+          return entry["status"] == DONE and all(Path(p).exists() for p in entry.get("outputs") or ())
+      - path: pipeline/run.py
+        line: 226
+        snippet: |-
+          if all(mem.is_done(s.name) for s in stages):
+    reachability: >-
+      After a successful research:resume stage, a generated file is deleted or moved and the user invokes pipeline continue on the same date.
+    defect: >-
+      research:resume declares the default empty output tuple. Memory records no output paths, so its all() check remains true after a generated topic disappears. A subsequent run reports the stage and day done without invoking fill_resume_learning. The fixture deletes an actually generated topic and proves the second run leaves it absent.
+    contract: >-
+      The pipeline module documents that a stage counts as done only when its files are still there; missing resume-study files should be written.
+    repro: >-
+      Run test_updatecore_02_missing_resume_output_is_regenerated. Generate all topics using mocked AI and a synthetic resume, delete the first topic, then resume with a new Memory instance. The expected regenerated file remains absent while the command returns success.
+    reproduction_status: dynamically-confirmed-with-mocked-AI
+    remediation: >-
+      Record all resume-study output paths, including the index, or provide a stage-specific completeness predicate that invalidates the checkpoint when a topic is missing.
+    confidence: high
+  - key: updatecore-03
+    title: >-
+      Independent profile writers overwrite another process's committed profile history
+    critical_class: concurrency
+    severity: MEDIUM
+    anchors:
+      - path: common/memory.py
+        line: 88
+        snippet: |-
+          with _PROFILES_LOCK:
+              profiles = load_profiles(folder)
+      - path: common/memory.py
+        line: 98
+        snippet: |-
+          tmp = path.with_suffix(".tmp")
+          tmp.write_text(json.dumps(profiles, indent=1, sort_keys=True), encoding="utf-8")
+          tmp.replace(path)
+      - path: sites_bot/platforms.py
+        line: 619
+        snippet: |-
+          memory.record_profile(board.name, action, link, notes)
+      - path: naukri_bot/update_profile.py
+        line: 506
+        snippet: |-
+          memory.record_profile("naukri", memory.PROFILE_UPDATED, PROFILE_URL, "headline re-saved")
+      - path: pipeline/run.py
+        line: 117
+        snippet: |-
+          lanes_module.run_isolated(lane, command, env, containers))
+    reachability: >-
+      A supported pipeline --bots N or --containers run allows two board-profile subprocesses to call record_profile against the shared .memory directory.
+    defect: >-
+      _PROFILES_LOCK is a threading.Lock and does not serialize distinct processes. Each writer loads the same old dictionary and later replaces the whole file. In a deterministic valid interleaving, both readers see an empty profile set, hirist commits successfully, then naukri commits its stale snapshot successfully. The final JSON retains only naukri. The fixed shared .tmp path also exposes a separate collision window, but that additional consequence is not claimed as dynamically reproduced.
+    contract: >-
+      common.memory describes profiles.json as tracking every board profile and its history; the parallel pipeline deliberately runs these writers in independent processes.
+    repro: >-
+      Run test_updatecore_03_independent_profile_writers_preserve_both_commits. Two real child interpreters import memory.record_profile. A wrapper around load_profiles pauses each after its real read, allowing the parent to schedule commits without modifying target code. Both children exit zero; the expected set {hirist,naukri} contains only naukri on disk.
+    reproduction_status: dynamically-confirmed-with-scheduled-processes
+    remediation: >-
+      Use an interprocess lock around read-modify-write, reread after acquiring it, and write through a unique temporary file before replacement, as learning_memory.transact already does.
+    confidence: high
+  - key: updatecore-04
+    title: >-
+      Filling an existing blank with a judged answer still injects trusted Q/A records
+    critical_class: injection
+    severity: MEDIUM
+    anchors:
+      - path: common/assist.py
+        line: 252
+        snippet: |-
+          lines[cursor] = "A: %s" % answer
+          lines.insert(start, "# %s" % note)
+      - path: common/answers.py
+        line: 496
+        snippet: |-
+          updated = assist.fill_answer(text, question, answer, note) if key in self.book._by_key else None
+      - path: common/llm.py
+        line: 740
+        snippet: |-
+          answer, reason, evidence = answer.strip(), reason.strip(), evidence.strip()
+      - path: common/answers.py
+        line: 457
+        snippet: |-
+          self._keep_judged(question, answer, judged, saved=not options and not judged["depends_on_posting"])
+      - path: common/answers.py
+        line: 589
+        snippet: |-
+          source=AnswerSource.DATA,
+          confidence=1.0,
+    reachability: >-
+      In automatic answer mode with judging enabled, a screening question already exists as a blank in answers.txt, the strict pass abstains, and the model's judged answer or reason contains newline-delimited Q:/A: text. Model output is the untrusted input; no actual adversarial model prompt success is claimed.
+    defect: >-
+      The old injection mitigation flattens newly appended blocks and abstention comments but skips the existing-blank branch. judge_answer only strips outer whitespace, accepts a short newline-bearing answer with a verbatim evidence quote, and _keep_judged passes it to assist.fill_answer, which interpolates it without escaping. The real resolve path accepts a fixture judge reply that fills the original answer with No and creates a separate Are you a US citizen? answer of Yes. Reloaded AnswerBook treats it as the user's answer and the engine can replay it from DATA at confidence 1.0, bypassing the judgment restriction for citizenship questions.
+    contract: >-
+      Screening answers are fail-closed; answers.txt is trusted as the user's own answers. Untrusted text for one question must not create an independent user-authorized answer.
+    repro: >-
+      Run test_updatecore_04_judged_blank_fill_cannot_create_trusted_answers. A local mocked LLM first abstains then returns an accepted judge result with answer No\nQ: Are you a US citizen?\nA: Yes and evidence Python from the synthetic resume. The actual AnswerEngine.resolve path writes the forged record. No model, network, employer form, or user data is used.
+    reproduction_status: dynamically-confirmed-with-mocked-model-output
+    remediation: >-
+      Flatten or reject embedded newlines and record delimiters in both answer and note at the shared fill_answer persistence boundary; apply the same boundary protection to direct assist writes and test existing-blank plus new-block paths.
+    confidence: high

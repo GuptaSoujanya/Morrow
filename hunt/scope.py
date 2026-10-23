@@ -18,7 +18,7 @@ from typing import Any
 
 import yaml
 
-from identity import sha256_file, sha256_text
+from identity import sha256_file, sha256_paths, sha256_text
 from registry import EXCLUDES, Context, Instrument, applicable, argv, default_targets, locate, node_test_targets
 from runner import git
 from schema import SCOPE_SCHEMA
@@ -46,7 +46,7 @@ def _tracked(root: Path) -> tuple[list[str], list[str]]:
 
 def _excluded(rel: str) -> bool:
     head = rel.split("/", 1)[0]
-    return head in EXCLUDES or "/node_modules/" in rel or "/__pycache__/" in rel
+    return rel == "QUARRY.md" or head in EXCLUDES or "/node_modules/" in rel or "/__pycache__/" in rel
 
 
 def _is_shell(root: Path, rel: str) -> bool:
@@ -200,6 +200,8 @@ def build(root: Path, hunt: Path, previous: dict[str, Any] | None = None) -> tup
             break
     if notebooks:
         ecosystems.add("python")
+    if any(Path(f).name == "Dockerfile" or Path(f).name.startswith("docker-compose") for f in files):
+        ecosystems.add("container")
 
     sha_code, sha_out = git(root, "rev-parse", "HEAD")
     conditions: set[str] = set()
@@ -284,6 +286,7 @@ def build(root: Path, hunt: Path, previous: dict[str, Any] | None = None) -> tup
             kinds.append("data")
         uses = _uses(root, rels)
         surface = _surface(name, "+".join(kinds) or "other", rels, "", sorted(uses))
+        surface["sha256"] = sha256_paths([root / r for r in rels if (root / r).is_file()], root)
         covering = [
             i.name
             for i in instruments
@@ -303,6 +306,49 @@ def build(root: Path, hunt: Path, previous: dict[str, Any] | None = None) -> tup
         for use in sorted(uses):
             gaps.append({"surface": name, "gap": f"{use}: {UNINSTRUMENTED[use]}", "cap": "HOLD"})
         surfaces.append(surface)
+
+    if "container" in ecosystems:
+        gaps.append(
+            {
+                "surface": "container-image",
+                "gap": "No immutable built image or image SBOM is available for OS package vulnerability scanning; "
+                "Dockerfile checks cover configuration only",
+                "cap": "HOLD",
+            }
+        )
+    gaps.extend(
+        [
+            {
+                "surface": "sandbox",
+                "gap": "Reproductions use pinned Python dependencies, mocked integrations and disabled Python sockets; "
+                "OS filesystem, native sockets, subprocess isolation and a pinned OS image are not established",
+                "cap": "HOLD",
+            },
+            {
+                "surface": "judge",
+                "gap": "Contested semantic conclusions have no repeated randomized trials or perturbation suite; "
+                "no contested clearance is accepted",
+                "cap": "HOLD",
+            },
+            {
+                "surface": "instructions",
+                "gap": "Referenced RTK.md was not found in the workspace or searched instruction roots",
+                "cap": "HOLD",
+            },
+            {
+                "surface": "dashboard-tests",
+                "gap": "Nested dashboard Python suite and browser integration suite "
+                "are outside the legacy root pytest instrument",
+                "cap": "HOLD",
+            },
+            {
+                "surface": "supply-kev",
+                "gap": "Pinned vulnerability database is scanned, but no separate pinned KEV catalog "
+                "or native installed wheel analysis is implemented",
+                "cap": "HOLD",
+            },
+        ]
+    )
 
     for instrument in instruments:
         if locate(instrument, ctx) is None:
@@ -340,7 +386,8 @@ def build(root: Path, hunt: Path, previous: dict[str, Any] | None = None) -> tup
 
     policy: list[dict[str, Any]] = []
     for instrument in instruments:
-        raw = results / "raw" / f"{instrument.name}.json"
+        suffix = "xml" if instrument.name in ("pytest-target", "sandbox", "node-test") else "json"
+        raw = results / "raw" / f"{instrument.name}.{suffix}"
         policy.append(
             {
                 "name": instrument.name,
@@ -352,6 +399,11 @@ def build(root: Path, hunt: Path, previous: dict[str, Any] | None = None) -> tup
                 "database": instrument.database,
                 "cap_when_absent": instrument.cap_when_absent,
                 "available": locate(instrument, ctx) is not None,
+                "binary": instrument.binary,
+                "conditions": list(instrument.conditions),
+                "parser_required": instrument.parser,
+                "raw_required": instrument.raw,
+                "exit_ok": list(instrument.exit_ok),
                 "argv": argv(instrument, ctx, default_targets(instrument, ctx), raw),
                 "targets": default_targets(instrument, ctx),
             }
@@ -382,6 +434,7 @@ def build(root: Path, hunt: Path, previous: dict[str, Any] | None = None) -> tup
             "python_dirs": python_dirs,
             "shell_targets": shell_targets,
             "js_targets": js_targets,
+            "source_hashes": {f: sha256_file(root / f) for f in files if (root / f).is_file()},
         },
         "ecosystems": sorted(ecosystems),
         "conditions": sorted(conditions),
@@ -430,7 +483,8 @@ def _product_types(root: Path, files: list[str]) -> list[str]:
 def _ambiguities(root: Path, files: list[str]) -> list[str]:
     out: list[str] = []
     untracked_dirs = sorted({f.split("/", 1)[0] for f in files if "/" in f})
-    if "pipeline" in untracked_dirs:
+    code, tracked = git(root, "ls-files", "--", "pipeline/")
+    if "pipeline" in untracked_dirs and code == 0 and not tracked.strip():
         out.append(
             "pipeline/ and common/ai_cli.py, common/memory.py are untracked: "
             "in scope as deliverable code, provenance unverifiable"
@@ -451,8 +505,8 @@ def _iteration(previous: dict[str, Any] | None, surfaces: list[dict[str, Any]]) 
         return log
     before = {s["name"]: s for s in previous.get("surfaces") or []}
     after = {s["name"]: s for s in surfaces}
-    unchanged = sorted(n for n in before if n in after and before[n].get("files") == after[n].get("files"))
-    changed = sorted(n for n in before if n in after and before[n].get("files") != after[n].get("files"))
+    unchanged = sorted(n for n in before if n in after and before[n].get("sha256") == after[n].get("sha256"))
+    changed = sorted(n for n in before if n in after and before[n].get("sha256") != after[n].get("sha256"))
     removed = sorted(n for n in before if n not in after)
     added = sorted(n for n in after if n not in before)
     log.append(

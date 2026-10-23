@@ -15,7 +15,8 @@ DAY = date(2026, 10, 22)
 
 
 def _args(**kw):
-    base = dict(fresh=False, dry_run=False, env=None, verbose=False, cli=None, only=[], skip=[], agents=2, today=DAY)
+    base = dict(fresh=False, dry_run=False, env=None, verbose=False, cli=None, only=[], skip=[], agents=2,
+                bots=1, redo=False, containers=False, today=DAY)
     base.update(kw)
     return argparse.Namespace(**base)
 
