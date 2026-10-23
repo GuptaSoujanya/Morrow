@@ -1,6 +1,6 @@
-# Points every submodule listed in .gitmodules (froned-dashbord, data, .memory,
-# hunt, morrow-api) at the newest commit on its main and pushes that to Morrow's
-# main. Each submodule that moved gets its own commit:
+# Points every submodule listed in .gitmodules at the newest commit on its main
+# and pushes that to Morrow's main. Each submodule that moved gets its own
+# commit:
 #
 #   ci(<submodule>): bump submodule to commit <sha>
 #
@@ -8,10 +8,15 @@
 # every hour as a catch-up, or by hand from the Actions tab.
 #
 # Needs the secret MORROW_BUMP_TOKEN: a fine-grained token with Contents
-# read/write on Morrow and on every submodule repo (Morrow-frontend, Morrow-data,
-# Morrow-memory, Morrow-hunt, Morrow-api). The default GITHUB_TOKEN cannot read
-# the other private repos. Adding a submodule means adding its repo to the token
-# and copying bump-morrow.yml plus the secret into that repo.
+# read/write on Morrow, and ideally on every submodule repo. The default
+# GITHUB_TOKEN cannot read the other private repos.
+#
+# A submodule repo the token cannot read is still bumped: the submodule-updated
+# dispatch (and the manual inputs below) carry the repo and commit sha, and the
+# submodule pointer is set from that without fetching the repo. Only the hourly
+# catch-up needs read access, so a repo missing from the token is just skipped
+# there with a warning. Adding a submodule means copying bump-morrow.yml plus the
+# secret into that repo.
 name: Bump submodules
 
 on:
@@ -20,6 +25,15 @@ on:
   schedule:
     - cron: "17 * * * *"
   workflow_dispatch:
+    inputs:
+      repository:
+        description: "Submodule repo to bump without fetching it, e.g. GuptaSoujanya/Morrow-hunt (leave empty to fetch every submodule)"
+        required: false
+        default: ""
+      sha:
+        description: "Commit sha of that repo's main to point the submodule at"
+        required: false
+        default: ""
 
 concurrency:
   group: bump-submodules
@@ -34,12 +48,15 @@ jobs:
           ref: main
           token: ${{ secrets.MORROW_BUMP_TOKEN }}
           # Submodules are cloned one at a time below so a repo the token cannot
-          # reach is skipped with a warning instead of failing the whole run.
+          # reach is handled per submodule instead of failing the whole run.
           submodules: false
 
       - name: Bump each submodule that moved, one commit apiece
         env:
           MORROW_BUMP_TOKEN: ${{ secrets.MORROW_BUMP_TOKEN }}
+          # Filled by a submodule-updated dispatch or by the manual inputs.
+          PAYLOAD_REPO: ${{ github.event.client_payload.repository || inputs.repository }}
+          PAYLOAD_SHA: ${{ github.event.client_payload.sha || inputs.sha }}
         run: |
           # Submodule clones do not inherit the checkout token, so send every
           # github.com fetch and push through it here.
@@ -47,21 +64,40 @@ jobs:
           git config user.name "morrow-bot"
           git config user.email "morrow-bot@users.noreply.github.com"
           run_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          payload_repo=$(echo "${PAYLOAD_REPO}" | tr '[:upper:]' '[:lower:]')
+          if [ -n "${PAYLOAD_SHA}" ] && ! echo "${PAYLOAD_SHA}" | grep -Eq '^[0-9a-f]{40}$'; then
+            echo "::error::sha '${PAYLOAD_SHA}' is not a full 40-character commit sha."
+            exit 1
+          fi
           bumped=0
-          for path in $(git config --file .gitmodules --get-regexp '^submodule\..*\.path$' | awk '{print $2}'); do
+          for name in $(git config --file .gitmodules --get-regexp '^submodule\..*\.path$' | sed -E 's/^submodule\.(.*)\.path .*$/\1/'); do
+            path=$(git config --file .gitmodules "submodule.${name}.path")
+            # "https://github.com/Owner/Repo.git" -> "owner/repo", to match the payload.
+            repo=$(git config --file .gitmodules "submodule.${name}.url" \
+              | sed -E 's#^https://github.com/##; s#\.git$##' | tr '[:upper:]' '[:lower:]')
             before=$(git rev-parse "HEAD:${path}")
-            if ! git submodule update --init --remote --checkout -- "${path}"; then
+            after=""
+            detail=""
+            if git submodule update --init --remote --checkout -- "${path}"; then
+              after=$(git -C "${path}" rev-parse HEAD)
+              detail=$(git -C "${path}" log --oneline "${before}..${after}" 2>/dev/null || true)
+            elif [ -n "${payload_repo}" ] && [ "${repo}" = "${payload_repo}" ]; then
+              after="${PAYLOAD_SHA}"
+              detail="Pointer set from the ${GITHUB_EVENT_NAME} payload; MORROW_BUMP_TOKEN cannot read ${PAYLOAD_REPO}, so the commit was not fetched."
+              echo "${path}: ${repo} not readable with MORROW_BUMP_TOKEN, using sha from the ${GITHUB_EVENT_NAME} payload."
+            else
               echo "::warning::Could not fetch ${path} (is its repo on MORROW_BUMP_TOKEN?); skipping it this run."
               continue
             fi
-            after=$(git -C "${path}" rev-parse HEAD)
             if [ "${before}" = "${after}" ]; then
               echo "${path}: already at ${after:0:7}"
               continue
             fi
-            git add "${path}"
+            # Write the submodule pointer straight into the index. This works
+            # whether or not the submodule was actually checked out above.
+            git update-index --add --cacheinfo "160000,${after},${path}"
             git commit -q -m "ci(${path}): bump submodule to commit ${after:0:7}" \
-              -m "$(git -C "${path}" log --oneline "${before}..${after}" 2>/dev/null || true)" \
+              -m "${detail}" \
               -m "Bumped-by: CI/CD (${GITHUB_EVENT_NAME})
           CI-Run: ${run_url}"
             git log -1 --format='%h %s'
