@@ -1,0 +1,12 @@
+[submodule "froned-dashbord"]
+	path = froned-dashbord
+	url = https://github.com/GuptaSoujanya/Morrow-frontend.git
+	branch = main
+[submodule "data"]
+	path = data
+	url = https://github.com/GuptaSoujanya/Morrow-data.git
+	branch = main
+[submodule ".memory"]
+	path = .memory
+	url = https://github.com/GuptaSoujanya/Morrow-memory.git
+	branch = main

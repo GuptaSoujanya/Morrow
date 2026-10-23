@@ -65,15 +65,12 @@ resume/
 # LinkedIn drafts, cards, state, and the LinkedIn browser session
 linkedin/
 .browser-profile-linkedin/
-# Your data (facts, answers, career-site accounts, backups) and daily reports with run logs
-data/
+# Daily reports with run logs (data/ itself is the Morrow-data submodule)
 reports/
 
 # Agent session continuation state (local tooling, not project code)
 .omo/
 
-# The morning pipeline's day checkpoint (python3 -m pipeline)
-.memory/
 # HOUND volatile scanner artifacts
 hunt/results/
 .kiro/agents/
