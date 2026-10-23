@@ -14,3 +14,7 @@
 	path = morrow-api
 	url = https://github.com/GuptaSoujanya/Morrow-api.git
 	branch = main
+[submodule "hunt"]
+	path = hunt
+	url = https://github.com/GuptaSoujanya/Morrow-hunt.git
+	branch = main

@@ -1,4 +1,0 @@
-# Planted positive fixture for the Python supply-chain scan.
-# PyYAML 5.1 carries CVE-2020-1747 (full_load code execution, CVSS 9.8).
-pyyaml==5.1
-requests==2.19.0

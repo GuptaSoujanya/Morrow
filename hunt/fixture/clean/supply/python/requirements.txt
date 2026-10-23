@@ -1,2 +1,0 @@
-# Clean fixture for the Python supply-chain scan.
-six==1.17.0
