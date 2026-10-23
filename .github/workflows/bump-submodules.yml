@@ -43,7 +43,11 @@ jobs:
             exit 0
           fi
           moved=$(git diff --cached --name-only | grep -v '^.gitmodules$' | paste -sd ' ' -)
-          git commit -q -m "Bump ${moved}" -m "$(git diff --cached --submodule=log)"
+          run_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          git commit -q -m "[ci-cd] Bump ${moved}" \
+            -m "$(git diff --cached --submodule=log)" \
+            -m "Bumped-by: CI/CD (${GITHUB_EVENT_NAME})
+          CI-Run: ${run_url}"
           # Someone may have pushed to main meanwhile: replay on top and retry.
           for attempt in 1 2 3; do
             if git push origin HEAD:main; then exit 0; fi
