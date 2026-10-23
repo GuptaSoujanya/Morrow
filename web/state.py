@@ -469,6 +469,9 @@ def todays_module(
 
 def studied(path: Optional[Path] = None) -> Set[str]:
     """Course paths you marked as read."""
+    if path is None:
+        from common import learning_memory
+        return {key for key, value in learning_memory.transact(APPLY, studied=STUDIED)["course"].items() if value["done"]}
     try:
         data = json.loads(_read(path or STUDIED) or "[]")
     except ValueError:
@@ -478,6 +481,11 @@ def studied(path: Optional[Path] = None) -> Set[str]:
 
 @_serialised
 def mark_studied(module_path: str, done: bool = True, path: Optional[Path] = None) -> Set[str]:
+    if path is None:
+        from common import learning_memory
+        title = next((m.title for m in course_modules(COURSE) if m.path == module_path), module_path)
+        data = learning_memory.set_course(APPLY, module_path, done, title, studied=STUDIED)
+        return {key for key, value in data["course"].items() if value["done"]}
     path = path or STUDIED
     read = studied(path)
     if done:

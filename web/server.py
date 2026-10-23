@@ -23,7 +23,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
-from urllib.parse import parse_qs, unquote, urlsplit
+from urllib.parse import parse_qs, unquote, urlsplit, quote
 
 from . import state
 from .state import Command
@@ -532,7 +532,12 @@ class Handler(BaseHTTPRequestHandler):
             elif route == "/course":
                 self.redirect("/course/")
             elif route.startswith("/course/"):
-                self.file(inside(state.COURSE, route[len("/course/"):]))
+                relative = route[len("/course/"):]
+                target = inside(state.COURSE, relative)
+                if relative and relative in {m.route for m in state.course_modules(state.COURSE)}:
+                    self.redirect("/course/#/" + quote(relative, safe="/"))
+                else:
+                    self.file(target)
             elif route.startswith("/reports/"):
                 self.file(inside(state.REPORTS, route[len("/reports/"):]))
             elif route == "/api/meta":
@@ -588,7 +593,9 @@ class Handler(BaseHTTPRequestHandler):
                 path = str(data.get("path", ""))
                 if path not in {m.path for m in state.course_modules(state.COURSE)}:
                     raise ValueError("only the modules in the course menu can be marked read")
-                state.mark_studied(path, bool(data.get("read", True)))
+                if not isinstance(data.get("read", True), bool):
+                    raise ValueError("read must be true or false")
+                state.mark_studied(path, data.get("read", True))
                 self.json({"ok": True, "read": sorted(state.studied())})
             elif route == "/api/file":
                 name = str(data.get("name", ""))
