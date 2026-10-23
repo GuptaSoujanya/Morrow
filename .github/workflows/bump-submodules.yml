@@ -38,7 +38,12 @@ jobs:
           submodules: false
 
       - name: Bump each submodule that moved, one commit apiece
+        env:
+          MORROW_BUMP_TOKEN: ${{ secrets.MORROW_BUMP_TOKEN }}
         run: |
+          # Submodule clones do not inherit the checkout token, so send every
+          # github.com fetch and push through it here.
+          git config --global url."https://x-access-token:${MORROW_BUMP_TOKEN}@github.com/".insteadOf "https://github.com/"
           git config user.name "morrow-bot"
           git config user.email "morrow-bot@users.noreply.github.com"
           run_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
