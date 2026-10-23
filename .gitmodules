@@ -10,3 +10,7 @@
 	path = .memory
 	url = https://github.com/GuptaSoujanya/Morrow-memory.git
 	branch = main
+[submodule "morrow-api"]
+	path = morrow-api
+	url = https://github.com/GuptaSoujanya/Morrow-api.git
+	branch = main
