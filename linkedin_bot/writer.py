@@ -178,7 +178,9 @@ _SCHEMA = (
 )
 
 
-def build_prompt(article: Article, voice: str, feedback: Optional[List[str]] = None) -> str:
+def build_prompt(
+    article: Article, voice: str, feedback: Optional[List[str]] = None, notes: str = ""
+) -> str:
     rules = """Write a LinkedIn post reacting to the article below, as the author described
 under VOICE. Return JSON only: %s
 
@@ -220,6 +222,11 @@ addressed to "LinkedIn fam"; advice lists.
     parts = [rules, "VOICE:\n" + voice.strip()]
     if feedback:
         parts.append("Rewrite; fix these problems:\n- " + "\n- ".join(feedback))
+    if notes:
+        parts.append(
+            "RESEARCH NOTES (from reading the full article; take the concrete detail "
+            "from here, and skip anything marked unsure)\n" + notes.strip()
+        )
     parts.append(
         "ARTICLE\nTitle: %s\nSource: %s\nURL: %s\n\n%s"
         % (article.title, article.source, article.url, article.text[:6000])
@@ -320,12 +327,70 @@ def check_draft(draft: Draft, article: Article) -> List[str]:
     return problems
 
 
-def write_post(client: Any, article: Article, voice: str = VOICE) -> Optional[Draft]:
-    """Up to three attempts; lint findings go back to the model between them."""
+_REVIEW_SCHEMA = '{"verdict": "publish or revise", "problems": ["string"]}'
+REVIEW_MAX_PROBLEMS = 4
+
+_REVIEW_PROMPT = """You are a strict editor for a software engineer's LinkedIn posts.
+Judge the draft below against the article, the research notes and the author facts.
+
+Ask "revise" only for real problems, each one a concrete fix of one sentence:
+- a fact, number or name that the article or notes do not support
+- a claim about the author beyond the AUTHOR FACTS
+- a hook that a scrolling reader would skip, or one that restates the headline
+- vague filler where the article gives a specific detail
+- a sentence that sounds like a press release or an AI assistant
+- slides that repeat the post instead of explaining the idea step by step
+At most %d problems. If the draft is good enough to publish, verdict "publish" and no problems.
+
+AUTHOR FACTS
+%s
+
+ARTICLE
+Title: %s
+URL: %s
+%s
+
+RESEARCH NOTES
+%s
+
+DRAFT POST
+%s
+
+CARD LINE: %s
+SLIDES
+%s"""
+
+
+def review(critic: Any, article: Article, draft: Draft, notes: str = "", voice: str = VOICE) -> List[str]:
+    """A second model's fixes for a draft that already passes the checks; [] means publish."""
+    slides = "\n".join("%s: %s" % (s["title"], s["body"]) for s in draft.slides) or "(none)"
+    prompt = _REVIEW_PROMPT % (
+        REVIEW_MAX_PROBLEMS, voice.strip(), article.title, article.url, article.text[:3000],
+        notes.strip() or "(none)", draft.text, draft.card_line, slides,
+    )
+    payload = critic.complete_json(prompt, _REVIEW_SCHEMA)
+    if not payload:
+        logger.warning("The reviewer returned nothing usable; keeping the draft")
+        return []
+    problems = payload.get("problems")
+    if str(payload.get("verdict", "")).strip().lower() != "revise" or not isinstance(problems, list):
+        return []
+    return [_clean_str(p) for p in problems if _clean_str(p)][:REVIEW_MAX_PROBLEMS]
+
+
+def write_post(
+    client: Any, article: Article, voice: str = VOICE, notes: str = "", critic: Any = None
+) -> Optional[Draft]:
+    """Up to three attempts; lint findings go back to the model between them.
+
+    With a critic, the first draft that passes the checks goes to it once; its fixes
+    become the next attempt's feedback, and that draft is kept if the rewrite fails.
+    """
     feedback = None  # type: Optional[List[str]]
     text_only = None  # type: Optional[Draft]
+    reviewed = None  # type: Optional[Draft]
     for attempt in range(1, MAX_ATTEMPTS + 1):
-        payload = client.complete_json(build_prompt(article, voice, feedback), _SCHEMA)
+        payload = client.complete_json(build_prompt(article, voice, feedback, notes), _SCHEMA)
         if not payload:
             logger.warning("Attempt %d: the model returned nothing usable", attempt)
             feedback = ["return the JSON object described above"]
@@ -337,7 +402,16 @@ def write_post(client: Any, article: Article, voice: str = VOICE) -> Optional[Dr
         problems = check_draft(draft, article)
         visual = check_visuals(draft)
         if not problems and not visual:
-            return draft
+            if critic is None or reviewed is not None or attempt == MAX_ATTEMPTS:
+                return draft
+            fixes = review(critic, article, draft, notes, voice)
+            if not fixes:
+                logger.info("Attempt %d: the reviewer passed the draft", attempt)
+                return draft
+            logger.info("Attempt %d: the reviewer asked for: %s", attempt, "; ".join(fixes))
+            reviewed = draft
+            feedback = fixes
+            continue
         if not problems:
             logger.info("Attempt %d: the post is fine, the carousel is not: %s", attempt, "; ".join(visual))
             draft.slides = []
@@ -345,6 +419,9 @@ def write_post(client: Any, article: Article, voice: str = VOICE) -> Optional[Dr
         problems += visual
         logger.info("Attempt %d rejected: %s", attempt, "; ".join(problems))
         feedback = problems
+    if reviewed is not None:
+        logger.warning("The rewrite did not pass the checks; keeping the draft the reviewer saw")
+        return reviewed
     if text_only is not None:
         logger.warning("No usable carousel; posting the text with the image card only")
     return text_only

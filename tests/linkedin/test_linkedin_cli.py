@@ -130,3 +130,15 @@ def test_dry_run_needs_no_credentials_and_saves_nothing(harness, tmp_path):
     assert cli.main(["--dry-run"]) == 0
     assert not (tmp_path / "state.json").exists()
     assert list((tmp_path / "drafts").glob("*.md")) == []
+
+
+def test_each_post_gets_a_topic_and_date_folder(tmp_path):
+    from linkedin_bot.news import Article
+
+    settings = LinkedInSettings(topics=["AI agents", "LLM evals"], post_dir=str(tmp_path))
+    agents = Article(title="New tools for AI agents ship today", url="https://example.com/a")
+    assert cli.post_folder(settings, agents, "2026-10-23") == tmp_path / "ai-agents" / "2026-10-23"
+    other = Article(title="Rust 2.0: what's new?", url="https://example.com/b")
+    assert cli.post_folder(settings, other, "2026-10-23") == tmp_path / "rust-2-0-what-s-new" / "2026-10-23"
+    assert cli.slug("../../etc") == "etc"
+    assert cli.slug("!!!") == "untitled"

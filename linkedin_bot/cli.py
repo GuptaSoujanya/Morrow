@@ -3,9 +3,10 @@
 import argparse
 import json
 import logging
+import re
 import sys
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional, Tuple
@@ -17,7 +18,9 @@ from . import config as config_module
 from . import publisher
 from .card import render_card, render_carousel
 from .config import LinkedInSettings, parse_post_time
-from .news import pick_article
+from .design import design_card
+from .news import Article, best_topic, pick_article
+from .research import research
 from .writer import Draft, render_text, write_post
 
 logger = logging.getLogger(__name__)
@@ -144,9 +147,35 @@ def read_draft(path: Path) -> Tuple[Dict[str, str], str]:
 # --- the work -----------------------------------------------------------------
 
 
+def slug(value: str, limit: int = 60) -> str:
+    """Lowercase words joined by dashes, safe as a folder name."""
+    words = re.findall(r"[a-z0-9]+", value.lower())
+    return "-".join(words)[:limit].strip("-") or "untitled"
+
+
+def post_folder(settings: LinkedInSettings, article: Article, day: str) -> Path:
+    """<post_dir>/<topic>/<date>: the matched topic, else the article title."""
+    topic = best_topic(article, settings.topics) or article.title
+    return Path(settings.post_dir) / slug(topic) / day
+
+
+def ai_client(settings: LinkedInSettings, name: str) -> Any:
+    """The LLM client for one LINKEDIN_* role, or None for "none" and "card"."""
+    from common.llm import ClaudeCLIClient, KiroCLIClient, build_client
+
+    # Writing a post with a carousel takes far longer than ranking a job.
+    timed = replace(settings.naukri, llm_timeout_s=max(settings.naukri.llm_timeout_s, settings.ai_timeout_s))
+    if name == "claude":
+        return ClaudeCLIClient(timed)
+    if name == "kiro":
+        return KiroCLIClient(timed)
+    if name == "backend":
+        return build_client(timed)
+    return None
+
+
 def prepare(settings: LinkedInSettings, day: str) -> Prepared:
-    """Pick an article, write the post, draw the card. No browser."""
-    from common.llm import build_client
+    """Pick an article, read it, write and review the post, design the card. No LinkedIn."""
 
     state = load_state(Path(settings.state_path))
     article = pick_article(settings, state)
@@ -154,29 +183,51 @@ def prepare(settings: LinkedInSettings, day: str) -> Prepared:
         raise PosterError("no fresh article on your topics today; nothing to post")
     logger.info("Reacting to: %s (%s)", article.title, article.url)
 
-    client = build_client(settings.naukri)
-    if not client.available():
-        raise PosterError("no LLM backend available; set LLM_BACKEND (see .env.example)")
-    draft = write_post(client, article)
+    client = ai_client(settings, settings.writer)
+    if client is None or not client.available():
+        raise PosterError("no LLM for LINKEDIN_WRITER=%s; install it or set LLM_BACKEND" % settings.writer)
+    critic = ai_client(settings, settings.critic)
+    if critic is not None and not critic.available():
+        logger.warning("Reviewer %s is not installed; skipping the review", settings.critic)
+        critic = None
+    notes = ""
+    if settings.research != "none":
+        notes = research(article, settings.research, settings.ai_timeout_s)
+    draft = write_post(client, article, notes=notes, critic=critic)
     if draft is None:
         raise PosterError("could not get a post that passes the voice checks for %s" % article.url)
 
-    card = render_card(
-        draft.card_line, article.source, Path(settings.draft_dir) / ("%s.png" % day)
-    )
+    folder = post_folder(settings, article, day)
+    folder.mkdir(parents=True, exist_ok=True)
+    card_path = folder / "card.png"
+    card = None  # type: Optional[Path]
+    if settings.image != "card":
+        card = design_card(draft, article, card_path, settings.image, settings.ai_timeout_s,
+                           reviewer=ai_client(settings, settings.image))
+    if card is None:
+        card = render_card(draft.card_line, article.source, card_path)
     document = None  # type: Optional[Path]
     if settings.carousel and draft.slides:
         document = render_carousel(
             draft.card_line,
             draft.slides,
             draft.question,
-            Path(settings.draft_dir) / ("%s.pdf" % day),
+            folder / "carousel.pdf",
             subtitle=draft.subtitle,
         )
     text = render_text(draft)
-    text_path = Path(settings.draft_dir) / ("%s.txt" % day)
-    text_path.write_text(text + "\n", encoding="utf-8")
-    logger.info("Post text saved to %s", text_path)
+    (folder / "post.txt").write_text(text + "\n", encoding="utf-8")
+    about = [
+        "title: %s" % _one_line(article.title),
+        "url: %s" % _one_line(article.url),
+        "source: %s" % _one_line(article.source),
+        "topic: %s" % folder.parent.name,
+        "date: %s" % day,
+    ]
+    if notes:
+        about += ["", "research notes:", notes.strip()]
+    (folder / "article.txt").write_text("\n".join(about) + "\n", encoding="utf-8")
+    logger.info("Post saved to %s", folder)
     return Prepared(draft=draft, card=card, text=text, document=document)
 
 

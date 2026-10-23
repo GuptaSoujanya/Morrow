@@ -193,6 +193,20 @@ def _topic_words(topics: List[str]) -> List[Tuple[str, List[str]]]:
     return result
 
 
+def best_topic(article: Article, topics: List[str]) -> str:
+    """The configured topic the article matches most, or "" when none match."""
+    haystack = ("%s %s" % (article.title, article.summary)).lower()
+    best, best_score = "", 0
+    for phrase, words in _topic_words(topics):
+        score = 3 if phrase and re.search(r"\b%s\b" % re.escape(phrase), haystack) else 0
+        score += sum(
+            1 for word in words if re.search(r"(?<![a-z0-9])%s(?![a-z0-9])" % re.escape(word), haystack)
+        )
+        if score > best_score:
+            best, best_score = phrase, score
+    return best
+
+
 def score_article(article: Article, topics: List[str], now: datetime) -> float:
     haystack = ("%s %s" % (article.title, article.summary)).lower()
     score = 0.0

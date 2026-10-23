@@ -159,3 +159,39 @@ def test_a_post_with_bad_slides_falls_back_to_text_only():
     client = _Client([{"post": CLEAN, "card_line": "Three judges beat one.", "slides": [], "question": ""}])
     draft = writer.write_post(client, ARTICLE)
     assert draft is not None and draft.slides == []
+
+
+FULL_CLEAN = CLEAN.replace("One judge is an opinion.", "How do you grade long runs?")
+FULL = {"post": FULL_CLEAN, "card_line": "Three judges beat one.", "hashtags": [], "slides": GOOD_SLIDES,
+        "question": "How do you grade long runs?", "subtitle": ""}
+
+
+def test_research_notes_reach_the_prompt():
+    prompt = writer.build_prompt(ARTICLE, writer.VOICE, notes="The study covered 1,200 runs.")
+    assert "RESEARCH NOTES" in prompt and "1,200 runs" in prompt
+    assert "RESEARCH NOTES" not in writer.build_prompt(ARTICLE, writer.VOICE)
+
+
+def test_the_reviewers_fixes_drive_one_rewrite():
+    client = _Client([FULL, FULL])
+    critic = _Client([{"verdict": "revise", "problems": ["Name the study's sample size."]}])
+    draft = writer.write_post(client, ARTICLE, notes="n", critic=critic)
+    assert draft is not None and len(client.prompts) == 2 and len(critic.prompts) == 1
+    assert "Name the study's sample size." in client.prompts[1]
+    assert FULL_CLEAN in critic.prompts[0]
+
+
+def test_a_publish_verdict_keeps_the_first_draft():
+    client = _Client([FULL])
+    critic = _Client([{"verdict": "publish", "problems": []}])
+    assert writer.write_post(client, ARTICLE, critic=critic) is not None
+    assert len(client.prompts) == 1
+
+
+def test_a_failed_rewrite_keeps_the_reviewed_draft():
+    bad = dict(FULL, post=_with("I'm thrilled."))
+    client = _Client([FULL, bad, bad])
+    critic = _Client([{"verdict": "revise", "problems": ["Sharper hook."]}])
+    draft = writer.write_post(client, ARTICLE, critic=critic)
+    assert draft is not None and draft.text == FULL_CLEAN and draft.slides
+    assert len(client.prompts) == 3 and len(critic.prompts) == 1

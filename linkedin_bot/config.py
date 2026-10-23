@@ -49,8 +49,19 @@ class LinkedInSettings:
     max_age_days: int = 3
     state_path: str = "data/linkedin/state.json"
     draft_dir: str = "data/linkedin/drafts"
+    #: Every prepared post gets its own folder here: <topic>/<date>/ with the
+    #: image card, the post text, the carousel and the article it reacts to.
+    post_dir: str = "data/linkedin_post"
     browser_profile_dir: str = "data/browser/linkedin"
     headless: bool = False
+    #: Who writes, who reviews, who reads the full article, who designs the card:
+    #: "claude" or "kiro" ("backend" writes with LLM_BACKEND; "none" skips a step;
+    #: an image of "card" keeps the Pillow card).
+    writer: str = "claude"
+    critic: str = "kiro"
+    research: str = "claude"
+    image: str = "claude"
+    ai_timeout_s: int = 600
     #: Driver, LLM and Telegram settings shared with naukri_bot.
     naukri: Settings = field(default_factory=Settings)
 
@@ -67,6 +78,14 @@ class LinkedInSettings:
             problems.append("LINKEDIN_MAX_AGE_DAYS must be at least 1")
         if not self.topics:
             problems.append("LINKEDIN_TOPICS is empty")
+        for key, value, allowed in (
+            ("LINKEDIN_WRITER", self.writer, ("claude", "kiro", "backend")),
+            ("LINKEDIN_CRITIC", self.critic, ("claude", "kiro", "none")),
+            ("LINKEDIN_RESEARCH", self.research, ("claude", "kiro", "none")),
+            ("LINKEDIN_IMAGE", self.image, ("claude", "kiro", "card")),
+        ):
+            if value not in allowed:
+                problems.append("%s must be one of %s" % (key, ", ".join(allowed)))
         return problems
 
 
@@ -115,14 +134,20 @@ def load_settings(
         ),
         "state_path": os.getenv("LINKEDIN_STATE_PATH", defaults.state_path),
         "draft_dir": os.getenv("LINKEDIN_DRAFT_DIR", defaults.draft_dir),
+        "post_dir": os.getenv("LINKEDIN_POST_DIR", defaults.post_dir),
         "browser_profile_dir": os.getenv(
             "LINKEDIN_BROWSER_PROFILE_DIR", defaults.browser_profile_dir
         ),
         "headless": naukri.headless,
+        "writer": os.getenv("LINKEDIN_WRITER", defaults.writer).strip().lower(),
+        "critic": os.getenv("LINKEDIN_CRITIC", defaults.critic).strip().lower(),
+        "research": os.getenv("LINKEDIN_RESEARCH", defaults.research).strip().lower(),
+        "image": os.getenv("LINKEDIN_IMAGE", defaults.image).strip().lower(),
+        "ai_timeout_s": naukri_config._env_int("LINKEDIN_AI_TIMEOUT_S", defaults.ai_timeout_s),
     }  # type: Dict[str, Any]
     if overrides:
         values.update(overrides)
-    for key in ("state_path", "draft_dir", "browser_profile_dir"):
+    for key in ("state_path", "draft_dir", "post_dir", "browser_profile_dir"):
         values[key] = naukri_config._absolute_path(values[key], repo_root)
 
     settings = LinkedInSettings(naukri=naukri, **values)
