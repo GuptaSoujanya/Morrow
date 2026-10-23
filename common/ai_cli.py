@@ -51,14 +51,14 @@ def team(wanted: Optional[str] = None) -> List[str]:
     return [chosen] if chosen else []
 
 
-def command_for(cli: str, prompt: str) -> List[str]:
+def command_for(cli: str, prompt: str, web: bool = True) -> List[str]:
+    """The command line for one answer; web=False gives the CLI no tools at all."""
     if cli == "kiro":
-        return ["kiro-cli", "chat", "--no-interactive", "--trust-tools=web_search,web_fetch", prompt]
-    command = [
-        "claude", "-p", prompt,
-        # Web research only: no shell, no file edits.
-        "--tools", "WebSearch,WebFetch",
-        "--allowedTools", "WebSearch", "WebFetch",
+        trust = "--trust-tools=web_search,web_fetch" if web else "--trust-tools="
+        return ["kiro-cli", "chat", "--no-interactive", trust, prompt]
+    # Web research only (or nothing): no shell, no file edits.
+    tools = ["--tools", "WebSearch,WebFetch", "--allowedTools", "WebSearch", "WebFetch"] if web else ["--tools", ""]
+    command = ["claude", "-p", prompt] + tools + [
         "--permission-mode", "dontAsk",
         # None of the user's MCP servers: they are slow to start and can outlive the answer.
         "--strict-mcp-config",
@@ -71,7 +71,7 @@ def command_for(cli: str, prompt: str) -> List[str]:
     return command
 
 
-def ask(prompt: str, cli: Optional[str] = None, timeout_s: int = TIMEOUT_S) -> str:
+def ask(prompt: str, cli: Optional[str] = None, timeout_s: int = TIMEOUT_S, web: bool = True) -> str:
     """The CLI's answer as plain text; AIError when there is no CLI or it failed."""
     chosen = chosen_cli(cli)
     if not chosen:
@@ -79,7 +79,7 @@ def ask(prompt: str, cli: Optional[str] = None, timeout_s: int = TIMEOUT_S) -> s
     logger.info("Asking %s (this can take a few minutes)...", chosen)
     try:
         # Its own process group, so a timeout kills the CLI and everything it started.
-        proc = subprocess.Popen(command_for(chosen, prompt), stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+        proc = subprocess.Popen(command_for(chosen, prompt, web), stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                                 stderr=subprocess.PIPE, text=True, start_new_session=True)
     except OSError as exc:
         raise AIError("%s could not be started: %s" % (chosen, exc))
