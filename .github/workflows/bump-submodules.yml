@@ -1,12 +1,17 @@
-# Points each submodule (froned-dashbord, data, .memory) at the newest commit on
-# its main and pushes that to Morrow's main.
+# Points every submodule listed in .gitmodules (froned-dashbord, data, .memory,
+# hunt, morrow-api) at the newest commit on its main and pushes that to Morrow's
+# main. Each submodule that moved gets its own commit:
+#
+#   ci(<submodule>): bump submodule to commit <sha>
 #
 # Runs when a submodule repo's "Bump Morrow" workflow sends submodule-updated,
 # every hour as a catch-up, or by hand from the Actions tab.
 #
 # Needs the secret MORROW_BUMP_TOKEN: a fine-grained token with Contents
-# read/write on Morrow, Morrow-frontend, Morrow-data and Morrow-memory. The
-# default GITHUB_TOKEN cannot read the other private repos.
+# read/write on Morrow and on every submodule repo (Morrow-frontend, Morrow-data,
+# Morrow-memory, Morrow-hunt, Morrow-api). The default GITHUB_TOKEN cannot read
+# the other private repos. Adding a submodule means adding its repo to the token
+# and copying bump-morrow.yml plus the secret into that repo.
 name: Bump submodules
 
 on:
@@ -30,28 +35,39 @@ jobs:
           token: ${{ secrets.MORROW_BUMP_TOKEN }}
           submodules: true
 
-      - name: Move every submodule to its main
-        run: git submodule update --remote --checkout
-
-      - name: Commit and push the new pointers
+      - name: Bump each submodule that moved, one commit apiece
         run: |
           git config user.name "morrow-bot"
           git config user.email "morrow-bot@users.noreply.github.com"
-          git add .gitmodules froned-dashbord data .memory
-          if git diff --cached --quiet; then
+          run_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          bumped=0
+          for path in $(git config --file .gitmodules --get-regexp '^submodule\..*\.path$' | awk '{print $2}'); do
+            before=$(git rev-parse "HEAD:${path}")
+            if ! git submodule update --remote --checkout -- "${path}"; then
+              echo "::warning::Could not fetch ${path}; skipping it this run."
+              continue
+            fi
+            after=$(git -C "${path}" rev-parse HEAD)
+            if [ "${before}" = "${after}" ]; then
+              echo "${path}: already at ${after:0:7}"
+              continue
+            fi
+            git add "${path}"
+            git commit -q -m "ci(${path}): bump submodule to commit ${after:0:7}" \
+              -m "$(git diff --submodule=log HEAD~0 -- "${path}" 2>/dev/null || true)" \
+              -m "Bumped-by: CI/CD (${GITHUB_EVENT_NAME})
+          CI-Run: ${run_url}"
+            git log -1 --format='%h %s'
+            bumped=$((bumped + 1))
+          done
+          if [ "${bumped}" -eq 0 ]; then
             echo "Every submodule is already current."
             exit 0
           fi
-          moved=$(git diff --cached --name-only | grep -v '^.gitmodules$' | paste -sd ' ' -)
-          run_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
-          git commit -q -m "[ci-cd] Bump ${moved}" \
-            -m "$(git diff --cached --submodule=log)" \
-            -m "Bumped-by: CI/CD (${GITHUB_EVENT_NAME})
-          CI-Run: ${run_url}"
           # Someone may have pushed to main meanwhile: replay on top and retry.
           for attempt in 1 2 3; do
             if git push origin HEAD:main; then exit 0; fi
             git pull --rebase --no-recurse-submodules origin main
           done
-          echo "::error::Could not push the bump after 3 attempts."
+          echo "::error::Could not push the bumps after 3 attempts."
           exit 1
