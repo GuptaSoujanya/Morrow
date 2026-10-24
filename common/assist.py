@@ -27,6 +27,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from .answers import AnswerBook, _question_key, answers_file_path
 from .models import Profile, Settings
+from .shared_files import atomic_write_text, locked_file
 
 
 logger = logging.getLogger(__name__)
@@ -116,7 +117,7 @@ def _profile_source(settings: Settings) -> str:
 
 def _answers_source(book: AnswerBook) -> str:
     return "\n".join(
-        "Q: %s\nA: %s" % (" / ".join(questions), answer) for questions, answer in book.entries if answer
+        "Q: %s\nA: %s" % (" / ".join(questions), answer) for questions, answer in book.source_entries if answer
     )
 
 
@@ -226,7 +227,7 @@ def build_prompt(items: List[Dict[str, str]], texts: Dict[str, str]) -> str:
 def _backup(path: Path, settings: Settings) -> None:
     folder = Path(settings.data_dir or "data/inputs") / "backups"
     folder.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(str(path), str(folder / ("%s.%s" % (path.name, datetime.now().strftime("%Y%m%d-%H%M%S")))))
+    shutil.copy2(str(path), str(folder / ("%s.%s" % (path.name, datetime.now().strftime("%Y%m%d-%H%M%S-%f")))))
     old = sorted(folder.glob("%s.*" % path.name))
     for stale in old[:-MAX_BACKUPS]:
         stale.unlink()
@@ -247,7 +248,10 @@ def fill_answer(text: str, question: str, answer: str, note: str) -> Optional[st
             cursor += 1
         if cursor >= len(lines) or lines[cursor].strip().upper() != "A:":
             return None
-        if cursor + 1 < len(lines) and lines[cursor + 1].strip():
+        following = cursor + 1
+        while following < len(lines) and lines[following].lstrip().startswith("#"):
+            following += 1
+        if following < len(lines) and lines[following].strip() and not lines[following].lstrip().upper().startswith("Q:"):
             return None
         lines[cursor] = "A: %s" % answer
         lines.insert(start, "# %s" % note)
@@ -274,9 +278,9 @@ def changes_path(settings: Settings) -> Path:
 
 def record_change(settings: Settings, change: Change) -> None:
     path = changes_path(settings)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(asdict(change), ensure_ascii=False) + "\n")
+    with locked_file(path) as target:
+        with target.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(asdict(change), ensure_ascii=False) + "\n")
 
 
 def read_changes(settings: Settings) -> List[Dict[str, Any]]:
@@ -469,10 +473,10 @@ def fill_blanks(settings: Settings, profile: Profile, client: Any, write: bool =
 
 def _mark_declined(settings: Settings, item_id: str, corpus_hash: str) -> None:
     path = changes_path(settings)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps({"kind": "declined", "item": item_id, "corpus": corpus_hash,
-                                 "at": datetime.now().isoformat(timespec="seconds")}) + "\n")
+    with locked_file(path) as target:
+        with target.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps({"kind": "declined", "item": item_id, "corpus": corpus_hash,
+                                     "at": datetime.now().isoformat(timespec="seconds")}) + "\n")
 
 
 def _apply(settings: Settings, change: Change, backed_up: set) -> bool:
@@ -481,23 +485,25 @@ def _apply(settings: Settings, change: Change, backed_up: set) -> bool:
         change.source,
         " ".join(change.evidence.split())[:100],
     )
+    path = Path(answers_file_path(settings) if change.file == "answers.txt" else settings.profile_path)
+    with locked_file(path) as path:
+        text = path.read_text(encoding="utf-8")
+        if change.file == "answers.txt":
+            updated = fill_answer(text, change.item, change.value, note)
+        else:
+            updated = fill_fact(text, change.item, change.value, note)
+            if updated is not None and not _still_valid_yaml(updated):
+                updated = None
+        if updated is None:
+            logger.info("AI assist: could not place %r in %s; left it alone", change.item, path.name)
+            return False
+        if path not in backed_up:
+            _backup(path, settings)
+            backed_up.add(path)
+        atomic_write_text(path, updated)
     if change.file == "answers.txt":
-        path = Path(answers_file_path(settings))
-        text = path.read_text(encoding="utf-8")
-        updated = fill_answer(text, change.item, change.value, note)
-    else:
-        path = Path(settings.profile_path)
-        text = path.read_text(encoding="utf-8")
-        updated = fill_fact(text, change.item, change.value, note)
-        if updated is not None and not _still_valid_yaml(updated):
-            updated = None
-    if updated is None:
-        logger.info("AI assist: could not place %r in %s; left it alone", change.item, path.name)
-        return False
-    if path not in backed_up:
-        _backup(path, settings)
-        backed_up.add(path)
-    path.write_text(updated, encoding="utf-8")
+        from .answer_events import answer_saved
+        answer_saved(change.item, change.value, "AI assist")
     record_change(settings, change)
     return True
 

@@ -18,6 +18,9 @@ from web.state import Command
 @pytest.fixture
 def site(tmp_path, monkeypatch):
     monkeypatch.setattr(state, "APPLY", tmp_path)
+    monkeypatch.setenv("BROWSER_PROFILE_DIR", str(tmp_path / "data/browser/naukri"))
+    monkeypatch.setenv("RESUME_OUT_DIR", str(tmp_path / "data/resume/out"))
+    monkeypatch.setenv("SCREENSHOT_DIR", str(tmp_path / "data/screenshots"))
     httpd = server.ControlServer(0)
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
     yield httpd
@@ -94,11 +97,69 @@ def test_active_run_conflicts_are_rechecked_when_selection_starts(site, monkeypa
     assert [run["id"] for run in site.runner.snapshot()["runs"]] == [active]
 
 
-def test_resume_output_conflict_has_specific_explanation(site, monkeypatch):
+def test_separate_resume_outputs_allow_resume_and_email_agents_together(site, monkeypatch):
     install(monkeypatch, "resume", "cold_email")
     status, plan = call(site, "/api/run/batch/preview", payload("resume", "cold_email"))
-    assert status == 200 and not plan["ready"]
-    assert "résumé files" in plan["conflicts"][0]["message"]
+    assert status == 200 and plan["ready"] and plan["conflicts"] == []
+
+
+def test_three_job_sites_overlap_with_private_sessions_outputs_and_independent_stop(site, monkeypatch, tmp_path):
+    script = ("import json,os,time; from pathlib import Path; "
+              "p=Path(os.environ['RESUME_OUT_DIR']); p.mkdir(parents=True); "
+              "(p/'probe.json').write_text(json.dumps({k:os.environ[k] for k in "
+              "('BROWSER_PROFILE_DIR','RESUME_OUT_DIR','MORROW_RESUME_LIBRARY_DIR','SCREENSHOT_DIR','MORROW_RUN_ID')})); "
+              "print('Synthetic agent ready',flush=True); time.sleep(30)")
+    monkeypatch.setitem(server.ACTIONS, "naukri", lambda options, save:
+                        Command("Naukri", (sys.executable, "-c", script)))
+    monkeypatch.setitem(server.ACTIONS, "boards", lambda options, save:
+                        Command(options["board"], (sys.executable, "-c", script, "--site", options["board"])))
+    data = {"runs": [
+        {"key": "naukri", "action": "naukri", "options": {}},
+        {"key": "hirist", "action": "boards", "options": {"board": "hirist"}},
+        {"key": "instahyre", "action": "boards", "options": {"board": "instahyre"}},
+    ]}
+    assert call(site, "/api/run/batch/preview", data)[1]["ready"]
+    assert not (tmp_path / "data").exists(), "Previews must not create browser profiles"
+    status, launched = call(site, "/api/run/batch", data)
+    assert status == 200 and launched["ok"] and launched["run"]["active_count"] == 3
+    deadline = time.monotonic() + 5
+    output = tmp_path / "data/resume/out"
+    while len(list(output.glob("runs/*/probe.json"))) < 3 and time.monotonic() < deadline:
+        time.sleep(.01)
+    probes = [json.loads(path.read_text()) for path in output.glob("runs/*/probe.json")]
+    assert len(probes) == 3
+    for key in ("BROWSER_PROFILE_DIR", "RESUME_OUT_DIR", "SCREENSHOT_DIR", "MORROW_RUN_ID"):
+        assert len({probe[key] for probe in probes}) == 3, key
+    assert {Path(probe["BROWSER_PROFILE_DIR"]).name for probe in probes} == {"naukri", "hirist", "instahyre"}
+    assert {probe["MORROW_RESUME_LIBRARY_DIR"] for probe in probes} == {str(output)}
+    # The same site cannot duplicate account mutations, but other sites are live.
+    status, duplicate = call(site, "/api/run/batch", {"runs": [data["runs"][1]]})
+    assert status == 409 and not duplicate["ready"]
+    selected = launched["results"][1]["id"]
+    assert site.runner.stop(selected)[0]
+    while site.runner.runs[selected].result is None and time.monotonic() < deadline:
+        time.sleep(.01)
+    rows = {run["id"]: run for run in site.runner.snapshot()["runs"]}
+    assert not rows[selected]["running"] and rows[selected]["status"] == "stopped"
+    assert all(rows[item["id"]]["running"] for item in launched["results"] if item["id"] != selected)
+
+
+def test_all_profile_preparation_finishes_before_first_process_starts(site, monkeypatch):
+    from web import run_isolation, runner as runtime
+    events = []
+    original_prepare, original_popen = run_isolation.prepare, runtime.subprocess.Popen
+    def prepare(*args):
+        events.append(("prepare", args[2]))
+        return original_prepare(*args)
+    def spawn(*args, **kwargs):
+        events.append(("spawn", ""))
+        assert sum(event[0] == "prepare" for event in events) == 2
+        return original_popen(*args, **kwargs)
+    monkeypatch.setattr(run_isolation, "prepare", prepare)
+    monkeypatch.setattr(runtime.subprocess, "Popen", spawn)
+    install(monkeypatch, "first", "second")
+    assert call(site, "/api/run/batch", payload("first", "second"))[1]["ok"]
+    assert [event[0] for event in events] == ["prepare", "prepare", "spawn", "spawn"]
 
 
 def test_invalid_command_and_saved_validation_start_nothing(site, monkeypatch):

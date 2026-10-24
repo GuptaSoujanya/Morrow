@@ -8,8 +8,8 @@ Chrome refuses to open a profile another Chrome already holds.
 
     naukri    BROWSER_PROFILE_DIR as configured (its own session, as before)
     linkedin  LINKEDIN_BROWSER_PROFILE_DIR as configured (already separate)
-    <board>   <BROWSER_PROFILE_DIR>/../lanes/<board>, first copied from the Naukri
-              profile so a Google sign-in there carries over
+    <board>   <BROWSER_PROFILE_DIR>/../lanes/<board>, safely initialized from a
+              closed managed Naukri profile when one is available
 
 The child reads the same .env; the variables set here win because python-dotenv
 never overrides the environment. Only the parent writes .memory/.
@@ -22,20 +22,18 @@ port (WATCH_PORTS), and watch_page() puts them all on one page so you can see ev
 
 import logging
 import os
-import shutil
 import subprocess
 import sys
 import threading
 from pathlib import Path
-from typing import Dict, List, Mapping, Optional, Sequence
+from typing import Dict, List, Mapping, Sequence
 
 from common.pipeline_diagnostics import capture_stage_output
+from common.browser_lanes import prepare as _prepare_browser, prepare_all, profile_dir
+from common.answer_events import PREFIX as ANSWER_EVENT_PREFIX
 
 logger = logging.getLogger(__name__)
 
-# Lock files Chrome leaves in a profile it has open; copying them makes the copy look in use.
-_CHROME_LOCKS = ("SingletonLock", "SingletonSocket", "SingletonCookie", "lockfile")
-_OWN_PROFILE = ("naukri", "linkedin")
 _print_lock = threading.Lock()
 
 COMPOSE_FILE = Path(__file__).resolve().parents[1] / "docker-compose.yml"
@@ -57,29 +55,18 @@ def group(names: Sequence[str]) -> List[List[str]]:
     return list(lanes.values())
 
 
-def profile_dir(lane: str, base: str) -> Optional[Path]:
-    """The lane's Chrome profile base directory, or None for the sites that keep their own."""
-    if lane in _OWN_PROFILE or not base.strip():
-        return None
-    return Path(base).expanduser().resolve().parent / "lanes" / lane
-
-
 def prepare(lane: str, base: str) -> Dict[str, str]:
-    """Environment overrides for the lane; seeds its profile from the Naukri one the first time."""
-    folder = profile_dir(lane, base)
-    if folder is None:
-        return {}
-    source = Path(base).expanduser().resolve()
-    if not folder.exists() and source.is_dir():
-        logger.info("[lanes] %s: copying the Chrome profile from %s", lane, source)
-        try:
-            shutil.copytree(source, folder, symlinks=True, ignore=shutil.ignore_patterns(*_CHROME_LOCKS),
-                            ignore_dangling_symlinks=True)
-        except (OSError, shutil.Error) as exc:
-            # A partial copy still beats signing in from nothing; the bot logs in if it must.
-            logger.warning("[lanes] %s: could not copy the whole profile (%s)", lane, exc)
-    folder.mkdir(parents=True, exist_ok=True)
-    return {"BROWSER_PROFILE_DIR": str(folder)}
+    """Give every local worker its own browser and résumé output directory."""
+    from common.models import Settings
+
+    environment = _prepare_browser(lane, base)
+    output = Path(os.environ.get("RESUME_OUT_DIR") or Settings().resume_out_dir).expanduser().resolve()
+    library = Path(os.environ.get("MORROW_RESUME_LIBRARY_DIR") or output).expanduser().resolve()
+    environment.update({
+        "RESUME_OUT_DIR": str(output / "lanes" / lane),
+        "MORROW_RESUME_LIBRARY_DIR": str(library),
+    })
+    return environment
 
 
 def in_container(lane: str, command: Sequence[str]) -> List[str]:
@@ -135,6 +122,14 @@ def run_isolated(lane: str, command: Sequence[str], overrides: Mapping[str, str]
         logger.error("[%s] could not start %s: %s", lane, argv[0], exc)
         return 3
     for line in process.stdout or ():
+        if line.startswith(ANSWER_EVENT_PREFIX):
+            # Preserve the private structured record for the parent runner.
+            # Prefixing/capturing it as a diagnostic would lose the notification
+            # and expose its per-run token in ordinary logs.
+            with _print_lock:
+                sys.stdout.write(line)
+                sys.stdout.flush()
+            continue
         capture_stage_output(line)
         with _print_lock:
             sys.stderr.write("[%s] %s" % (lane, line))

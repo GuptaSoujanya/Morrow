@@ -352,11 +352,31 @@ Everything the bot needs from you, and everything it could not do alone, lives i
 | `data/inputs/accounts.md` | Career sites the bot signed in to or made an account on, and with which email. | Nothing; read it to know where you have accounts. |
 
 `answers.txt` is read before anything else, so your own words always win over the cache, the
-profile and the model. Several `Q:` lines can share one `A:`; a question matches when it is the
-same text, ignoring case and punctuation, or nearly so. For a dropdown the answer must name one of
+profile and the model. Several `Q:` lines can share one `A:`. Exact matches come first;
+common wording variations then use local intent rules and TF-IDF cosine similarity, with
+no model call, embedding service, or download. For example, “How soon can you join?” can
+reuse “What is your notice period?”. Skills, countries, current versus expected salary,
+units, numeric thresholds, and conflicting answers remain distinct. Unsupported wording
+falls through to the existing profile/model path. For a dropdown the answer must name one of
 its options. When a question cannot be answered from these files, the bot makes one honest
 judgement (below) and otherwise does not guess: it adds the question to the end of `answers.txt`
 with an empty `A:`, the job and the date, and the next run uses whatever you write there. The file is re-read whenever it changes, even during a run.
+
+In auto mode, accepted reusable model answers are saved to this sheet with their source
+annotation. Later runs can reuse them while the profile and user-written facts are unchanged.
+Dropdown and checkbox answers retain their choice-set scope; answers tied to a particular
+posting remain specific to that application. Learned answers never become evidence for
+other generated answers. Editing an `A:` makes your value authoritative. Keep the generated
+comments when editing the sheet so unchanged AI answers retain their scope. Parallel agents
+asking the same question share a local request lock and check the saved sheet again before
+calling the model.
+
+While Morrow is open, successful saves arrive through the existing live Activity stream.
+The **Answer sheet updated** pop-up links to **Agent answer sheet**, showing recent questions
+and answers and the actual local file used by agents. This is separate from private account
+files. Saving checks the file revision so a concurrent agent update cannot erase your draft.
+Optional desktop alerts can be enabled from that review panel; the browser asks for permission.
+Desktop alerts require Morrow to remain open and the browser to support notifications.
 
 **The AI fills what your own files already answer.** Before and after every run (and on demand),
 the model looks at each empty `A:` in `answers.txt` and each `null` in `profile.yaml` and answers

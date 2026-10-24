@@ -299,11 +299,11 @@ def test_an_unanswered_otp_still_needs_a_human(monkeypatch):
     assert driver.quit_calls == 1
 
 
-def test_a_headless_run_cannot_wait_for_a_person(monkeypatch):
+def test_an_unregistered_headless_run_does_not_start_a_visible_manual_wait(monkeypatch):
     driver, waited, settings = _first_login(monkeypatch, headless=True, answered=True)
 
     with pytest.raises(up._NeedsHuman):
         up.run_once(settings, dry_run=True)
 
-    assert waited == [], "nobody can type into a headless browser"
+    assert waited == [], "Only a registered dashboard browser can offer remote sign-in assistance"
     assert driver.quit_calls == 1

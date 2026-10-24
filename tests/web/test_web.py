@@ -392,7 +392,7 @@ def test_static_files_never_leave_their_folder(site):
 
 def test_preview_explains_what_is_missing(site):
     status, data = call(site, "POST", "/api/preview", {"action": "naukri", "options": {"dry_run": True, "limit": "3"}})
-    assert status == 200 and data["shown"] == "DRY_RUN=true venv/bin/python -m naukri_bot --dry-run --limit 3"
+    assert status == 200 and data["shown"] == "DRY_RUN=true HEADLESS=false BACKGROUND=false venv/bin/python -m naukri_bot --dry-run --limit 3"
     status, data = call(site, "POST", "/api/preview", {"action": "external", "options": {}})
     assert status == 200 and data["needed"] == "paste the application page link"
 
@@ -596,8 +596,13 @@ def test_resource_conflicts_allow_independent_agents_and_protect_shared_files():
     assert not conflicts(learn, news) and not conflicts(news, papers)
     assert not conflicts(resources("resume"), news)
     assert conflicts(naukri, resources("boards"))
-    assert conflicts(naukri, resources("resume"))
-    assert conflicts(resources("cold_email"), resources("resume"))
+    assert not conflicts(naukri, resources("resume"))
+    assert not conflicts(resources("cold_email"), resources("resume"))
+    hirist = resources("boards", "-m", "sites_bot.platforms", "--site", "hirist")
+    instahyre = resources("boards", "-m", "sites_bot.platforms", "--site", "instahyre")
+    assert not conflicts(naukri, hirist) and not conflicts(hirist, instahyre)
+    assert conflicts(hirist, hirist)
+    assert conflicts(hirist, resources("pipeline", "-m", "pipeline", "continue", "--only", "apply:hirist"))
     assert conflicts(news, brief) and conflicts(learn, learn)
     assert conflicts(fresh, news)
     assert conflicts(resources("install"), news)

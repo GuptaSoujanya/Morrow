@@ -12,6 +12,7 @@ import json
 import mimetypes
 import os
 import signal
+import secrets
 import sqlite3
 import subprocess
 import sys
@@ -19,6 +20,7 @@ import time
 import urllib.request
 from dataclasses import replace
 from http import HTTPStatus
+from http.cookies import CookieError, SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -137,20 +139,28 @@ def build(action: str, options: Dict[str, Any], save: bool = False) -> Command:
     mode = options.get("browser_mode")
     if "browser_mode" in options:
         if mode not in ("background", "visible"):
-            raise ValueError("Choose Background or Visible browser mode.")
+            raise ValueError("Choose Visible browser or Background job, then try again.")
         if action not in BROWSER_ACTIONS:
             raise ValueError("Browser mode is not available for this action.")
-        # Resolve conflicting legacy headless options before constructing argv.
-        options = {**options, "headless": mode == "background"}
+    if action in BROWSER_ACTIONS:
+        # Open the agent's normal browser unless background work was chosen.
+        # Honour an explicit legacy headless flag when no mode is supplied;
+        # a modern mode selection takes precedence over saved legacy flags.
+        if "browser_mode" not in options:
+            mode = "background" if options.get("headless") is True else "visible"
+        options = {**options, "browser_mode": mode, "headless": mode == "background"}
     command = ACTIONS[action](options, save)
     # Explicit UI choices must also override DRY_RUN inherited from .env.
     # Only this known option is mapped; requests cannot supply environment keys.
     if isinstance(options.get("dry_run"), bool):
         command = replace(command, env=(*command.env, ("DRY_RUN", "true" if options["dry_run"] else "false")))
-    if mode is not None:
-        # Explicit mode beats .env and reaches board/profile/pipeline commands
-        # that do not have a --headless switch. Never expose arbitrary env keys.
-        command = replace(command, env=(*command.env, ("HEADLESS", "true" if mode == "background" else "false"), ("BACKGROUND", "false")))
+    if action in BROWSER_ACTIONS:
+        # Apply the choice to commands without a --headless switch and override
+        # inherited .env values. BACKGROUND is an older off-screen browser mode;
+        # explicit headless mode is used for background jobs instead.
+        command = replace(command, env=(*command.env,
+                                       ("HEADLESS", "true" if options["headless"] else "false"),
+                                       ("BACKGROUND", "false")))
     return command
 
 
@@ -377,7 +387,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", kind)
         self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "no-store" if urlsplit(self.path).path in ("/api/run/browser", "/api/run/browsers") else "no-cache")
+        self.send_header("Cache-Control", "no-store" if urlsplit(self.path).path in ("/api/run/browser", "/api/run/browsers", "/api/run/browser/input", "/api/run/answers") else "no-cache")
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Referrer-Policy", "no-referrer")
         self.end_headers()
@@ -520,11 +530,90 @@ class Handler(BaseHTTPRequestHandler):
             return self.error(HTTPStatus.FORBIDDEN, "Only this dashboard can view agent browsers.")
         if not self.stream_authorized():
             return self.error(HTTPStatus.UNAUTHORIZED, "Sign in to view agent browsers.")
-        inventory = self.server.runner.browser_inventory()
+        query = parse_qs(urlsplit(self.path).query)
+        inventory = (self.server.runner.browser_counts() if query.get("counts") == ["1"]
+                     else self.server.runner.browser_inventory())
         # Tab titles and sites are private too. Recheck after the bounded read.
         if not self.stream_authorized():
             return self.error(HTTPStatus.UNAUTHORIZED, "Sign in to view agent browsers.")
         self.json(inventory)
+
+    def browser_input(self, data: Dict[str, Any]) -> None:
+        from .browser_preview import BrowserInputError, validate_input
+
+        if self.headers.get("Sec-Fetch-Site") == "cross-site":
+            return self.error(HTTPStatus.FORBIDDEN, "Only this dashboard can use browser controls.")
+        if not self.stream_authorized():
+            return self.error(HTTPStatus.UNAUTHORIZED, "Sign in to use this browser.")
+        if getattr(self.server, "account_bridge", None) is not None:
+            try:
+                cookies = SimpleCookie(self.headers.get("Cookie", ""))
+                cookie = cookies.get("morrow_csrf")
+                expected, supplied = cookie.value if cookie else "", self.headers.get("X-CSRF-Token", "")
+                valid = bool(expected and supplied and secrets.compare_digest(expected.encode(), supplied.encode()))
+            except (CookieError, ValueError, TypeError):
+                valid = False
+            if not valid:
+                return self.error(HTTPStatus.FORBIDDEN, "Refresh this dashboard before using browser controls.")
+        try:
+            validate_input(data)
+            result = self.server.runner.browser_input(data["id"], data, authorized=self.stream_authorized)
+        except KeyError:
+            return self.error(HTTPStatus.NOT_FOUND, "This run is no longer available. Choose a current agent in Activity.")
+        except BrowserInputError as error:
+            return self.error(error.status, str(error))
+        if not self.stream_authorized():
+            return self.error(HTTPStatus.UNAUTHORIZED, "Sign in to use this browser.")
+        self.json(result)
+
+    def answer_sheet(self, data=None) -> None:
+        from .answer_notifications import answers_path, revision, sheet_json
+        from common.shared_files import locked_file, atomic_write_text
+
+        origin = self.headers.get("Origin")
+        if ((origin is not None and origin not in [f"http://{host}" for host in self.own_hosts()])
+                or self.headers.get("Sec-Fetch-Site") == "cross-site"):
+            return self.error(HTTPStatus.FORBIDDEN, "Only this dashboard can use the agent answer sheet.")
+        if not self.stream_authorized():
+            return self.error(HTTPStatus.UNAUTHORIZED, "Sign in to review agent answers.")
+        writing = self.command == "POST"
+        if writing and getattr(self.server, "account_bridge", None) is not None:
+            try:
+                cookie = SimpleCookie(self.headers.get("Cookie", "")).get("morrow_csrf")
+                expected = cookie.value if cookie else ""
+                supplied = self.headers.get("X-CSRF-Token", "")
+                valid = bool(expected and supplied and secrets.compare_digest(expected.encode(), supplied.encode()))
+            except (CookieError, ValueError, TypeError):
+                valid = False
+            if not valid:
+                return self.error(HTTPStatus.FORBIDDEN, "Refresh this dashboard before saving answers.")
+        try:
+            path = answers_path(state.APPLY, self.server.runner)
+            if writing:
+                if (not isinstance(data, dict) or set(data) != {"text", "revision"}
+                        or not isinstance(data["text"], str) or not isinstance(data["revision"], str)
+                        or len(data["text"].encode("utf-8")) > 1024 * 1024):
+                    raise ValueError("Send the answer sheet text and its saved revision.")
+                with locked_file(path) as target:
+                    if not self.stream_authorized():
+                        return self.error(HTTPStatus.UNAUTHORIZED, "Sign in before saving answers.")
+                    current = target.read_text(encoding="utf-8") if target.exists() else ""
+                    if data["revision"] != revision(current):
+                        return self.error(HTTPStatus.CONFLICT, "The agent saved more answers since you opened this sheet. Your draft is safe; review the latest saved version before saving.")
+                    if target.exists():
+                        backup = target.parent / "backups" / f"answers-{dt.datetime.now():%Y%m%d-%H%M%S-%f}.bak"
+                        atomic_write_text(backup, current)
+                    atomic_write_text(target, data["text"])
+                    result = {"ok": True, **sheet_json(target)}
+            else:
+                result = sheet_json(path)
+        except (OSError, RuntimeError):
+            return self.error(HTTPStatus.SERVICE_UNAVAILABLE, "The agent answer sheet is unavailable. Try again shortly.")
+        except (ValueError, TypeError) as exc:
+            return self.error(HTTPStatus.BAD_REQUEST, str(exc))
+        if not self.stream_authorized():
+            return self.error(HTTPStatus.UNAUTHORIZED, "Sign in to review agent answers.")
+        self.json(result)
 
     def do_GET(self) -> None:
         if not self.host_ok():
@@ -563,6 +652,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.browser_preview(query)
             elif route == "/api/run/browsers":
                 self.browser_inventory()
+            elif route == "/api/run/answers":
+                self.answer_sheet()
             elif route == "/api/course":
                 self.json(course_json())
             elif route == "/api/overview":
@@ -625,6 +716,10 @@ class Handler(BaseHTTPRequestHandler):
                     raise ValueError("Choose a valid agent run to stop.")
                 ok, message = runner.stop(run_id)
                 self.json({"ok": ok, "message": message})
+            elif route == "/api/run/browser/input":
+                self.browser_input(data)
+            elif route == "/api/run/answers":
+                self.answer_sheet(data)
             elif route == "/api/course/read":
                 path = str(data.get("path", ""))
                 if path not in {m.path for m in state.course_modules(state.COURSE)}:

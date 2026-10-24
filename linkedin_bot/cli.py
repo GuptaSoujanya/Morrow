@@ -432,7 +432,7 @@ def _post(settings: LinkedInSettings, day: str, path_arg: Optional[str]) -> int:
     except _NeedsHuman as exc:
         logger.error("LinkedIn login needs a human: %s", exc)
         logger.error(
-            "Choose Visible browser mode in the dashboard, or set HEADLESS=false "
+            "Open LinkedIn in Connections and choose Sign in, or set HEADLESS=false "
             "and BACKGROUND=false and omit --headless for a local run. Finish "
             "the security check in the browser, then retry."
         )

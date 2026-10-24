@@ -1,10 +1,13 @@
-"""Register only a run's own browser for an optional, read-only preview."""
+"""Register a run's browser and explicitly lease control during sign-in pauses."""
 from __future__ import annotations
 
+from contextlib import contextmanager
+import fcntl
 import http.client
 import ipaddress
 import json
 import logging
+import math
 import os
 from pathlib import Path
 import re
@@ -17,6 +20,8 @@ ENV_NAME = "MORROW_BROWSER_PREVIEW_DIR"
 MAX_MANIFESTS = 32
 MANIFEST_NAME = re.compile(r"^[0-9a-f]{32}\.json$")
 logger = logging.getLogger(__name__)
+REGISTRATION_ATTRIBUTE = "_morrow_browser_preview_registration"
+MAX_ASSISTANCE_SECONDS = 300.0
 
 
 def remaining(deadline: float, cap: float = 1.5) -> float:
@@ -113,6 +118,7 @@ def register(driver) -> None:
     if not directory:
         return
     try:
+        setattr(driver, REGISTRATION_ATTRIBUTE, None)
         capabilities = getattr(driver, "capabilities", None) or {}
         address = next(((capabilities.get(key) or {}).get("debuggerAddress")
                         for key in ("goog:chromeOptions", "ms:edgeOptions")
@@ -148,6 +154,9 @@ def register(driver) -> None:
             except FileNotFoundError:
                 pass
             os.close(descriptor)
+        if instance:
+            setattr(driver, REGISTRATION_ATTRIBUTE,
+                    dict(directory=directory, id=identifier, browser_instance=instance))
         # Unregister after a successful quit, without adding browser commands.
         original_quit = getattr(driver, "quit", None)
         if callable(original_quit):
@@ -159,3 +168,78 @@ def register(driver) -> None:
     except Exception:
         # No endpoint, local path or browser content goes into user-facing logs.
         logger.debug("The optional browser preview could not be registered.")
+
+
+@contextmanager
+def assistance(driver, timeout_s: float = MAX_ASSISTANCE_SECONDS, provider: str = "naukri"):
+    """Lease interaction with this verified browser while its agent is paused.
+
+    Closing a viewer never owns this context or the driver. The caller must
+    finish this context before continuing automation; the control endpoint
+    separately validates the lease and current browser identity on every input.
+    """
+    descriptor, lease_descriptor, created, enabled, name = None, None, False, False, ""
+    try:
+        try:
+            if os.getenv("MORROW_BROWSER_INTERACTIVE", "").strip().lower() != "true" or provider != "naukri":
+                raise ValueError("Browser assistance is not enabled")
+            if (isinstance(timeout_s, bool) or not isinstance(timeout_s, (int, float))
+                    or not math.isfinite(timeout_s) or timeout_s <= 0):
+                raise ValueError("Invalid assistance duration")
+            timeout_s = min(timeout_s, MAX_ASSISTANCE_SECONDS)
+            registered = getattr(driver, REGISTRATION_ATTRIBUTE, None)
+            if not isinstance(registered, dict):
+                raise ValueError("Browser registration is unavailable")
+            identifier, instance = registered.get("id"), registered.get("browser_instance")
+            if (not isinstance(identifier, str) or not MANIFEST_NAME.fullmatch(identifier + ".json")
+                    or not isinstance(instance, str) or str(uuid.UUID(instance)) != instance):
+                raise ValueError("Browser registration is unavailable")
+            descriptor = open_private_directory(registered["directory"])
+            file_descriptor = os.open(identifier + ".json", os.O_RDONLY | os.O_NOFOLLOW, dir_fd=descriptor)
+            with os.fdopen(file_descriptor, "rb") as stream:
+                info = os.fstat(stream.fileno())
+                if (not stat.S_ISREG(info.st_mode) or info.st_size > 4096
+                        or info.st_mode & 0o077 or info.st_uid != os.getuid()):
+                    raise ValueError("Browser registration must be private")
+                manifest = json.loads(stream.read(4097))
+            if (not isinstance(manifest, dict) or manifest.get("version") != 1
+                    or manifest.get("id") != identifier or manifest.get("browser_instance") != instance):
+                raise ValueError("Browser identity changed")
+            endpoint_parts(manifest["endpoint"])
+            name = identifier + ".assist"
+            temporary = "." + identifier + ".assist-" + uuid.uuid4().hex + ".tmp"
+            try:
+                output = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                                 0o600, dir_fd=descriptor)
+                with os.fdopen(output, "w", encoding="utf-8") as stream:
+                    lease_descriptor = os.dup(stream.fileno())
+                    json.dump(dict(version=1, provider=provider, browser_instance=instance,
+                                   expires_at=time.time() + timeout_s), stream)
+                # Linking the completed temporary file makes publication atomic
+                # and refuses any existing lease or symlink at the destination.
+                os.link(temporary, name, src_dir_fd=descriptor, dst_dir_fd=descriptor, follow_symlinks=False)
+                created = enabled = True
+            finally:
+                try:
+                    os.unlink(temporary, dir_fd=descriptor)
+                except FileNotFoundError:
+                    pass
+        except (OSError, ValueError, TypeError, KeyError, AttributeError):
+            logger.debug("Interactive assistance is unavailable for this browser.")
+        yield enabled
+    finally:
+        if descriptor is not None:
+            try:
+                if created:
+                    # The controller holds a shared lock while sending input.
+                    # Wait for it before revoking the lease and resuming the
+                    # agent, so human input and automation cannot overlap.
+                    fcntl.flock(lease_descriptor, fcntl.LOCK_EX)
+                    try:
+                        os.unlink(name, dir_fd=descriptor)
+                    except FileNotFoundError:
+                        pass
+            finally:
+                os.close(descriptor)
+                if lease_descriptor is not None:
+                    os.close(lease_descriptor)

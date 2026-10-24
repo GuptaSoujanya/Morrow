@@ -111,7 +111,7 @@ def isolated_lanes(args: argparse.Namespace, browser: List[Stage]) -> List[List[
     lanes = []
     for names in lanes_module.group([s.name for s in browser]):
         lane = lanes_module.lane_of(names[0])
-        env = lanes_module.prepare(lane, base)
+        env = {} if containers else lanes_module.prepare(lane, base)
         stages = []
         for stage in (s for s in browser if s.name in names):
             if stage.command:

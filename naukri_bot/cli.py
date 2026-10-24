@@ -639,7 +639,7 @@ def run(
         if not login_result.ok:
             if login_result.needs_manual:
                 raise _NeedsHuman(login_result.reason)
-            raise RuntimeError("login failed: %s" % login_result.reason)
+            raise _LoginUnavailable(login_result.reason)
         logger.info("Login verified.")
 
         if early_access:
@@ -1127,6 +1127,10 @@ class _NeedsHuman(Exception):
     """Login hit a captcha or OTP -- no amount of retrying will fix it."""
 
 
+class _LoginUnavailable(RuntimeError):
+    """An expected sign-in failure that needs a concise recovery message."""
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     args = parse_args(argv)
     configure_logging(args.verbose)
@@ -1186,13 +1190,17 @@ def main(argv: Optional[List[str]] = None) -> int:
             early_access_limit=args.early_access_limit,
             early_access_only=args.early_access_only,
         )
+    except _LoginUnavailable as exc:
+        logger.error("Naukri sign-in could not be verified: %s", exc)
+        return EXIT_LOGIN
     except _NeedsHuman as exc:
         logger.error("Login needs a human: %s", exc)
-        logger.error(
-            "Choose Visible browser mode in the dashboard, or set HEADLESS=false "
-            "and BACKGROUND=false and omit --headless for a local run. Finish "
-            "signing in using the visible browser to save the session for later runs."
-        )
+        if not settings.session_only:
+            logger.error(
+                "Open Naukri in Connections and choose Sign in, or set HEADLESS=false "
+                "and BACKGROUND=false and omit --headless for a local run. Finish "
+                "signing in using the visible browser to save the session for later runs."
+            )
         return EXIT_LOGIN
     except KeyboardInterrupt:
         logger.warning("Interrupted. Applications already made are recorded.")

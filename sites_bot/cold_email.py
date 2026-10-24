@@ -109,8 +109,9 @@ def _posting_header(text: str) -> Dict[str, str]:
 def leads_from_files(settings: Settings) -> List[Lead]:
     """Postings saved with tailored resumes, browser-agent reports, and data/inputs/company_sites.md."""
     leads = []  # type: List[Lead]
-    tailored = Path(settings.resume_out_dir or "data/resume/out") / "tailored"
-    for posting in sorted(tailored.glob("*/posting.txt")):
+    from common.resume import tailored_artifact_paths
+
+    for posting in tailored_artifact_paths(settings, "posting.txt"):
         text = posting.read_text(encoding="utf-8", errors="replace")
         header = _posting_header(text)
         for address in find_addresses(text):
@@ -348,8 +349,8 @@ def attachment_for(settings: Settings, lead: Lead) -> Optional[Path]:
     """The resume tailored for that job when there is one, else the base resume."""
     from common import resume as resume_module
 
-    folder = resume_module.tailored_dir(settings, lead.job())
-    tailored = sorted(folder.glob("*.pdf")) if folder.is_dir() else []
+    folder = resume_module.saved_tailoring_dir(settings, lead.job())
+    tailored = sorted(folder.glob("*.pdf")) if folder is not None else []
     if tailored:
         return tailored[0]
     try:
@@ -365,14 +366,15 @@ def own_addresses(settings: Settings, profile: Profile) -> set:
 
 def unique_leads(settings: Settings, profile: Profile, leads: List[Lead]) -> List[Lead]:
     """One lead per address, never her own; the posting saved for that job is used when there is one."""
-    from common.resume import tailored_dir
+    from common.resume import saved_tailoring_dir
 
     own = own_addresses(settings, profile)
     kept = {}  # type: Dict[str, Lead]
     for lead in leads:
         if lead.email in own:
             continue
-        saved = tailored_dir(settings, lead.job()) / "posting.txt" if lead.company or lead.title else None
+        folder = saved_tailoring_dir(settings, lead.job()) if lead.company or lead.title else None
+        saved = folder / "posting.txt" if folder is not None else None
         if saved is not None and saved.is_file():
             lead.posting = saved.read_text(encoding="utf-8", errors="replace")
         current = kept.get(lead.email)

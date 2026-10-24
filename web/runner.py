@@ -15,6 +15,8 @@ from typing import Any, Optional
 
 from . import state
 from .state import Command
+from .run_isolation import board_site, BOARD_LANES
+from .answer_notifications import PREFIX as ANSWER_EVENT_PREFIX, MAX_EVENT_BYTES, parse_event
 
 _ANSI = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07]*\x07")
 READ_GRACE_S = 1.0
@@ -31,22 +33,23 @@ def _now() -> str:
 def resources_for(command: Command, action: str) -> frozenset[str]:
     """Reserve shared sessions and outputs; unrelated agents can work together.
 
-    Direct browser bots currently reuse the main Chrome profile. Pipeline runs
-    may use that profile too (depending on their --bots/.env settings), so do
-    not assume that an apparently different site has an isolated browser.
+    Direct board agents have their own persistent browser profile. Duplicate
+    work on the same site still shares an account and must not run twice.
     """
     args = command.argv
-    resources = {f"action:{action or command.shown}"}
+    site = board_site(command, action)
+    resources = {f"action:boards:{site}" if site else f"action:{action or command.shown}"}
     if action in ("install", "tests"):
         return frozenset({"workspace"})
-    if action in ("naukri", "profile", "boards", "external", "assist", "google"):
+    if action in ("naukri", "profile", "external", "assist", "google"):
         resources.add("browser:main")
+    if action == "boards":
+        resources.update((f"browser:lane:{site}",) if site else
+                         ("browser:main", *(f"browser:lane:{lane}" for lane in BOARD_LANES)))
     if action == "cold_email" and "--scan-naukri" in args:
         resources.add("browser:main")
     if action in ("linkedin", "linkedin_profile"):
         resources.add("browser:linkedin")
-    if action in ("naukri", "profile", "boards", "external", "resume", "cold_email"):
-        resources.add("output:resume")
     if action != "pipeline":
         return frozenset(resources)
 
@@ -63,7 +66,9 @@ def resources_for(command: Command, action: str) -> frozenset[str]:
     if "--fresh" in args:
         resources.add("pipeline:reset")
     if any(stage.startswith(("profile:", "apply:")) and stage != "profile:linkedin" for stage in selected):
-        resources.update(("browser:main", "output:resume"))
+        resources.add("browser:main")
+        resources.update(f"browser:lane:{stage.split(':', 1)[1]}" for stage in selected
+                         if stage.startswith(("profile:", "apply:")) and stage.split(':', 1)[1] in BOARD_LANES)
     if "profile:linkedin" in selected:
         resources.add("browser:linkedin")
     return frozenset(resources)
@@ -91,6 +96,7 @@ class Run:
     result: Optional[dict[str, Any]] = None
     preview_store: Optional[tempfile.TemporaryDirectory] = field(default=None, repr=False)
     preview_lock: Any = field(default_factory=threading.Lock, repr=False)
+    answer_event_token: str = field(default_factory=lambda: uuid.uuid4().hex, repr=False)
 
     def snapshot(self) -> dict[str, Any]:
         out = dict(id=self.id, label=self.command.label, shown=self.command.shown,
@@ -137,6 +143,7 @@ class Runner:
     MAX_LINE_CHARS = 16000
     MAX_RUNS = 50
     MAX_ACTIVE = 8
+    MAX_NOTIFICATIONS = 100
 
     def __init__(self) -> None:
         self.lock = threading.RLock()
@@ -151,6 +158,8 @@ class Runner:
         self.start_guard = None
         self.environment_provider = None
         self.browser_inventory_lock = threading.Lock()
+        self.notifications: list[dict[str, Any]] = []
+        self.notification_ids: set[str] = set()
 
     @property
     def running(self) -> bool:
@@ -186,16 +195,34 @@ class Runner:
                 raise RuntimeError(f"{self.MAX_ACTIVE} agents are already running. Wait for one to finish before starting another.")
             return self._start_locked(command, action, day, resources)
 
-    def _start_locked(self, command: Command, action: str, day: str, resources: frozenset[str]) -> str:
-        """Caller owns the lock and has checked conflicts and capacity."""
+    def _prepare_run(self, command: Command, action: str, day: str, resources: frozenset[str]):
+        from .run_isolation import prepare
         run = Run(command, action, day, resources)
         runtime_env = self.environment_provider(command, action) if self.environment_provider else {}
+        try:
+            # Runtime isolation must win over any legacy command path override.
+            environment = prepare(state.APPLY, command, action, run.id, runtime_env, resources)
+        except (OSError, ValueError) as exc:
+            raise RuntimeError(f"Could not prepare {command.label}: {exc}") from None
+        return run, environment
+
+    def _start_locked(self, command: Command, action: str, day: str, resources: frozenset[str], prepared=None) -> str:
+        """Caller owns the lock and has checked conflicts and capacity."""
+        run, runtime_env = prepared or self._prepare_run(command, action, day, resources)
         try:
             run.preview_store = tempfile.TemporaryDirectory(prefix=f"morrow-browser-{run.id[:8]}-", ignore_cleanup_errors=True)
             run.proc = subprocess.Popen(command.argv, cwd=str(state.APPLY), stdin=subprocess.DEVNULL,
                                         stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                         env={**os.environ, "PYTHONUNBUFFERED": "1", **runtime_env, **dict(command.env),
-                                             "MORROW_BROWSER_PREVIEW_DIR": run.preview_store.name},
+                                             **{key: value for key, value in runtime_env.items() if key in
+                                                ("BROWSER_PROFILE_DIR", "RESUME_OUT_DIR", "MORROW_RESUME_LIBRARY_DIR", "SCREENSHOT_DIR")},
+                                             "MORROW_RUN_ID": run.id,
+                                             "MORROW_ANSWER_EVENT_TOKEN": run.answer_event_token,
+                                             "MORROW_BROWSER_PREVIEW_DIR": run.preview_store.name,
+                                             # Browser windows belong to the run itself. The
+                                             # dashboard only counts them; never inherit an
+                                             # obsolete remote-control/sign-in lease flag.
+                                             "MORROW_BROWSER_INTERACTIVE": "false"},
                                         start_new_session=True)
         except OSError as exc:
             self._clear_browser_preview(run)
@@ -262,13 +289,25 @@ class Runner:
             if not plan["ready"]:
                 return dict(plan, ok=False, error="Resolve the highlighted issues before starting these agents.")
             results = []
+            prepared = {}
+            preparation_errors = {}
+            # Copy/initialize every lane before launching the first Chrome.
+            # A later board must never copy a profile the first agent has opened.
+            for selection in selections:
+                try:
+                    prepared[selection.key] = self._prepare_run(selection.command, selection.action,
+                        selection.day, resources_for(selection.command, selection.action))
+                except RuntimeError as exc:
+                    preparation_errors[selection.key] = str(exc)
             for selection in selections:
                 command = selection.command
                 assert command is not None
                 result = dict(key=selection.key, label=command.label)
                 try:
+                    if selection.key in preparation_errors:
+                        raise RuntimeError(preparation_errors[selection.key])
                     run_id = self._start_locked(command, selection.action, selection.day,
-                                                resources_for(command, selection.action))
+                                                resources_for(command, selection.action), prepared[selection.key])
                     result.update(ok=True, id=run_id)
                 except RuntimeError as exc:
                     result.update(ok=False, error=str(exc))
@@ -284,13 +323,31 @@ class Runner:
 
     def _read(self, run: Run) -> None:
         assert run.proc is not None and run.proc.stdout is not None
+        continuation = discard_event_tail = False
         try:
             # Cap individual reads as well as retained output for noisy agents.
-            for raw in iter(lambda: run.proc.stdout.readline(self.MAX_LINE_CHARS), b""):
+            for raw in iter(lambda: run.proc.stdout.readline(MAX_EVENT_BYTES), b""):
+                complete = raw.endswith(b"\n")
+                reserved = not continuation and raw.startswith(ANSWER_EVENT_PREFIX.encode())
+                if discard_event_tail or (reserved and not complete):
+                    # An oversized/unfinished protocol record stays private in
+                    # its entirety, including tokens located in a later chunk.
+                    continuation = discard_event_tail = not complete
+                    continue
+                continuation = not complete
                 text = _ANSI.sub("", raw.decode("utf-8", "replace").rstrip("\r\n"))
                 with self.lock:
                     if run.result is None:
-                        self._say(text.split("\r")[-1], run.id)
+                        if reserved:
+                            event = parse_event(text, run.answer_event_token)
+                            if event and event["id"] not in self.notification_ids:
+                                self.notifications.append({**event, "run_id": run.id, "label": run.command.label, "at": _now()})
+                                del self.notifications[:-self.MAX_NOTIFICATIONS]
+                                self.notification_ids = {item["id"] for item in self.notifications}
+                                self.revision += 1
+                                self.changed.notify_all()
+                        else:
+                            self._say(text.split("\r")[-1], run.id)
         finally:
             run.proc.stdout.close()
 
@@ -299,35 +356,55 @@ class Runner:
         reader = threading.Thread(target=self._read, args=(run,), daemon=True)
         reader.start()
         code = run.proc.wait()
-        reader.join(timeout=READ_GRACE_S)
-        if reader.is_alive():
-            self._signal(run, signal.SIGTERM, include_children=True)
+        try:
             reader.join(timeout=READ_GRACE_S)
-            if reader.is_alive():
-                self._signal(run, signal.SIGKILL, include_children=True)
-                reader.join(timeout=READ_GRACE_S)
-        with self.lock:
-            took = time.monotonic() - run.started
-            stopped = run.stopping
-            status = "stopped" if stopped else "completed" if code == 0 else "failed"
-            minutes, seconds = divmod(int(took), 60)
-            elapsed = f"{minutes}:{seconds:02d}"
-            if stopped:
-                message = f"○ {run.command.label}: stopped after {elapsed}"
-            elif code == 0:
-                message = f"✓ {run.command.label}: done in {elapsed}"
-            else:
-                message = f"× {run.command.label}: failed (exit {code}) after {elapsed}"
-            run.result = dict(exit=code, stopped=stopped, status=status, seconds=round(took), finished=_now())
-            self.last = run.snapshot()
-            self._say(message, run.id)
-            self._prune()
-        self._clear_browser_preview(run)
+            for sig in (signal.SIGTERM, signal.SIGKILL):
+                if not reader.is_alive() and not self._group_alive(run):
+                    break
+                try:
+                    self._signal(run, sig, include_children=True)
+                except OSError:
+                    # The parent already exited. A leftover child's cleanup
+                    # failure must never strand this run in the active list.
+                    # Still try the stronger signal and publish the exit below.
+                    self.say("The agent process exited, but a background process could not be closed.", run.id)
+                if sig == signal.SIGTERM:
+                    # Chrome can detach its output from the agent's pipe. Its
+                    # lifetime still belongs to this run, so wait for the
+                    # owned process group, not just the output reader, before
+                    # escalating. Other agents have separate process groups.
+                    deadline = time.monotonic() + READ_GRACE_S
+                    while time.monotonic() < deadline:
+                        if not reader.is_alive() and not self._group_alive(run):
+                            break
+                        time.sleep(min(.02, max(0, deadline - time.monotonic())))
+                else:
+                    reader.join(timeout=READ_GRACE_S)
+        finally:
+            with self.lock:
+                took = time.monotonic() - run.started
+                stopped = run.stopping
+                status = "stopped" if stopped else "completed" if code == 0 else "failed"
+                minutes, seconds = divmod(int(took), 60)
+                elapsed = f"{minutes}:{seconds:02d}"
+                if stopped:
+                    message = f"○ {run.command.label}: stopped after {elapsed}"
+                elif code == 0:
+                    message = f"✓ {run.command.label}: done in {elapsed}"
+                else:
+                    message = f"× {run.command.label}: failed (exit {code}) after {elapsed}"
+                run.result = dict(exit=code, stopped=stopped, status=status, seconds=round(took), finished=_now())
+                self.last = run.snapshot()
+                self._say(message, run.id)
+                self._prune()
+            self._clear_browser_preview(run)
 
     def _clear_browser_preview(self, run: Run) -> None:
         with self.lock:
             store, run.preview_store = run.preview_store, None
         if store is not None:
+            from .browser_preview import forget_frames
+            forget_frames(store.name)
             store.cleanup()
 
     def browser_snapshot(self, run_id: str, browser_id: str = "", tab_id: str = "") -> dict[str, Any]:
@@ -358,6 +435,40 @@ class Runner:
                 if run.result is not None or self.closed:
                     return dict(state="finished", message="This run has finished. Its browser preview is closed.")
             return frame
+        finally:
+            run.preview_lock.release()
+
+    def browser_input(self, run_id: str, data: dict, authorized=None) -> dict[str, Any]:
+        """One user input, serialized with previews and bound to a live run."""
+        from .browser_preview import BrowserInputError, control, validate_input
+
+        validate_input(data)
+        if data["id"] != run_id:
+            raise BrowserInputError(400, "Choose the agent shown in this browser view.")
+        with self.lock:
+            run = self.runs.get(run_id)
+            if run is None:
+                raise KeyError("This run is no longer available.")
+            directory = run.preview_store.name if run.preview_store else None
+            if "--containers" in run.command.argv:
+                raise BrowserInputError(409, "This agent uses a separate desktop. Use its browser screen in Flows.")
+
+        def ensure_allowed():
+            if authorized is not None and not authorized():
+                raise BrowserInputError(401, "Sign in again before using this browser.")
+            with self.lock:
+                if (self.closed or self.runs.get(run_id) is not run or run.result is not None or run.stopping
+                        or (run.proc is not None and run.proc.poll() is not None)):
+                    raise BrowserInputError(409, "This agent has stopped or is stopping. Its browser controls are closed.")
+                if not directory or not run.preview_store or run.preview_store.name != directory:
+                    raise BrowserInputError(409, "This agent's browser is not available yet.")
+
+        ensure_allowed()
+        if not run.preview_lock.acquire(blocking=False):
+            raise BrowserInputError(409, "The browser view is refreshing. Wait for the next image before trying again.")
+        try:
+            ensure_allowed()
+            return control(directory, data, ensure_allowed)
         finally:
             run.preview_lock.release()
 
@@ -409,6 +520,70 @@ class Runner:
         finally:
             if acquired:
                 self.browser_inventory_lock.release()
+
+    def browser_counts(self) -> dict[str, Any]:
+        """Count owned live browser instances without reading their pages."""
+        from .browser_preview import count_many
+
+        def active(run):
+            return (not self.closed and self.runs.get(run.id) is run and run.result is None
+                    and (run.proc is None or run.proc.poll() is None))
+
+        with self.lock:
+            runs = [run for run in self.runs.values() if active(run)]
+            directories, details = {}, {}
+            for run in runs:
+                if "--containers" in run.command.argv:
+                    details[run.id] = dict(open_browser_count=0, count_status="unavailable")
+                elif run.preview_store is not None:
+                    directories[run.id] = run.preview_store.name
+                else:
+                    details[run.id] = dict(open_browser_count=0, count_status="checking")
+        acquired = self.browser_inventory_lock.acquire(blocking=False)
+        try:
+            if acquired and directories:
+                try:
+                    details.update(count_many(directories))
+                except Exception:
+                    for run_id in directories:
+                        details[run_id] = dict(open_browser_count=0, count_status="unavailable")
+            elif not acquired:
+                for run_id in directories:
+                    details[run_id] = dict(open_browser_count=0, count_status="checking")
+            with self.lock:
+                result = []
+                for run in runs:
+                    if not active(run):
+                        continue
+                    detail = details.get(run.id, {})
+                    count = detail.get("open_browser_count", 0)
+                    status = detail.get("count_status", "unavailable")
+                    if (not isinstance(count, int) or isinstance(count, bool) or count < 0
+                            or status not in ("ready", "checking", "unavailable")):
+                        count, status = 0, "unavailable"
+                    # Only the count leaves this method. Browser URLs, titles,
+                    # tab identifiers and local addresses are never UI state.
+                    result.append(dict(id=run.id, running=True, open_browser_count=count,
+                                       count_status=status))
+                return {"runs": result}
+        finally:
+            if acquired:
+                self.browser_inventory_lock.release()
+
+    @staticmethod
+    def _group_alive(run: Run) -> bool:
+        if run.proc is None:
+            return False
+        try:
+            # Popen(start_new_session=True) makes the owned PID its group ID.
+            # Probe only that group; never discover or signal unrelated Chrome.
+            os.killpg(run.proc.pid, 0)
+            return True
+        except ProcessLookupError:
+            return False
+        except OSError:
+            # A failed probe must not skip the bounded cleanup attempts.
+            return True
 
     @staticmethod
     def _signal(run: Run, sig: int, include_children: bool = False) -> None:
@@ -467,6 +642,7 @@ class Runner:
                        action=first.get("action", ""), seconds=first.get("seconds", 0),
                        stopping=first.get("stopping", False), last=self.last, next=self.count,
                        epoch=self.epoch, revision=self.revision, runs=runs, active_count=len(active))
+            out["notifications"] = [dict(item) for item in self.notifications]
             if after is not None:
                 reset = (epoch is not None and epoch != self.epoch) or after > self.count
                 after = 0 if reset else max(0, after)

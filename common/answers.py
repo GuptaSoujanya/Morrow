@@ -9,7 +9,10 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
 
 from . import llm
+from . import answer_learning
+from .answer_similarity import is_job_dependent
 from .llm import LLMClient
+from .shared_files import atomic_write_text, locked_file
 from .models import (
     Answer,
     AnswerMode,
@@ -53,7 +56,7 @@ def answers_file_path(settings: Any) -> str:
 
 
 def _question_key(text: str) -> str:
-    return " ".join(re.sub(r"[^a-z0-9]+", " ", text.casefold()).split())
+    return answer_learning.key(text)
 
 
 def parse_answers(text: str) -> List[Tuple[List[str], str]]:
@@ -139,16 +142,21 @@ class AnswerBook:
         self.entries = []  # type: List[Tuple[List[str], str]]
         self._by_key = {}  # type: Dict[str, str]
         self._loaded_mtime = None  # type: Optional[float]
+        self.profile_fingerprint = None
+        self._learned = {}
+        self.last_match = None
         self.reload()
 
     def reload(self) -> None:
         try:
             with open(self.path, "r", encoding="utf-8") as handle:
                 text = handle.read()
-            mtime = os.path.getmtime(self.path)  # type: Optional[float]
+                info = os.fstat(handle.fileno())
+                mtime = (info.st_mtime_ns, info.st_size, info.st_ino)
         except OSError:
             text, mtime = "", None
         self.entries = parse_answers(text)
+        self._learned = answer_learning.read_metadata(text)
         self._loaded_mtime = mtime
         self._by_key = {}
         for questions, answer in self.entries:
@@ -157,15 +165,23 @@ class AnswerBook:
 
     def _refresh_if_changed(self) -> None:
         try:
-            mtime = os.path.getmtime(self.path)  # type: Optional[float]
+            info = os.stat(self.path)
+            mtime = (info.st_mtime_ns, info.st_size, info.st_ino)
         except OSError:
             mtime = None
         if mtime != self._loaded_mtime:
             self.reload()
 
-    def answer_for(self, question: str) -> Optional[str]:
+    @property
+    def source_entries(self):
+        """User-written facts only; generated answers must not prove other answers."""
+        self._refresh_if_changed()
+        return [(kept, answer) for questions, answer in self.entries
+                if (kept := [q for q in questions if answer_learning.identity(q, answer) not in self._learned])]
+
+    def answer_for(self, question: str, options=None, multi=False) -> Optional[str]:
         """The user's answer, or None when the question is unknown, blank or written per job."""
-        answer = self._lookup(question)
+        answer = self._lookup(question, options, multi)
         return None if answer is None or _is_per_job(answer) else answer
 
     def per_job(self, question: str) -> bool:
@@ -173,14 +189,73 @@ class AnswerBook:
         answer = self._lookup(question)
         return answer is not None and _is_per_job(answer)
 
-    def _lookup(self, question: str) -> Optional[str]:
+    def _lookup(self, question: str, options=None, multi=False) -> Optional[str]:
         self._refresh_if_changed()
+        self.last_match = None
         key = _question_key(question)
         if not key:
             return None
-        # Exact normalised key only: a near match ("python" vs "pyspark") would
-        # submit the answer written for a different question.
-        return self._by_key.get(key) or None
+        if key in self._by_key:
+            exact = [(q, answer) for questions, answer in self.entries for q in questions
+                     if _question_key(q) == key]
+            # A user entry, including an explicit blank or per-job instruction,
+            # wins over machine-learned variants and blocks semantic fallback.
+            for q, answer in exact:
+                if answer_learning.identity(q, answer) not in self._learned:
+                    return answer or None
+            valid = {answer for q, answer in exact if answer_learning.eligible(
+                q, answer, self._learned, self.profile_fingerprint, options, multi)}
+            return next(iter(valid)) if len(valid) == 1 else None
+        from .answer_similarity import match
+        candidates = []
+        for questions, answer in self.entries:
+            kept = [q for q in questions if answer_learning.eligible(
+                q, answer, self._learned, self.profile_fingerprint, options, multi, semantic=True)]
+            if kept and answer and not _is_per_job(answer):
+                candidates.append((kept, answer))
+        self.last_match = match(question, candidates)
+        return self.last_match.answer if self.last_match else None
+
+    def save_learned(self, question, answer, note, options=None, multi=False, source="llm"):
+        """Append/fill one scoped answer, without overwriting concurrent user edits."""
+        from .assist import fill_answer
+        question, answer = " ".join(question.split()), " ".join(answer.split())
+        if not question or not answer or not self.profile_fingerprint:
+            return False
+        key = _question_key(question)
+        with locked_file(self.path) as path:
+            self.reload()
+            aliases = [question]
+            blank = False
+            for questions, existing in self.entries:
+                if not any(_question_key(q) == key for q in questions):
+                    continue
+                if not existing:
+                    aliases, blank = questions, True
+                    continue
+                if any(answer_learning.identity(q, existing) not in self._learned for q in questions):
+                    return False
+                if any(answer_learning.eligible(q, existing, self._learned, self.profile_fingerprint,
+                                               options, multi) for q in questions):
+                    return False
+            text = path.read_text(encoding="utf-8") if path.exists() else ""
+            comment = " ".join(note.split())
+            updated = fill_answer(text, question, answer, comment) if blank else None
+            if blank and updated is None:
+                logger.warning("The answer sheet changed or its blank entry could not be filled: %s", question)
+                return False
+            if updated is None:
+                aliases = [question]
+                updated = text + "\n# %s\nQ: %s\nA: %s\n" % (comment, question, answer)
+            # All aliases of a filled blank carry the same provenance.
+            metadata = "\n".join(answer_learning.annotation(q, answer, self.profile_fingerprint,
+                options, multi, source) for q in aliases)
+            atomic_write_text(path, updated.rstrip() + "\n" + metadata + "\n")
+            self.reload()
+        from .answer_events import answer_saved
+        answer_saved(question, answer, source)
+        logger.info("Answer sheet updated: %s. Review the saved answer in Morrow.", question)
+        return True
 
     def blank_questions(self) -> List[str]:
         return [questions[0] for questions, answer in self.entries if not answer]
@@ -218,15 +293,16 @@ class AnswerBook:
             " ".join(question.split()),
         )
         try:
-            os.makedirs(os.path.dirname(self.path) or ".", exist_ok=True)
-            with open(self.path, "a", encoding="utf-8") as handle:
-                handle.write(block)
-            self._loaded_mtime = os.path.getmtime(self.path)
+            with locked_file(self.path) as path:
+                self.reload()
+                if key in self._by_key:
+                    return False
+                text = path.read_text(encoding="utf-8") if path.exists() else ""
+                atomic_write_text(path, text + block)
+                self.reload()
         except OSError as exc:
             logger.warning("Could not add the question to %s: %s", self.path, exc)
             return False
-        self.entries.append(([question], ""))
-        self._by_key[key] = ""
         return True
 
 
@@ -345,6 +421,14 @@ class AnswerEngine:
         self.job = None  # type: Any
         self.book = install_answer_book(settings)
 
+    def _refresh_fingerprint(self):
+        # Manual edits invalidate old learned answers; adding learned entries
+        # or unanswered questions does not invalidate the existing answer bank.
+        source = [(sorted(qs), answer) for qs, answer in self.book.source_entries if answer]
+        payload = _profile_fingerprint(self.profile) + json.dumps(sorted(source), ensure_ascii=True)
+        self.profile_fingerprint = hashlib.sha256(payload.encode()).hexdigest()[:24]
+        self.book.profile_fingerprint = self.profile_fingerprint
+
     def set_job_context(self, job: Any) -> None:
         """Note which posting the next questions belong to.
 
@@ -369,13 +453,35 @@ class AnswerEngine:
         options: Optional[List[str]] = None,
         field_type: str = "text",
     ) -> AnswerResolution:
+        # Parallel agents asking the same question share one resolution. They
+        # re-read the sheet after the first writer finishes; unrelated questions
+        # have independent locks, and the sheet itself is never locked for an
+        # entire model request.
+        from pathlib import Path
+        self._refresh_fingerprint()
+        request = json.dumps([_question_key(question), self.profile_fingerprint,
+                              answer_learning.choices(options), field_type])
+        identity = hashlib.sha256(request.encode()).hexdigest()
+        path = Path(self.book.path).parent / ".answer_requests" / identity
+        with locked_file(path):
+            return self._resolve_unlocked(question, options, field_type)
+
+    def _resolve_unlocked(
+        self,
+        question: str,
+        options: Optional[List[str]] = None,
+        field_type: str = "text",
+    ) -> AnswerResolution:
+        self._refresh_fingerprint()
         self._current_options = options
+        self._cache_fingerprint = answer_learning.model_fingerprint(self.profile_fingerprint, options)
         if not options and self.book.per_job(question):
             return self._write_for_job(question, field_type)
         own = self._own_answer(question, options)
         if own is not None:
             return self._accept(question, own, field_type, persist=False)
-        cached = self.ledger.get_answer(question, self.profile_fingerprint)
+        cached = (self.ledger.get_answer(question, self._cache_fingerprint)
+                  if self.book._by_key.get(_question_key(question), "missing") and not is_job_dependent(question) else None)
         cached_answer = self._cached_answer(cached)
         if cached_answer is not None:
             if options is None or self._exact_option(cached_answer.text, options) is not None:
@@ -394,6 +500,7 @@ class AnswerEngine:
                 return self._finish(question, direct, False)
             return self._accept(question, direct, field_type, persist=True)
 
+        requested_fingerprint = self.profile_fingerprint
         llm_resolution = llm.resolve_answer(
             self.client,
             self.profile,
@@ -401,6 +508,12 @@ class AnswerEngine:
             options=options,
             job_context=self.job_context,
         )
+        self._refresh_fingerprint()
+        if self.profile_fingerprint != requested_fingerprint:
+            own = self._own_answer(question, options)
+            if own is not None:
+                return self._accept(question, own, field_type, persist=False)
+            return self._finish(question, AnswerResolution.abstain("Your facts changed while this answer was being written. Try again."), False)
         if llm_resolution.abstained:
             judged = self._judge(question, options)
             if judged is None:
@@ -414,14 +527,27 @@ class AnswerEngine:
         # Cached, "Yes" to a walk-in at a Noida employer would be replayed to a
         # Chennai one, since the cache is keyed on the question text and the
         # profile fingerprint -- neither of which changes between jobs.
-        persist = not _used_job_context(llm_resolution)
+        persist = not _used_job_context(llm_resolution) and not is_job_dependent(question)
         if not persist:
             logger.info(
                 "Not caching the answer to %r: it depends on this posting (%s)",
                 question,
                 llm_resolution.answer.grounded_in if llm_resolution.answer else "",
             )
-        return self._accept(question, llm_resolution, field_type, persist=persist)
+        accepted = self._accept(question, llm_resolution, field_type, persist=persist)
+        if persist and not accepted.abstained:
+            self._save_learned(question, accepted.answer.text, accepted.answer.grounded_in, options)
+        return accepted
+
+    def _save_learned(self, question, answer, grounding, options=None, multi=False):
+        if self.settings.answer_mode != AnswerMode.AUTO or is_job_dependent(question):
+            return
+        note = "AI answered this on %s from %s. Review and edit it if needed." % (
+            datetime.now().strftime("%Y-%m-%d"), grounding)
+        try:
+            self.book.save_learned(question, answer, note, options, multi)
+        except OSError as exc:
+            logger.warning("The answer was resolved, but could not be saved for reuse: %s", exc)
 
     def _judge(
         self, question: str, options: Optional[List[str]]
@@ -437,9 +563,13 @@ class AnswerEngine:
         candidate_text = "\n\n".join(
             "%s:\n%s" % (name.upper(), text) for name, text in texts.items() if text
         )
+        requested_fingerprint = self.profile_fingerprint
         judged = llm.judge_answer(
             self.client, question, candidate_text, options=options, job_context=self.job_context
         )
+        self._refresh_fingerprint()
+        if self.profile_fingerprint != requested_fingerprint:
+            return None
         if judged is None:
             return None
         answer = judged["answer"]
@@ -454,7 +584,7 @@ class AnswerEngine:
                 logger.info("Refused %r for %r: more than your %s years in total", answer, question, total)
                 return None
         logger.info("[judged] %s -> %s (%s)", question, answer, judged["reason"])
-        self._keep_judged(question, answer, judged, saved=not options and not judged["depends_on_posting"])
+        self._keep_judged(question, answer, judged, saved=not options and not judged["depends_on_posting"] and not is_job_dependent(question))
         return AnswerResolution.resolved(
             Answer(
                 text=answer,
@@ -483,25 +613,10 @@ class AnswerEngine:
             where,
             judged["reason"].rstrip("."),
         )
-        self.book._refresh_if_changed()
-        key = _question_key(question)
-        if saved and self.book._by_key.get(key):
-            saved = False
         if saved:
             try:
-                with open(self.book.path, "r", encoding="utf-8") as handle:
-                    text = handle.read()
-            except OSError:
-                text = ""
-            updated = assist.fill_answer(text, question, answer, note) if key in self.book._by_key else None
-            if updated is None:
-                updated = text + "\n# %s\nQ: %s\nA: %s\n" % (
-                    " ".join(note.split()), " ".join(question.split()), " ".join(answer.split()))
-            try:
-                os.makedirs(os.path.dirname(self.book.path) or ".", exist_ok=True)
-                with open(self.book.path, "w", encoding="utf-8") as handle:
-                    handle.write(updated)
-                self.book.reload()
+                self._refresh_fingerprint()
+                saved = self.book.save_learned(question, answer, note, source="judgement")
             except OSError as exc:
                 logger.warning("Could not write the judged answer to %s: %s", self.book.path, exc)
                 saved = False
@@ -558,6 +673,7 @@ class AnswerEngine:
 
     def own_answer(self, question: str, options: Optional[List[str]] = None) -> Optional[str]:
         """The answer from data/inputs/answers.txt alone: no cache, no model, nothing recorded."""
+        self._refresh_fingerprint()
         resolution = self._own_answer(question, options)
         if resolution is None or resolution.answer is None:
             return None
@@ -567,9 +683,10 @@ class AnswerEngine:
         self, question: str, options: Optional[List[str]]
     ) -> Optional[AnswerResolution]:
         """What the user wrote in data/inputs/answers.txt, when it fits the rendered options."""
-        text = self.book.answer_for(question)
+        text = self.book.answer_for(question, options)
         if text is None:
             return None
+        matched_question = self.book.last_match.matched_question if self.book.last_match else None
         if options is not None:
             matched = match_option(text, options)
             if matched is None:
@@ -582,12 +699,15 @@ class AnswerEngine:
                 )
                 return None
             text = matched
+        if matched_question:
+            logger.info("Reused a saved answer for a matching question: %s (saved as: %s). No AI call needed.",
+                        question, matched_question)
         return AnswerResolution.resolved(
             Answer(
                 text=text,
                 grounded_in="data/inputs/answers.txt",
                 source=AnswerSource.DATA,
-                confidence=1.0,
+                confidence=self.book.last_match.score if self.book.last_match else 1.0,
             )
         )
 
@@ -610,29 +730,42 @@ class AnswerEngine:
             )
         if persist:
             self.ledger.save_answer(
-                question, answer, field_type, self.profile_fingerprint
+                question, answer, field_type, self._cache_fingerprint
             )
         return self._finish(question, resolution, False)
 
     def resolve_many(
         self, question: str, options: List[str]
     ) -> Tuple[Optional[List[str]], str]:
+        from pathlib import Path
+        self._refresh_fingerprint()
+        request = json.dumps([_question_key(question), self.profile_fingerprint,
+                              answer_learning.choices(options), "multiselect"])
+        identity = hashlib.sha256(request.encode()).hexdigest()
+        with locked_file(Path(self.book.path).parent / ".answer_requests" / identity):
+            return self._resolve_many_unlocked(question, options)
+
+    def _resolve_many_unlocked(
+        self, question: str, options: List[str]
+    ) -> Tuple[Optional[List[str]], str]:
         """Resolve a select-all-that-apply question.
 
-        Returns (selections, reason). Nothing is cached: the cache is keyed on a
-        single answer string, and a partial hit would silently drop selections.
-        Abstains are recorded like any other so the question reaches
-        data/worklists/unanswered_questions.md.
+        Returns (selections, reason). Learned selections are scoped to the exact
+        choice set; ambiguous serialization is never saved for reuse.
         """
+        self._refresh_fingerprint()
         self._current_options = options
         if not options:
             self._record_abstain(question, "no_options_rendered", options)
             return None, "no_options_rendered"
 
-        own = self.book.answer_for(question)
+        own = self.book.answer_for(question, options, multi=True)
         if own is not None:
             chosen = match_options(own, options)
             if chosen:
+                if self.settings.answer_mode == AnswerMode.PROPOSE:
+                    self._record_abstain(question, "propose_mode", options)
+                    return None, "propose_mode"
                 self.answered += 1
                 logger.info("[multi] %s -> %s (data/inputs/answers.txt)", question, chosen)
                 return chosen, ""
@@ -643,15 +776,34 @@ class AnswerEngine:
                 options,
             )
 
+        requested_fingerprint = self.profile_fingerprint
         selections, reason = llm.resolve_selection(
             self.client, self.profile, question, options
         )
+        self._refresh_fingerprint()
+        if self.profile_fingerprint != requested_fingerprint:
+            own = self.book.answer_for(question, options, multi=True)
+            chosen = match_options(own, options) if own else None
+            if chosen and self.settings.answer_mode != AnswerMode.PROPOSE:
+                self.answered += 1
+                return chosen, ""
+            reason = "Your facts changed while this answer was being written. Try again."
+            self._record_abstain(question, reason, options)
+            return None, reason
         if selections is None:
             self.abstained += 1
             logger.info("Abstaining from question %r: %s", question, reason)
             _record_unanswered(question, reason, options, self.job_context)
             return None, reason
+        if self.settings.answer_mode != AnswerMode.AUTO:
+            reason = "propose_mode" if self.settings.answer_mode == AnswerMode.PROPOSE else "ask_mode_llm_answer"
+            self._record_abstain(question, reason, options)
+            return None, reason
         self.answered += 1
+        serialized = ", ".join(selections)
+        round_trip = match_options(serialized, options)
+        if round_trip is not None and set(round_trip) == set(selections):
+            self._save_learned(question, serialized, "profile facts", options, multi=True)
         logger.info("[multi] %s -> %s", question, selections)
         return selections, ""
 

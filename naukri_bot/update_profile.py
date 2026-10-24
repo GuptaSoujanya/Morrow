@@ -102,6 +102,10 @@ class _NeedsHuman(Exception):
     """Login hit a captcha or OTP -- no amount of retrying will fix it."""
 
 
+class _LoginUnavailable(ProfileUpdateError):
+    """A managed sign-in failure must not restart the interactive browser."""
+
+
 @dataclass
 class HeadlineUpdate:
     before: str
@@ -433,6 +437,8 @@ def with_session(settings: Settings, work: Callable[[Any], Any]) -> Any:
         if not login_result.ok:
             if login_result.needs_manual:
                 raise _NeedsHuman(login_result.reason)
+            if settings.session_only:
+                raise _LoginUnavailable(login_result.reason)
             raise ProfileUpdateError("login failed: %s" % login_result.reason)
         logger.info("Login verified.")
         try:
@@ -614,15 +620,20 @@ def main(argv: Optional[List[str]] = None) -> int:
     for attempt in range(1, MAX_ATTEMPTS + 1):
         try:
             result = run_once(settings, dry_run=args.dry_run, resume_pdf=resume_pdf, profile=profile)
+        except _LoginUnavailable as exc:
+            logger.error("Naukri sign-in could not be verified: %s", exc)
+            send_alert(settings, "Naukri profile update: sign-in could not be verified (%s)" % exc)
+            return EXIT_LOGIN
         except _NeedsHuman as exc:
             logger.error("Login needs a human: %s", exc)
-            logger.error(
-                "Choose Visible browser mode in the dashboard, or set HEADLESS=false "
-                "and BACKGROUND=false and omit --headless for a local run. Finish "
-                "the captcha or OTP in the browser within %d minutes; the session "
-                "is then saved for later runs.",
-                MANUAL_LOGIN_TIMEOUT_S // 60,
-            )
+            if not settings.session_only:
+                logger.error(
+                    "Open Naukri in Connections and choose Sign in, or set HEADLESS=false "
+                    "and BACKGROUND=false and omit --headless for a local run. Finish "
+                    "the captcha or OTP in the browser within %d minutes; the session "
+                    "is then saved for later runs.",
+                    MANUAL_LOGIN_TIMEOUT_S // 60,
+                )
             send_alert(settings, "Naukri profile update: login needs a human (%s)" % exc)
             return EXIT_LOGIN
         except KeyboardInterrupt:

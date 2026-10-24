@@ -254,8 +254,12 @@ def test_the_report_lists_judged_answers(tmp_path):
     assert "Current location: **Other** (Indore is not listed; this application only)" in text
 
 
-def test_the_book_reads_the_judged_answer_like_any_other(tmp_path):
+def test_judged_answers_require_the_same_source_fingerprint(tmp_path):
     engine = _engine(tmp_path, _Brain(_judged("0")))
     engine.resolve(QUESTION)
 
-    assert AnswerBook(engine.book.path).answer_for(QUESTION) == "0"
+    book = AnswerBook(engine.book.path)
+    assert book.answer_for(QUESTION) is None
+    book.profile_fingerprint = engine.profile_fingerprint
+    assert book.answer_for(QUESTION) == "0"
+    assert book.answer_for("How many years have you worked with CrewAI?") is None

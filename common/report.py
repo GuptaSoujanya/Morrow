@@ -18,6 +18,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from sites_bot import browser_agent, cold_email
 from .models import ApplyStatus, Settings
+from .shared_files import atomic_write_text, locked_file
 
 
 logger = logging.getLogger(__name__)
@@ -187,9 +188,10 @@ def _untried_company_sites() -> int:
 
 
 def _tailored_today(settings: Settings, day: date) -> List[Dict[str, Any]]:
-    root = Path(settings.resume_out_dir or "data/resume/out") / "tailored"
+    from .resume import tailored_artifact_paths
+
     made = []
-    for record_path in sorted(root.glob("*/tailoring.json")):
+    for record_path in tailored_artifact_paths(settings, "tailoring.json"):
         record = _read_json(record_path)
         if str(record.get("generated_at", ""))[:10] == day.isoformat():
             record["folder"] = str(record_path.parent)
@@ -581,8 +583,8 @@ def write_daily_report(settings: Settings, day: Optional[date] = None, now: Opti
     now = now or datetime.now()
     day = day or now.date()
     path = report_path(settings, day)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(build_report(settings, day, now), encoding="utf-8")
+    with locked_file(path) as target:
+        atomic_write_text(target, build_report(settings, day, now))
     return path
 
 

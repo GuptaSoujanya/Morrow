@@ -1,0 +1,10 @@
+- generic [active] [ref=e1]:
+  - link "Skip to content" [ref=e2] [cursor=pointer]:
+    - /url: "#content"
+  - alert [ref=e3]: Can’t reach the site’s server. Trying again…
+  - main [ref=e5]:
+    - alert [ref=e7]:
+      - generic [ref=e11]:
+        - strong [ref=e12]: Something needs another try.
+        - paragraph [ref=e13]: Your workspace is unavailable. The account service is unavailable. Try again shortly.
+      - button "Try again" [ref=e14] [cursor=pointer]

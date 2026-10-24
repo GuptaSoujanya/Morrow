@@ -20,6 +20,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import uuid
 from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
@@ -126,7 +127,7 @@ def facts_text(profile: Profile, settings: Settings) -> str:
             lines.append("- %s: %s" % (key.replace("_", " "), _text(value)))
     answered = [
         (questions, answer)
-        for questions, answer in AnswerBook(answers_file_path(settings)).entries
+        for questions, answer in AnswerBook(answers_file_path(settings)).source_entries
         if answer and answer.strip() != PER_JOB
     ]
     if answered:
@@ -281,7 +282,7 @@ def workdir_for(settings: Settings, label: str, now: Optional[datetime] = None) 
         Path(settings.report_dir or "data/reports")
         / now.strftime("%Y-%m-%d")
         / "agent"
-        / ("%s %s" % (now.strftime("%H%M%S"), _folder_name(label) or "task"))
+        / ("%s %s %s" % (now.strftime("%H%M%S"), _folder_name(label) or "task", uuid.uuid4().hex[:12]))
     )
 
 

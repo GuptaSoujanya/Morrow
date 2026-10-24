@@ -19,6 +19,7 @@ from typing import Any, Dict, Iterable, Iterator, List, Optional
 
 from .models import ApplyStatus
 from .pipeline_diagnostics import process_alive, sanitize_detail
+from .shared_files import atomic_write_text, locked_file
 
 MEMORY_DIR = Path(".memory")
 PROFILES_FILE = "profiles.json"
@@ -87,7 +88,7 @@ def record_profile(platform: str, action: str, url: str, notes: str = "",
     the pipeline's own Memory never overwrites it.
     """
     folder = Path(folder or MEMORY_DIR)
-    with _PROFILES_LOCK:
+    with _PROFILES_LOCK, locked_file(folder / PROFILES_FILE) as path:
         profiles = load_profiles(folder)
         entry = profiles.setdefault(platform, {"history": []})
         at = _now()
@@ -95,11 +96,7 @@ def record_profile(platform: str, action: str, url: str, notes: str = "",
         if action == PROFILE_CREATED:
             entry["created_at"] = at
         entry["history"] = (entry.get("history") or [])[-29:] + [{"action": action, "at": at}]
-        folder.mkdir(parents=True, exist_ok=True)
-        path = folder / PROFILES_FILE
-        tmp = path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(profiles, indent=1, sort_keys=True), encoding="utf-8")
-        tmp.replace(path)
+        atomic_write_text(path, json.dumps(profiles, indent=1, sort_keys=True))
 
 
 def _link(text: str, url: str) -> str:

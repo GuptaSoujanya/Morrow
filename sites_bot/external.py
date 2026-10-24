@@ -32,6 +32,7 @@ from . import browser_agent
 from common.answers import _NOT_FOR_JUDGEMENT, match_option
 from common.browser import human_pause, human_type, safe_get
 from common.models import AnswerMode, ApplyResult, ApplyStatus, JobPosting, Profile, Settings
+from common.shared_files import atomic_write_text, locked_file
 
 
 logger = logging.getLogger(__name__)
@@ -951,8 +952,8 @@ def google_sign_in(driver: Any, settings: Settings, timeout_s: float = MANUAL_LO
             if settings.headless:
                 _leave_popup(driver, popup, main)
                 return False, (
-                    "Google wants a fresh sign-in. Choose Visible browser mode in the "
-                    "dashboard, or set HEADLESS=false and BACKGROUND=false and omit "
+                    "Google wants a fresh sign-in. Open Google in Connections and choose "
+                    "Sign in, or set HEADLESS=false and BACKGROUND=false and omit "
                     "--headless for a local run, then finish signing in by hand."
                 )
             if not asked_person:
@@ -1635,11 +1636,11 @@ def record_company_site(settings: Settings, job: JobPosting, result: ExternalRes
     if result.missing:
         entry.append("- Left for you: %s" % "; ".join(result.missing))
     try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        head, blocks = _read_company_sites(path)
-        blocks = [block for block in blocks if not _same_job(block, job)]
-        blocks.append("\n".join(entry[1:]) + "\n")
-        _write_company_sites(path, head or header, blocks)
+        with locked_file(path) as target:
+            head, blocks = _read_company_sites(target)
+            blocks = [block for block in blocks if not _same_job(block, job)]
+            blocks.append("\n".join(entry[1:]) + "\n")
+            _write_company_sites(target, head or header, blocks)
     except OSError as exc:
         logger.warning("Could not write %s: %s", path, exc)
     return path
@@ -1649,15 +1650,13 @@ def forget_company_site(settings: Settings, job: JobPosting) -> None:
     """Drop the job's entry once the bot has finished that application itself."""
     path = Path(settings.data_dir or "data/inputs") / "company_sites.md"
     try:
-        head, blocks = _read_company_sites(path)
-    except OSError:
-        return
-    kept = [block for block in blocks if not _same_job(block, job)]
-    if len(kept) != len(blocks):
-        try:
-            _write_company_sites(path, head, kept)
-        except OSError as exc:
-            logger.warning("Could not update %s: %s", path, exc)
+        with locked_file(path) as target:
+            head, blocks = _read_company_sites(target)
+            kept = [block for block in blocks if not _same_job(block, job)]
+            if len(kept) != len(blocks):
+                _write_company_sites(target, head, kept)
+    except OSError as exc:
+        logger.warning("Could not update %s: %s", path, exc)
 
 
 def _read_company_sites(path: Path) -> Tuple[str, List[str]]:
@@ -1670,7 +1669,7 @@ def _read_company_sites(path: Path) -> Tuple[str, List[str]]:
 
 def _write_company_sites(path: Path, head: str, blocks: List[str]) -> None:
     body = head.rstrip("\n") + "\n" + "".join("\n" + block for block in blocks)
-    path.write_text(body, encoding="utf-8")
+    atomic_write_text(path, body)
 
 
 def _same_job(block: str, job: JobPosting) -> bool:

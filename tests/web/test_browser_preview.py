@@ -81,6 +81,8 @@ class DevToolsHandler(http.server.BaseHTTPRequestHandler):
                     raw = bytes(value ^ mask[index % 4] for index, value in enumerate(raw))
                 request = json.loads(raw)
                 self.server.commands.append(request)
+                if getattr(self.server, "on_command", None):
+                    self.server.on_command(request)
                 if self.server.oversized_frame:
                     self.wfile.write(bytes([0x81, 127]) + struct.pack("!Q", preview.MAX_MESSAGE + 1))
                     self.wfile.flush()
@@ -91,10 +93,14 @@ class DevToolsHandler(http.server.BaseHTTPRequestHandler):
                     continue
                 result = {
                     "Target.getTargets": {"targetInfos": self.server.targets},
+                    "Target.getTargetInfo": {"targetInfo": next((target for target in self.server.targets
+                        if target.get("targetId") == request.get("params", {}).get("targetId")), None)},
                     "Target.attachToTarget": {"sessionId": "synthetic-session"},
                     "Page.getLayoutMetrics": {"cssVisualViewport": self.server.viewport},
                     "Page.captureScreenshot": {"data": self.server.image},
                     "Target.detachFromTarget": {},
+                    "Input.dispatchMouseEvent": {}, "Input.insertText": {}, "Input.dispatchKeyEvent": {},
+                    "Page.reload": {}, "Page.navigate": {},
                 }.get(method)
                 assert result is not None, "A preview attempted an unexpected browser command"
                 self._frame({"id": request["id"], "result": result})

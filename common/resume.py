@@ -25,6 +25,7 @@ import argparse
 import hashlib
 import json
 import logging
+import os
 import re
 import shutil
 import subprocess
@@ -752,6 +753,33 @@ def tailored_dir(settings: Settings, job: JobPosting) -> Path:
     if recorded_id and recorded_id != job.job_id:
         folder = root / ("%s - %s (%s)" % (company, title, _slug(job.job_id, 16)))
     return folder
+
+
+def tailored_artifact_paths(settings: Settings, filename: str) -> List[Path]:
+    """Read legacy and isolated run artifacts without sharing their output folders."""
+    output = Path(settings.resume_out_dir or "data/resume/out").resolve()
+    library = Path(os.environ.get("MORROW_RESUME_LIBRARY_DIR") or output).resolve()
+    roots = {output, library}
+    roots.update(path for path in (library / "runs").glob("*") if path.is_dir())
+    roots.update(path for root in list(roots) for path in (root / "lanes").glob("*") if path.is_dir())
+    return sorted({path for root in roots for path in (root / "tailored").glob("*/%s" % filename)
+                   if path.is_file()})
+
+
+def saved_tailoring_dir(settings: Settings, job: JobPosting) -> Optional[Path]:
+    """Find an existing posting by exact ID or URL, including previous runs."""
+    current = tailored_dir(settings, job)
+    if current.is_dir():
+        return current
+    matches = []
+    for path in tailored_artifact_paths(settings, "tailoring.json"):
+        record = _recorded(path)
+        if ((job.job_id and record.get("job_id") == job.job_id)
+                or (job.url and record.get("url") == job.url)):
+            matches.append(path)
+    if not matches:
+        return None
+    return max(matches, key=lambda path: path.stat().st_mtime).parent
 
 
 def _write_posting(path: Path, job: JobPosting) -> None:

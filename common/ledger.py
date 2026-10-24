@@ -64,6 +64,9 @@ class Ledger:
 
     def _ensure_fingerprint_column(self) -> None:
         with self._lock, self._connection:
+            # Separate agents can initialize the same old ledger together.
+            # Reserve the writer before checking, so only one decides to ALTER.
+            self._connection.execute("BEGIN IMMEDIATE")
             columns = {
                 row[1]
                 for row in self._connection.execute("PRAGMA table_info(answers)")
@@ -75,6 +78,7 @@ class Ledger:
 
     def _ensure_facts_column(self) -> None:
         with self._lock, self._connection:
+            self._connection.execute("BEGIN IMMEDIATE")
             columns = {
                 row[1]
                 for row in self._connection.execute("PRAGMA table_info(applications)")

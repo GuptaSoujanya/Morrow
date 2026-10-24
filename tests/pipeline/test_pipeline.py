@@ -122,7 +122,8 @@ def test_bots_run_each_site_in_its_own_process_and_profile(tmp_path, monkeypatch
     base = tmp_path / "browser" / "naukri"
     (base / "chrome").mkdir(parents=True)
     (base / "chrome" / "Cookies").write_text("session")
-    (base / "chrome" / "SingletonLock").write_text("held")
+    from common.connections import mark_managed
+    mark_managed(base)
     monkeypatch.setattr(run, "base_profile", lambda env: str(base))
     gate = threading.Barrier(2, timeout=5)  # both sites' first stages must run at the same time
     seen = []
@@ -148,7 +149,7 @@ def test_bots_run_each_site_in_its_own_process_and_profile(tmp_path, monkeypatch
     assert [s[1] for s in seen if s[0] == "naukri"] == ["naukri_bot.update_profile", "naukri_bot.cli"]
     assert all(s[2] is None for s in seen if s[0] == "naukri")  # Naukri keeps its own profile
     copied = tmp_path / "browser" / "lanes" / "hirist" / "chrome"
-    assert (copied / "Cookies").read_text() == "session" and not (copied / "SingletonLock").exists()
+    assert (copied / "Cookies").read_text() == "session"
 
 
 def test_containers_run_every_site_at_once_each_in_its_own_container(tmp_path, monkeypatch):
@@ -189,7 +190,7 @@ def test_every_site_has_its_container_on_its_watch_port():
 def test_lanes_group_by_site_and_run_the_bot_as_a_child(capsys):
     assert lanes.group(["profile:naukri", "profile:hirist", "apply:naukri", "apply:hirist"]) == [
         ["profile:naukri", "apply:naukri"], ["profile:hirist", "apply:hirist"]]
-    assert lanes.prepare("linkedin", "data/browser/naukri") == {}
+    assert "BROWSER_PROFILE_DIR" not in lanes.prepare("linkedin", "data/browser/naukri")
     assert lanes.run_isolated("hirist", ("calendar", "2026", "1"), {"BROWSER_PROFILE_DIR": "x"}) == 0
     assert "[hirist]" in capsys.readouterr().err
     assert all(s.command for s in run.build_stages(_args(), ["hirist"]) if s.name.split(":")[0] in ("profile", "apply"))

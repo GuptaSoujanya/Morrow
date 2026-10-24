@@ -480,8 +480,8 @@ def google_login(driver: Any, settings: Settings, timeout_s: float) -> Tuple[boo
             )
         if settings.headless:
             return False, (
-                "Google wants a person to finish signing in. Choose Visible browser mode "
-                "in the dashboard, or set HEADLESS=false and BACKGROUND=false and omit "
+                "Google wants a person to finish signing in. Open Google in Connections "
+                "and choose Sign in, or set HEADLESS=false and BACKGROUND=false and omit "
                 "--headless for a local run."
             )
         if not told:

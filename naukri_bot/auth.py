@@ -1,8 +1,10 @@
 """Naukri authentication with explicit outcome verification."""
 
 import logging
+from pathlib import Path
 import time
 from typing import List, Optional, Tuple
+from urllib.parse import urlsplit
 
 from selenium.common.exceptions import (
     NoSuchElementException,
@@ -167,12 +169,17 @@ def is_logged_in(driver: WebDriver, trust_url: bool = True) -> bool:
     # Being on the login page is decisive and cannot be faked by markup that
     # happens to appear in both states.
     try:
-        if _LOGIN_URL_MARKER in (driver.current_url or "").lower():
+        current_url = driver.current_url or ""
+        location = urlsplit(current_url)
+        host = (location.hostname or "").lower()
+        if (location.scheme != "https" or not (host == "naukri.com" or host.endswith(".naukri.com"))
+                or host == "login.naukri.com" or _LOGIN_URL_MARKER in location.path.lower()):
             return False
-    except WebDriverException as exc:
+    except (ValueError, WebDriverException) as exc:
         logger.warning(
             "Could not inspect current URL (%s): %s", type(exc).__name__, exc
         )
+        return False
 
     # A real signed-in marker settles it next. _selector_present matches DOM
     # presence rather than visibility, and Naukri keeps login links in the
@@ -182,14 +189,8 @@ def is_logged_in(driver: WebDriver, trust_url: bool = True) -> bool:
         return True
     if _selector_present(driver, _SIGNED_OUT_SELECTORS):
         return False
-    if trust_url:
-        try:
-            if "naukri.com/mnjuser" in driver.current_url.lower():
-                return True
-        except WebDriverException as exc:
-            logger.warning(
-                "Could not inspect current URL (%s): %s", type(exc).__name__, exc
-            )
+    if trust_url and location.path.lower().startswith("/mnjuser"):
+        return True
     return _selector_present(driver, _SUCCESS_SELECTORS)
 
 
@@ -273,13 +274,14 @@ def login(driver: WebDriver, settings: Settings) -> LoginResult:
 
 
 _DASHBOARD_URL = "https://www.naukri.com/mnjuser/homepage"
+DASHBOARD_SIGN_IN_TIMEOUT_S = 300.0
 
 
 def _wait_for_signed_in(driver: WebDriver, timeout: float = 8.0) -> bool:
     """Wait briefly for a signed-in marker to render, then report."""
     try:
         WebDriverWait(driver, timeout).until(
-            lambda d: _selector_present(d, _SUCCESS_SELECTORS)
+            lambda d: is_logged_in(d, trust_url=False)
         )
         return True
     except TimeoutException:
@@ -291,6 +293,132 @@ def _wait_for_signed_in(driver: WebDriver, timeout: float = 8.0) -> bool:
         return False
 
 
+def _visible_selector_present(driver: WebDriver, selectors: Tuple[str, ...]) -> bool:
+    """Hidden login alternatives do not establish a sign-out or challenge."""
+    for selector in selectors:
+        try:
+            if any(element.is_displayed() for element in driver.find_elements(By.CSS_SELECTOR, selector)):
+                return True
+        except (StaleElementReferenceException, WebDriverException):
+            continue
+    return False
+
+
+def _managed_session_failure(driver: WebDriver, settings: Settings) -> LoginResult:
+    """Explain observed evidence without treating every failed check as expiry."""
+    text = _visible_page_text(driver)
+    try:
+        title = (getattr(driver, "title", "") or "").lower()
+    except WebDriverException:
+        title = ""
+    denied = any(marker in text for marker in (
+        "access denied", "request blocked", "you have been blocked", "unusual traffic",
+        "you don’t have permission to access", "you don't have permission to access",
+        "you do not have permission to access",
+    )) or "access denied" in title
+    if denied:
+        return LoginResult(ok=False, needs_manual=False, reason=
+            "Naukri is blocking access to this browser. Inspect the page for the site's instructions; "
+            "this run cannot continue until Naukri allows access.")
+
+    challenge = any(marker in text for marker in (*_CHALLENGE_TEXT, "verify you are human", "confirm it’s you"))
+    # The login page offers "Login using OTP" to everyone. Only a request for
+    # verification or an actual visible code field establishes a challenge.
+    challenge = challenge or _visible_selector_present(driver, (
+        "input[autocomplete='one-time-code']", "input[name*='otp']", "input[id*='otp']",
+        "input[name*='captcha']", "input[id*='captcha']",
+    ))
+    if challenge:
+        return LoginResult(ok=False, needs_manual=True, reason=
+            "Naukri needs a security check. Open Connections → Naukri → Sign in, complete the verification, "
+            "check sign-in, and close the browser before trying again.")
+
+    login_page = False
+    try:
+        location = urlsplit(driver.current_url or "")
+        host = (location.hostname or "").lower()
+        login_page = (host == "login.naukri.com" or
+                      (host in ("naukri.com", "www.naukri.com") and location.path.startswith(_LOGIN_URL_MARKER)))
+    except (ValueError, WebDriverException):
+        pass
+    if login_page or _visible_selector_present(driver, _SIGNED_OUT_SELECTORS):
+        from common.connections import read_metadata
+        metadata = read_metadata(Path(settings.browser_profile_dir)) if settings.browser_profile_dir else {}
+        recorded = metadata.get("naukri")
+        previously_verified = isinstance(recorded, dict) and (
+            recorded.get("state") == "connected" or bool(recorded.get("last_verified_at")))
+        if previously_verified:
+            reason = ("Naukri needs you to sign in again. Reconnect Naukri in Connections, check sign-in, "
+                      "and close the browser before trying again.")
+        else:
+            reason = ("Naukri is not connected in this automation browser. Open Connections → Naukri → Sign in, "
+                      "complete sign-in, check it, and close the browser before trying again.")
+        return LoginResult(ok=False, reason=reason, needs_manual=True)
+
+    return LoginResult(ok=False, needs_manual=False, reason=
+        "Naukri loaded, but its sign-in status could not be verified. Try again in a moment. "
+        "If this continues, check Naukri in Connections.")
+
+
+def _wait_for_dashboard_sign_in(driver: WebDriver, settings: Settings, failure: LoginResult) -> LoginResult:
+    """Pause only a verified, explicitly enabled dashboard browser for help."""
+    if not settings.session_only or not settings.headless:
+        return failure
+    from common.browser_preview import assistance
+    with assistance(driver, timeout_s=DASHBOARD_SIGN_IN_TIMEOUT_S, provider="naukri") as available:
+        if not available:
+            return failure
+        # Keep the observed problem, but do not direct a person to Connections
+        # while this run owns that profile. The live viewer uses this exact
+        # browser and the lease prevents input after automation resumes.
+        observed = failure.reason.split(". ", 1)[0].rstrip(".") + "."
+        logger.warning(
+            "%s Open browser in Activity to inspect the page and finish any sign-in or security check. "
+            "Waiting up to %d minutes in this same background browser. Closing the viewer does not stop the agent.",
+            observed, int(DASHBOARD_SIGN_IN_TIMEOUT_S / 60),
+        )
+        if not wait_for_manual_login(driver, timeout_s=DASHBOARD_SIGN_IN_TIMEOUT_S):
+            try:
+                closed = not driver.window_handles
+            except WebDriverException:
+                closed = True
+            if closed:
+                return LoginResult(ok=False, needs_manual=False, reason=
+                    "The Naukri browser closed before sign-in could be verified. Start this agent again when you are ready.")
+            return LoginResult(ok=False, needs_manual=failure.needs_manual, reason=
+                f"{observed} Sign-in was not verified within {int(DASHBOARD_SIGN_IN_TIMEOUT_S / 60)} minutes. "
+                "This run did not continue past sign-in. Start it again when you are ready to open its browser.")
+    if not is_logged_in(driver, trust_url=False):
+        return LoginResult(ok=False, needs_manual=False, reason=
+            "Naukri sign-in changed before the agent could resume. Start this agent again and check its browser.")
+    logger.info("Naukri sign-in verified. Resuming this agent in the background.")
+    return LoginResult(ok=True, reason="dashboard_session_verified", needs_manual=False)
+
+
+def _wait_for_visible_sign_in(driver: WebDriver, failure: LoginResult) -> LoginResult:
+    """Use the agent's actual window, without creating a second browser session."""
+    observed = failure.reason.split(". ", 1)[0].rstrip(".") + "."
+    logger.warning(
+        "%s Finish sign-in in the open Chrome window. Waiting up to %d minutes; "
+        "keep this browser open. Stop the run from Activity if you want to cancel.",
+        observed, int(DASHBOARD_SIGN_IN_TIMEOUT_S / 60),
+    )
+    if wait_for_manual_login(driver, timeout_s=DASHBOARD_SIGN_IN_TIMEOUT_S):
+        logger.info("Naukri sign-in verified. Resuming this agent in the current Chrome window.")
+        return LoginResult(ok=True, reason="visible_session_verified", needs_manual=False)
+    try:
+        closed = not driver.window_handles
+    except WebDriverException:
+        closed = True
+    if closed:
+        return LoginResult(ok=False, needs_manual=False, reason=
+            "The Naukri browser closed before sign-in could be verified. Start this agent again when you are ready.")
+    # The profile updater must not start another five-minute wait after this one.
+    return LoginResult(ok=False, needs_manual=False, reason=
+        f"{observed} Sign-in was not verified within {int(DASHBOARD_SIGN_IN_TIMEOUT_S / 60)} minutes. "
+        "This run stopped before doing any application or profile work. Start it again when you are ready to sign in.")
+
+
 def ensure_logged_in(driver: WebDriver, settings: Settings) -> LoginResult:
     """Reuse a saved session if there is one, otherwise log in.
 
@@ -299,7 +427,7 @@ def ensure_logged_in(driver: WebDriver, settings: Settings) -> LoginResult:
     profile this is normally all that happens: the login form is never touched,
     and that form is what intermittently reports itself as not interactable.
     """
-    if is_logged_in(driver):
+    if is_logged_in(driver, trust_url=False):
         return LoginResult(ok=True, reason="session_reused", needs_manual=False)
 
     # trust_url=False: we just navigated to /mnjuser/ ourselves, so the URL
@@ -307,12 +435,21 @@ def ensure_logged_in(driver: WebDriver, settings: Settings) -> LoginResult:
     # paints those client-side, so checking the instant the navigation returns
     # found nothing and fell through to the login form, which Naukri does not
     # even serve to a browser that is already signed in.
-    if safe_get(driver, _DASHBOARD_URL) and _wait_for_signed_in(driver):
+    loaded = safe_get(driver, _DASHBOARD_URL)
+    if loaded and _wait_for_signed_in(driver):
         logger.info("Reusing the saved Naukri session; no login needed")
         return LoginResult(ok=True, reason="session_reused", needs_manual=False)
 
     if settings.session_only:
-        return LoginResult(ok=False, reason="Saved Naukri sign-in expired. Reconnect Naukri in Connections, then resume this workflow.", needs_manual=True)
+        if not loaded:
+            failure = LoginResult(ok=False, needs_manual=False, reason=
+                "Could not load Naukri to check your saved sign-in. Check your connection and try again. "
+                "Your saved connection has not been changed.")
+        else:
+            failure = _managed_session_failure(driver, settings)
+        if loaded and not settings.headless:
+            return _wait_for_visible_sign_in(driver, failure)
+        return _wait_for_dashboard_sign_in(driver, settings, failure)
 
     logger.info("No saved session to reuse; logging in")
 
@@ -322,7 +459,7 @@ def ensure_logged_in(driver: WebDriver, settings: Settings) -> LoginResult:
 def wait_for_manual_login(
     driver: WebDriver, timeout_s: float = 300.0, poll_s: float = 2.0
 ) -> bool:
-    """Hold the window open while a person finishes a captcha or OTP challenge.
+    """Keep the same browser alive while a person finishes sign-in.
 
     login() returns the moment Naukri asks for a challenge, and the first
     profile-update run quit the browser right after, so the person was told to
@@ -334,7 +471,7 @@ def wait_for_manual_login(
     while True:
         try:
             if not driver.window_handles:
-                logger.warning("The browser window was closed before the sign-in finished")
+                logger.warning("The Naukri browser closed before sign-in could be verified")
                 return False
         except WebDriverException as exc:
             logger.warning(
@@ -343,10 +480,10 @@ def wait_for_manual_login(
                 exc,
             )
             return False
-        if is_logged_in(driver):
-            logger.info("Manual sign-in verified; the session is saved in the browser profile")
+        if is_logged_in(driver, trust_url=False):
+            logger.info("Naukri sign-in verified in the current browser session")
             return True
         if time.monotonic() >= deadline:
-            logger.warning("Nobody finished the sign-in within %.0f seconds", timeout_s)
+            logger.warning("Naukri sign-in was not verified within %.0f seconds", timeout_s)
             return False
         time.sleep(poll_s)

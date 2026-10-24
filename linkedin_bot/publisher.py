@@ -172,7 +172,9 @@ def _url(driver: Any) -> str:
 
 
 def is_logged_in(driver: Any) -> bool:
-    return "/feed" in _url(driver) and _find(driver, LOGGED_IN) is not None
+    from .session import inspect_session
+
+    return inspect_session(driver)["state"] == "connected"
 
 
 def _challenged(driver: Any) -> bool:
