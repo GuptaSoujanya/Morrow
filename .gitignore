@@ -78,3 +78,6 @@ output/morrow-launch/
 brag-output/
 brag-output-2026-10-23-173739/
 docs/
+
+# Playwright MCP scratch output (console logs, page snapshots)
+.playwright-mcp/
