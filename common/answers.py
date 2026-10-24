@@ -528,7 +528,7 @@ class AnswerEngine:
         text = None  # type: Optional[str]
         if self.job is not None and self.client.available():
             try:
-                base = resume.load_base(self.settings.resume_path)
+                base = resume.load_source(self.settings.resume_path)
             except resume.ResumeError as exc:
                 logger.info("Cannot write %r for this job: %s", question, exc)
             else:

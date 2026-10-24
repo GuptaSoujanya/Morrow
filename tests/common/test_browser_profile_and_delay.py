@@ -13,7 +13,7 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from common import browser
+from common import browser, config
 from naukri_bot import cli
 from common.models import Settings
 
@@ -50,6 +50,121 @@ def test_the_profile_is_passed_to_chrome_as_user_data_dir(tmp_path):
 def test_no_user_data_dir_when_disabled():
     options = browser._chrome_options(_settings(browser_profile_dir=""), None)
     assert not [a for a in options.arguments if a.startswith("--user-data-dir=")]
+
+
+def test_legacy_background_is_headless_before_login_checks():
+    settings = _settings(background=True, headless=False)
+    assert settings.headless
+
+
+def test_environment_background_normalizes_and_explicit_visible_mode_can_override_it(tmp_path, monkeypatch):
+    env = tmp_path / "empty.env"
+    env.write_text("")
+    monkeypatch.setenv("BACKGROUND", "true")
+    monkeypatch.setenv("HEADLESS", "false")
+    quiet = config.load_settings(str(env))
+    visible = config.load_settings(str(env), {"background": False, "headless": False})
+    assert quiet.background and quiet.headless
+    assert not visible.background and not visible.headless
+    assert quiet.browser_profile_dir == visible.browser_profile_dir
+
+
+@pytest.mark.parametrize("factory", [browser._chrome_options, browser._edge_options])
+@pytest.mark.parametrize("mode", [{"headless": True}, {"background": True}])
+def test_quiet_chrome_and_edge_keep_profile_without_desktop_window(factory, mode, tmp_path, monkeypatch):
+    monkeypatch.delenv("CHROME_WINDOW_SIZE", raising=False)
+    profile = str(tmp_path / "profile")
+    options = factory(_settings(**mode), profile)
+    assert "--headless=new" in options.arguments
+    assert "--user-data-dir=" + profile in options.arguments
+    assert "--window-size=1440,900" in options.arguments
+    assert not any(flag.startswith("--window-position=") for flag in options.arguments)
+    assert "--start-maximized" not in options.arguments
+
+
+def test_visible_window_starts_near_origin_instead_of_restoring_old_corner(monkeypatch):
+    monkeypatch.delenv("CHROME_WINDOW_SIZE", raising=False)
+    options = browser._chrome_options(_settings())
+    assert "--window-position=0,0" in options.arguments
+    assert "--window-size=1440,900" in options.arguments
+    assert "--headless=new" not in options.arguments
+    assert "--start-maximized" not in options.arguments
+
+
+class _Window:
+    def __init__(self, geometry=None):
+        self.geometry = geometry
+        self.queries = 0
+        self.rectangles = []
+
+    def execute_script(self, script):
+        self.queries += 1
+        assert "screen.availLeft" in script and "screen.availTop" in script
+        if isinstance(self.geometry, Exception):
+            raise self.geometry
+        return self.geometry
+
+    def set_window_rect(self, **rectangle):
+        self.rectangles.append(rectangle)
+
+
+@pytest.mark.parametrize("geometry,rectangle", [
+    ({"width": 1920, "height": 1080, "left": 0, "top": 23},
+     {"x": 240, "y": 113, "width": 1440, "height": 900}),
+    ({"width": 1024, "height": 640, "left": 0, "top": 40},
+     {"x": 0, "y": 40, "width": 1024, "height": 640}),
+    ({"width": 1920, "height": 1080, "left": -1920, "top": -1080},
+     {"x": -1680, "y": -990, "width": 1440, "height": 900}),
+    ({"width": 1920, "height": 1080},
+     {"x": 240, "y": 90, "width": 1440, "height": 900}),
+])
+def test_visible_window_is_centered_once_within_available_monitor(geometry, rectangle, monkeypatch):
+    monkeypatch.delenv("CHROME_WINDOW_SIZE", raising=False)
+    window = _Window(geometry)
+    monkeypatch.setattr(browser, "_try_create_driver", lambda settings, use_profile: window)
+    assert browser.create_driver(_settings()) is window
+    assert window.queries == 1
+    assert window.rectangles == [rectangle]
+
+
+@pytest.mark.parametrize("geometry", [None, {}, {"width": 0, "height": 900},
+    {"width": "1920", "height": 1080}, {"width": float("nan"), "height": 1080},
+    {"width": 1920, "height": 1080, "left": None},
+    browser.WebDriverException("Screen unavailable")])
+def test_missing_screen_geometry_keeps_safe_startup_position(geometry, monkeypatch):
+    monkeypatch.delenv("CHROME_WINDOW_SIZE", raising=False)
+    window = _Window(geometry)
+    assert browser._position_visible_window(window, _settings()) is window
+    assert window.rectangles == []
+
+
+def test_quiet_profile_fallback_never_opens_or_positions_a_visible_browser(monkeypatch):
+    window = _Window()
+    attempts = []
+
+    def create(settings, use_profile):
+        attempts.append((settings.headless, use_profile, settings.browser_profile_dir))
+        if use_profile:
+            raise browser.BrowserError("Synthetic profile unavailable")
+        return window
+
+    settings = _settings(background=True)
+    monkeypatch.setattr(browser, "_try_create_driver", create)
+    assert browser.create_driver(settings) is window
+    assert attempts == [(True, True, settings.browser_profile_dir), (True, False, settings.browser_profile_dir)]
+    assert window.queries == 0 and window.rectangles == []
+
+
+@pytest.mark.parametrize("headless", [False, True])
+def test_virtual_desktop_size_keeps_origin_without_centering(headless, monkeypatch):
+    monkeypatch.setenv("CHROME_WINDOW_SIZE", "1280,720")
+    settings = _settings(headless=headless)
+    options = browser._chrome_options(settings)
+    assert "--window-position=0,0" in options.arguments
+    assert "--window-size=1280,720" in options.arguments
+    window = _Window()
+    assert browser._position_visible_window(window, settings) is window
+    assert window.queries == 0 and window.rectangles == []
 
 
 def test_the_pause_waits_within_the_configured_range(monkeypatch):

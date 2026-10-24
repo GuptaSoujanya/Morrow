@@ -144,7 +144,10 @@ venv/bin/python -m web    # the same thing; --port 8899 picks another port, --no
 
 Pick a section on the left (or press `1`-`9`, `0`), set its options, press **Run**, and watch
 the output stream at the bottom. Each form shows the exact command it will run, so nothing is hidden.
-The page only listens on this computer and only one command runs at a time.
+The page only listens on this computer. The server supports independent agents running
+together; commands sharing a browser session or output files must be started after that
+resource is free. The full dashboard in `froned-dashbord` provides parallel run controls
+and an Activity panel with streamed progress and a Stop control for each agent.
 
 | Section | What it runs |
 |---|---|

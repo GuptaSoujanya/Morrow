@@ -310,6 +310,9 @@ class Settings:
     # mornings. That form intermittently reports itself as not interactable and
     # has cost two runs. Empty disables it and every run logs in afresh.
     browser_profile_dir: str = "data/browser/naukri"
+    # Managed onboarding profiles reuse sign-in only. Expired sessions require
+    # reconnecting; automation never falls back to typing stored passwords.
+    session_only: bool = False
     # Override the browser's User-Agent header. Empty means send the browser's
     # own, which is the only value guaranteed to agree with what JavaScript
     # reports. A pinned string goes stale: the bot claimed Chrome 131 while
@@ -347,10 +350,10 @@ class Settings:
     pages_per_keyword: int = 3
 
     headless: bool = False
-    # A real, visible-to-the-site Chrome window placed off-screen, so a run
-    # works in the background without one popping up. Headless is no
-    # substitute: Naukri never serves its login form to headless Chrome, and
-    # headless Chrome on macOS cannot read the profile's saved sign-ins.
+    # Legacy BACKGROUND also means a browser with no desktop window. Modern
+    # headless Chrome reuses the same profile; a site may still need a visible
+    # sign-in to answer a security check. Moving a headed window off-screen
+    # cannot prevent tab switches from taking desktop focus.
     background: bool = False
     dry_run: bool = False
 
@@ -438,12 +441,19 @@ class Settings:
     # YYYY-MM-DD the plan began; empty means the day the first report was written.
     course_start_date: str = ""
 
+    def __post_init__(self) -> None:
+        # Normalize before login code decides whether a person can see and
+        # interact with the browser. Quiet mode must never wait for invisible
+        # manual input merely because it came from the old BACKGROUND flag.
+        if self.background:
+            self.headless = True
+
     def validate(self) -> List[str]:
         """Return a list of human-readable problems; empty means usable."""
         problems: List[str] = []
-        if not self.email:
+        if not self.email and not self.session_only:
             problems.append("NAUKRI_EMAIL is not set")
-        if not self.password:
+        if not self.password and not self.session_only:
             problems.append("NAUKRI_PASSWORD is not set")
         if self.target_applications > self.daily_quota:
             problems.append(

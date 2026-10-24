@@ -1,4 +1,7 @@
-"""Tailor the LaTeX resume to one job, compile it, and put it on the Naukri profile.
+"""Use an uploaded PDF, or tailor and compile a LaTeX resume for one job.
+
+Uploaded PDFs are read for grounding and attached unchanged. Tailoring requires
+the editable LaTeX source; a PDF never becomes a tailoring template.
 
 The resume at RESUME_PATH (data/resume/base.tex) is the copy the user edits by
 hand; the bot never writes to it. For one job, three parts are adjusted: the
@@ -30,7 +33,7 @@ import zlib
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, List, Optional, Tuple
+from typing import Any, Callable, List, Optional, Tuple, Union
 
 from selenium.common.exceptions import (
     ElementNotInteractableException,
@@ -44,7 +47,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 from .browser import human_pause, safe_get
 from .llm import LLMClient
 from .models import JobPosting, Settings
-from .profile import extract_resume_text
+from .profile import ProfileError, extract_resume_text
 
 logger = logging.getLogger(__name__)
 
@@ -128,6 +131,14 @@ class BaseResume:
     path: Path
     tex: str
     sections: ResumeSections
+    plain_text: str
+    terms: set
+
+
+@dataclass
+class ResumeSource:
+    """Grounding text for answers; contains no editable tailoring template."""
+    path: Path
     plain_text: str
     terms: set
 
@@ -250,14 +261,25 @@ def _terms(text: str) -> set:
     return {term.lower().strip(".'") for term in _TERM.findall(text)}
 
 
+def load_source(path: str) -> ResumeSource:
+    """Read PDF/text/LaTeX for grounded writing without enabling tailoring."""
+    try:
+        plain = extract_resume_text(path)
+    except ProfileError as exc:
+        raise ResumeError(str(exc)) from exc
+    if not plain.strip():
+        raise ResumeError("The selected resume has no readable text. Choose a readable resume in setup.")
+    return ResumeSource(path=Path(path), plain_text=plain, terms=_terms(plain))
+
+
 def load_base(path: str) -> BaseResume:
     resume_path = Path(path)
+    if resume_path.suffix.lower() != ".tex":
+        raise ResumeError("Resume tailoring requires the LaTeX source (.tex). Your uploaded PDF can be attached unchanged; turn off tailoring to use it.")
     try:
         tex = resume_path.read_text(encoding="utf-8")
-    except OSError as exc:
+    except (OSError, UnicodeError) as exc:
         raise ResumeError("could not read %s: %s" % (path, exc)) from exc
-    if resume_path.suffix.lower() != ".tex":
-        raise ResumeError("RESUME_PATH must be the LaTeX source (.tex), not %s" % path)
     plain = extract_resume_text(str(resume_path))
     return BaseResume(
         path=resume_path,
@@ -307,7 +329,7 @@ def _claim_like(term: str, sentence_start: bool) -> bool:
     return any(character.isupper() for character in term) and not sentence_start
 
 
-def ungrounded_terms(text: str, base: BaseResume, known: frozenset = frozenset()) -> List[str]:
+def ungrounded_terms(text: str, base: Union[BaseResume, ResumeSource], known: frozenset = frozenset()) -> List[str]:
     """Technologies, names and numbers in `text` that neither the resume nor `known` mention."""
     missing = []  # type: List[str]
     for match in _TERM.finditer(text):
@@ -537,7 +559,7 @@ _LONG_ANSWER_PROMPT = (
 
 def write_long_answer(
     client: LLMClient,
-    base: BaseResume,
+    base: Union[BaseResume, ResumeSource],
     job: JobPosting,
     question: str,
     max_chars: int = LONG_ANSWER_MAX_CHARS,
@@ -689,7 +711,14 @@ def _compile_sections(tex_path: Path, base: BaseResume, sections: ResumeSections
 
 
 def build_base_pdf(settings: Settings) -> Path:
-    """Compile RESUME_PATH into RESUME_OUT_DIR/base/<file name>, reusing a fresh build."""
+    """Attach an uploaded PDF unchanged, or compile the configured LaTeX source."""
+    source = Path(settings.resume_path)
+    if source.suffix.lower() == ".pdf":
+        try:
+            extract_resume_text(str(source))
+        except ProfileError as exc:
+            raise ResumeError(str(exc)) from exc
+        return source.resolve()
     base = load_base(settings.resume_path)
     out_dir = Path(settings.resume_out_dir) / "base"
     target = out_dir / pdf_file_name(base, settings.resume_file_name)
@@ -933,7 +962,7 @@ def file_digest(path: Path) -> str:
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="python3 -m common.resume",
-        description="Compile the LaTeX resume, or tailor it to a pasted job posting.",
+        description="Use a saved PDF, compile LaTeX, or tailor a LaTeX resume to a job posting.",
     )
     parser.add_argument("--tailor", metavar="JD_FILE", help="text file with the job description")
     parser.add_argument("--title", default="", help="job title (with --tailor)")
@@ -941,7 +970,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument(
         "--upload",
         action="store_true",
-        help="also put the compiled PDF on the Naukri profile and verify it is shown",
+        help="also put the selected or compiled PDF on the Naukri profile and verify it is shown",
     )
     parser.add_argument("--headless", action="store_true", help="run the browser without a window")
     parser.add_argument("--env", metavar="PATH", help="path to a .env file")

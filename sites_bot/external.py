@@ -950,7 +950,11 @@ def google_sign_in(driver: Any, settings: Settings, timeout_s: float = MANUAL_LO
         if needs_typing:
             if settings.headless:
                 _leave_popup(driver, popup, main)
-                return False, "Google wants a fresh sign-in; run once without --headless and sign in by hand"
+                return False, (
+                    "Google wants a fresh sign-in. Choose Visible browser mode in the "
+                    "dashboard, or set HEADLESS=false and BACKGROUND=false and omit "
+                    "--headless for a local run, then finish signing in by hand."
+                )
             if not asked_person:
                 logger.warning(
                     "Google is asking for the account sign-in. Finish it in the browser window; waiting up to %d minutes.",
@@ -1034,7 +1038,7 @@ def long_answer_writer(settings: Settings, answer_engine: Any, job: JobPosting) 
     from common import resume as resume_module
 
     try:
-        base = resume_module.load_base(settings.resume_path)
+        base = resume_module.load_source(settings.resume_path)
     except resume_module.ResumeError as exc:
         logger.info("      long answers stay yours: %s", exc)
         return None

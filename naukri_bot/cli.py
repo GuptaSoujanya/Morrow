@@ -1159,8 +1159,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         # file sends a new user to edit something that is already correct.
         if "resume" in str(exc).casefold():
             logger.error(
-                "RESUME_PATH in your .env points at %s. Set it to a resume "
-                "file that exists, in .tex or .txt form.",
+                "Selected RESUME_PATH is %s. Choose an existing resume PDF "
+                "with selectable text, a .tex source, or a .txt file.",
                 settings.resume_path,
             )
             return EXIT_CONFIG
@@ -1189,8 +1189,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     except _NeedsHuman as exc:
         logger.error("Login needs a human: %s", exc)
         logger.error(
-            "Run again without --headless, sign in manually when the window "
-            "opens, and the session will be reused."
+            "Choose Visible browser mode in the dashboard, or set HEADLESS=false "
+            "and BACKGROUND=false and omit --headless for a local run. Finish "
+            "signing in using the visible browser to save the session for later runs."
         )
         return EXIT_LOGIN
     except KeyboardInterrupt:

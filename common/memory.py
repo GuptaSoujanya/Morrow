@@ -10,6 +10,7 @@ with its link, so the checkpoint links straight to each profile.
 
 import fcntl
 import json
+import os
 import threading
 from contextlib import contextmanager
 from datetime import date, datetime, time, timedelta, timezone
@@ -17,6 +18,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, Iterator, List, Optional
 
 from .models import ApplyStatus
+from .pipeline_diagnostics import process_alive, sanitize_detail
 
 MEMORY_DIR = Path(".memory")
 PROFILES_FILE = "profiles.json"
@@ -157,15 +159,43 @@ class Memory:
         entry = self.stage(name)
         return entry["status"] == DONE and all(Path(p).exists() for p in entry.get("outputs") or ())
 
-    def mark(self, name: str, status: str, detail: str = "", outputs: Iterable[Path] = ()) -> None:
+    def mark(self, name: str, status: str, detail: str = "", outputs: Iterable[Path] = (), *,
+             exit_code: Optional[int] = None, run_options: Optional[Dict[str, Any]] = None) -> None:
         outputs = [str(p) for p in outputs]
         with self._update():
             entry = self.stage(name)
-            entry.update(status=status, at=_now(), detail=detail)
+            at = _now()
+            if status == RUNNING:
+                if entry.get("status") == FAILED and not entry.get("last_error"):
+                    entry["last_error"] = {
+                        "message": sanitize_detail(entry.get("detail")) or "The previous attempt failed. Open the run log for details.",
+                        "at": entry.get("at") or at,
+                    }
+                if entry.get("status") == RUNNING and not process_alive(entry.get("owner_pid")):
+                    entry["last_error"] = {
+                        "message": "The previous attempt stopped before recording completion. Resume this stage from the saved checkpoint.",
+                        "at": entry.get("at") or at,
+                    }
+                entry.update(started_at=at, owner_pid=os.getpid())
+                entry.pop("finished_at", None)
+                if run_options is not None:
+                    entry["run_options"] = self._run_options(run_options)
+            else:
+                entry.pop("owner_pid", None)
+            entry.update(status=status, at=at, detail=sanitize_detail(detail))
             if status in (DONE, FAILED):
                 entry["attempts"] = entry.get("attempts", 0) + 1
+                entry["finished_at"] = at
+            if status == FAILED:
+                error = {"message": sanitize_detail(detail) or "This stage failed. Open the run log for details, then resume it.",
+                         "at": at}
+                if exit_code is not None:
+                    error["exit_code"] = exit_code
+                entry["last_error"] = error
             if status == DONE:
                 entry["outputs"] = outputs
+                if entry.get("last_error"):
+                    entry["last_error"].setdefault("resolved_at", at)
             self.today["stages"][name] = entry
 
     def planned(self) -> List[str]:
@@ -187,11 +217,28 @@ class Memory:
         """(date, verified applications) for every recorded day, oldest first."""
         return [(day, len(entry.get("applied") or [])) for day, entry in sorted(self.data.get("days", {}).items())]
 
-    def plan(self, names: Iterable[str]) -> None:
+    @staticmethod
+    def _run_options(options: Dict[str, Any]) -> Dict[str, Any]:
+        """Only replayable, non-secret CLI choices belong in a checkpoint."""
+        safe = {}
+        if options.get("cli") in ("both", "claude", "kiro"):
+            safe["cli"] = options["cli"]
+        for key in ("agents", "bots"):
+            value = options.get(key)
+            if isinstance(value, int) and not isinstance(value, bool) and value > 0:
+                safe[key] = value
+        if isinstance(options.get("containers"), bool):
+            safe["containers"] = options["containers"]
+        return safe
+
+    def plan(self, names: Iterable[str], run_options: Optional[Dict[str, Any]] = None,
+             replace_options: bool = True) -> None:
         """Record the stages this day will run, so the readable file lists the ones still to do."""
         names = list(names)
         with self._update():
             self.today["plan"] = names
+            if run_options is not None and (replace_options or "run_options" not in self.today):
+                self.today["run_options"] = self._run_options(run_options)
             for name in names:
                 self.today["stages"].setdefault(name, {"status": PENDING, "attempts": 0})
 

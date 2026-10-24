@@ -392,7 +392,7 @@ def test_static_files_never_leave_their_folder(site):
 
 def test_preview_explains_what_is_missing(site):
     status, data = call(site, "POST", "/api/preview", {"action": "naukri", "options": {"dry_run": True, "limit": "3"}})
-    assert status == 200 and data["shown"] == "venv/bin/python -m naukri_bot --dry-run --limit 3"
+    assert status == 200 and data["shown"] == "DRY_RUN=true venv/bin/python -m naukri_bot --dry-run --limit 3"
     status, data = call(site, "POST", "/api/preview", {"action": "external", "options": {}})
     assert status == 200 and data["needed"] == "paste the application page link"
 
@@ -424,7 +424,7 @@ def wait_until_idle(httpd, seconds=10):
     raise AssertionError("the command is still running")
 
 
-def test_a_run_streams_its_output_and_one_runs_at_a_time(site, monkeypatch):
+def test_a_run_streams_its_output_and_duplicate_action_is_blocked(site, monkeypatch):
     monkeypatch.setitem(server.ACTIONS, "echo", lambda o, save: Command(
         "Echo", (sys.executable, "-c", "import time; print('\\x1b[32mhello\\x1b[0m'); time.sleep(0.5)")))
     status, data = call(site, "POST", "/api/run", {"action": "echo"})
@@ -432,7 +432,7 @@ def test_a_run_streams_its_output_and_one_runs_at_a_time(site, monkeypatch):
     status, data = call(site, "POST", "/api/run", {"action": "echo"})
     assert status == 409 and "still running" in data["error"]
     data = wait_until_idle(site)
-    texts = [text for _, text in data["lines"]]
+    texts = [line[1] for line in data["lines"]]
     assert "hello" in texts and texts[-1].startswith("✓ Echo: done in")
     assert data["last"]["exit"] == 0 and data["last"]["action"] == "echo"
     assert call(site, "GET", f"/api/run?after={data['next']}")[1]["lines"] == []
@@ -446,3 +446,168 @@ def test_stop_interrupts_the_run(site, monkeypatch):
     assert data["ok"] and data["message"].startswith("Stopping")
     data = wait_until_idle(site)
     assert data["last"]["stopped"] and "stopped after" in data["lines"][-1][1]
+
+
+def test_independent_agents_overlap_and_stop_targets_only_selected_run(site, monkeypatch):
+    for action in ("first", "second"):
+        monkeypatch.setitem(server.ACTIONS, action, lambda o, save: Command(
+            "Test agent", (sys.executable, "-c", "import time; print('ready', flush=True); time.sleep(30)")))
+    first = call(site, "POST", "/api/run", {"action": "first"})[1]["id"]
+    second = call(site, "POST", "/api/run", {"action": "second"})[1]["id"]
+    snapshot = call(site, "GET", "/api/run")[1]
+    assert snapshot["active_count"] == 2
+    assert {run["id"] for run in snapshot["runs"] if run["running"]} == {first, second}
+    assert not call(site, "POST", "/api/stop", {})[1]["ok"]
+    assert not call(site, "POST", "/api/stop", {"id": "missing"})[1]["ok"]
+    assert call(site, "POST", "/api/stop", {"id": first})[1]["ok"]
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        snapshot = call(site, "GET", "/api/run")[1]
+        if snapshot["active_count"] == 1:
+            break
+        time.sleep(0.02)
+    assert snapshot["active_count"] == 1 and snapshot["running"]
+    by_id = {run["id"]: run for run in snapshot["runs"]}
+    assert by_id[first]["status"] == "stopped" and by_id[second]["running"]
+    # A repeated stop for an old run must never fall through to the remaining run.
+    assert not call(site, "POST", "/api/stop", {"id": first})[1]["ok"]
+    assert call(site, "POST", "/api/stop", {"id": second})[1]["ok"]
+    snapshot = wait_until_idle(site)
+    assert {line[2] for line in snapshot["lines"]} == {first, second}
+    assert all(len(line) == 4 for line in snapshot["lines"])
+
+
+def read_run_event(response):
+    """Read one SSE frame without buffering until the long-lived response ends."""
+    event = {}
+    while True:
+        line = response.readline().decode().rstrip("\r\n")
+        if not line:
+            return event
+        key, _, value = line.partition(": ")
+        event[key] = json.loads(value) if key == "data" else value
+
+
+def test_live_events_push_output_and_replay_cursor(site, monkeypatch):
+    monkeypatch.setattr(server, "EVENT_HEARTBEAT_S", 0.05)
+    monkeypatch.setitem(server.ACTIONS, "stream", lambda o, save: Command(
+        "Stream", (sys.executable, "-c", "import time; print('live message', flush=True); time.sleep(0.4)")))
+    connection = http.client.HTTPConnection("127.0.0.1", site.server_port, timeout=5)
+    connection.request("GET", "/api/events")
+    response = connection.getresponse()
+    assert response.status == 200
+    assert response.getheader("Content-Type").startswith("text/event-stream")
+    assert response.getheader("Content-Length") is None
+    initial = read_run_event(response)
+    assert initial["event"] == "run" and initial["data"]["lines"] == []
+    run_id = call(site, "POST", "/api/run", {"action": "stream"})[1]["id"]
+    received = []
+    while True:
+        event = read_run_event(response)
+        received.extend(event["data"]["lines"])
+        if event["data"]["last"]:
+            break
+    assert any(line[1] == "live message" and line[2] == run_id for line in received)
+    assert len({line[0] for line in received}) == len(received)
+    assert event["data"]["runs"][0]["status"] == "completed"
+    response.close()
+    connection.close()
+    site.runner.say("after reconnect", run_id)
+    connection = http.client.HTTPConnection("127.0.0.1", site.server_port, timeout=5)
+    connection.request("GET", "/api/events", headers={"Last-Event-ID": event["id"]})
+    response = connection.getresponse()
+    replay = read_run_event(response)
+    assert [line[1] for line in replay["data"]["lines"]] == ["after reconnect"]
+    response.close()
+    connection.close()
+
+
+def test_event_cursor_resets_after_restart_and_rejects_cross_site(site):
+    site.runner.say("retained")
+    data = call(site, "GET", "/api/run?after=100&epoch=old-server")[1]
+    assert data["reset"] and data["lines"][0][1] == "retained"
+    connection = http.client.HTTPConnection("127.0.0.1", site.server_port, timeout=5)
+    connection.request("GET", "/api/events", headers={"Last-Event-ID": "old-server:100"})
+    response = connection.getresponse()
+    event = read_run_event(response)
+    assert event["data"]["reset"] and event["data"]["lines"][0][1] == "retained"
+    response.close()
+    connection.close()
+    assert call(site, "GET", "/api/events", headers={"Origin": "https://evil.example"})[0] == 403
+    assert call(site, "GET", "/api/events", headers={"Sec-Fetch-Site": "cross-site"})[0] == 403
+    assert call(site, "GET", "/api/events?after=-1")[0] == 400
+    assert call(site, "GET", "/api/events", headers={"Last-Event-ID": "invalid"})[0] == 400
+
+
+def test_stream_closes_when_owner_access_is_revoked(site, monkeypatch):
+    monkeypatch.setattr(server, "EVENT_HEARTBEAT_S", 0.02)
+    monkeypatch.setattr(server, "EVENT_AUTH_CHECK_S", 0.02)
+    class Bridge:
+        allowed = True
+        def identity(self, handler):
+            return {"id": "owner"} if self.allowed else None
+        def is_owner(self, handler, user):
+            return user is not None
+    site.account_bridge = Bridge()
+    connection = http.client.HTTPConnection("127.0.0.1", site.server_port, timeout=5)
+    connection.request("GET", "/api/events")
+    response = connection.getresponse()
+    assert read_run_event(response)["event"] == "run"
+    site.account_bridge.allowed = False
+    assert read_run_event(response)["event"] == "access-revoked"
+    assert response.read() == b""
+    response.close()
+    connection.close()
+
+
+def test_bounded_log_retention_reports_gap_and_run_limit(monkeypatch, tmp_path):
+    from web.runner import Runner
+    monkeypatch.setattr(state, "APPLY", tmp_path)
+    runner = Runner()
+    runner.MAX_LINES = 3
+    for number in range(5):
+        runner.say(str(number))
+    snapshot = runner.snapshot(after=0)
+    assert snapshot["truncated"] and snapshot["first"] == 2
+    assert [line[0] for line in snapshot["lines"]] == [2, 3, 4]
+    runner.MAX_ACTIVE = 1
+    command = Command("Limit", (sys.executable, "-c", "import time; time.sleep(30)"))
+    try:
+        runner.start(command, "first")
+        with pytest.raises(RuntimeError, match="already running"):
+            runner.start(command, "second")
+    finally:
+        runner.shutdown()
+    with pytest.raises(RuntimeError, match="shutting down"):
+        runner.start(command, "third")
+
+
+def test_resource_conflicts_allow_independent_agents_and_protect_shared_files():
+    from web.runner import conflicts, resources_for
+    def resources(action, *args):
+        return resources_for(Command(action, (sys.executable, *args)), action)
+    naukri, linkedin = resources("naukri"), resources("linkedin")
+    learn = resources("pipeline", "-m", "pipeline", "continue", "--only", "learn")
+    news = resources("pipeline", "-m", "pipeline", "continue", "--only", "brief:tech-news")
+    papers = resources("pipeline", "-m", "pipeline", "continue", "--only", "brief:papers")
+    brief = resources("pipeline", "-m", "pipeline", "continue", "--only", "brief")
+    fresh = resources("pipeline", "-m", "pipeline", "continue", "--only", "learn", "--fresh")
+    assert not conflicts(naukri, linkedin)
+    assert not conflicts(learn, news) and not conflicts(news, papers)
+    assert not conflicts(resources("resume"), news)
+    assert conflicts(naukri, resources("boards"))
+    assert conflicts(naukri, resources("resume"))
+    assert conflicts(resources("cold_email"), resources("resume"))
+    assert conflicts(news, brief) and conflicts(learn, learn)
+    assert conflicts(fresh, news)
+    assert conflicts(resources("install"), news)
+
+
+def test_parallel_resume_requests_keep_separate_job_descriptions(monkeypatch, tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+    monkeypatch.setattr(state, "LOGS", tmp_path)
+    descriptions = [f"Job description {number}" for number in range(10)]
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        paths = list(pool.map(state.save_job_description, descriptions))
+    assert len(set(paths)) == len(descriptions)
+    assert [path.read_text().strip() for path in paths] == descriptions

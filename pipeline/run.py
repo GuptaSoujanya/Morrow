@@ -37,6 +37,7 @@ the other writing stages use claude (--cli claude|kiro or PIPELINE_AI_CLI picks 
 """
 
 import argparse
+import fcntl
 import importlib
 import logging
 import os
@@ -49,6 +50,7 @@ from pathlib import Path
 from typing import Callable, List, NamedTuple, Optional, Sequence, Tuple
 
 from common import memory as memory_module
+from common.pipeline_diagnostics import StageDiagnostics, sanitize_detail
 from common.run import EXIT_CONFIG, EXIT_FAILED, EXIT_OK, configure_logging
 
 from . import briefing, content, lanes as lanes_module, learning
@@ -194,32 +196,60 @@ def sync_applied(mem: memory_module.Memory, env: Optional[str]) -> None:
 
 
 def _run(name: str, work: Callable[[], int]) -> Tuple[int, str]:
-    try:
-        code = work()
-    except SystemExit as exc:
-        code = exc.code if isinstance(exc.code, int) else EXIT_FAILED
-    except Exception as exc:  # one broken stage must not stop the rest of the day
-        logger.exception("[pipeline] %s crashed", name)
-        return EXIT_FAILED, "crashed: %s" % exc
-    code = code or EXIT_OK
-    return code, "" if code == EXIT_OK else "exit %s" % code
+    with StageDiagnostics() as diagnostics:
+        try:
+            code = work()
+        except SystemExit as exc:
+            code = exc.code if isinstance(exc.code, int) else EXIT_FAILED
+            if exc.code and not isinstance(exc.code, int):
+                diagnostics.add(str(exc.code), logging.ERROR)
+        except Exception as exc:  # one broken stage must not stop the rest of the day
+            logger.exception("[pipeline] %s crashed", name)
+            return EXIT_FAILED, sanitize_detail("crashed: %s" % exc)
+        code = code or EXIT_OK
+        return code, "" if code == EXIT_OK else diagnostics.summary(code)
 
 
 def write_index(mem: memory_module.Memory) -> None:
     try:
-        briefing.write_index(mem.day, {name: mem.stage(name) for name in mem.planned()}, mem.history(),
-                             mem.today["applied"])
+        # Different dashboard runs can finish different agents together. Hold
+        # the checkpoint lock only while publishing the small derived index,
+        # and reload under it so a late writer cannot restore older statuses.
+        mem.folder.mkdir(parents=True, exist_ok=True)
+        with (mem.folder / ".lock").open("a") as handle:
+            fcntl.flock(handle, fcntl.LOCK_EX)
+            try:
+                current = memory_module.Memory(mem.folder, mem.day)
+                briefing.write_index(current.day, {name: current.stage(name) for name in current.planned()},
+                                     current.history(), current.today["applied"])
+            finally:
+                fcntl.flock(handle, fcntl.LOCK_UN)
     except OSError as exc:
         logger.warning("Could not write the briefing index: %s", exc)
 
 
 def run_day(args: argparse.Namespace, stages: List[Stage], mem: memory_module.Memory,
             planned: Optional[List[str]] = None) -> int:
-    """Run the stages not done yet; `planned` is the whole day's stage list (default: these stages)."""
+    """Run the selected stages not done yet and retain a continued workflow's scope.
+
+    `planned` remains accepted for older callers, but the full stage catalogue
+    must never add unselected work to a new workflow's resumable checkpoint.
+    """
     if args.fresh and not args.dry_run:
         mem.reset_day()
+    run_options = {"cli": getattr(args, "cli", None) or os.getenv("PIPELINE_AI_CLI") or "both",
+                   "agents": args.agents, "bots": args.bots,
+                   "containers": bool(getattr(args, "containers", False))}
     if not args.dry_run:
-        mem.plan(planned or [s.name for s in stages])
+        names = [s.name for s in stages]
+        saved_plan = mem.planned()
+        continuing = getattr(args, "command", None) == "continue" and bool(saved_plan)
+        # A dashboard resume selects the unfinished stages of an existing
+        # workflow. Do not silently add today's entire stage catalogue to that
+        # historical plan when build_stages() contains additional stages.
+        day_plan = list(dict.fromkeys([*saved_plan, *names])) if continuing else names
+        mem.plan(day_plan, run_options,
+                 replace_options=not continuing)
         if args.redo:
             # Run these stages again; the rest of the day's checkpoint stays as it is.
             for stage in stages:
@@ -241,7 +271,7 @@ def run_day(args: argparse.Namespace, stages: List[Stage], mem: memory_module.Me
             return
         logger.info("[pipeline] %s ...", stage.name)
         if not args.dry_run:
-            mem.mark(stage.name, memory_module.RUNNING)
+            mem.mark(stage.name, memory_module.RUNNING, run_options=run_options)
         code, detail = _run(stage.name, stage.work)
         if args.dry_run:
             logger.info("[pipeline] %s (dry run): exit %s", stage.name, code)
@@ -249,7 +279,7 @@ def run_day(args: argparse.Namespace, stages: List[Stage], mem: memory_module.Me
         if code == EXIT_OK and not all(Path(p).exists() for p in stage.outputs):
             code, detail = EXIT_FAILED, "exited 0 but wrote no %s" % ", ".join(str(p) for p in stage.outputs)
         mem.mark(stage.name, memory_module.DONE if code == EXIT_OK else memory_module.FAILED, detail,
-                 stage.outputs)
+                 stage.outputs, exit_code=code)
         logger.info("[pipeline] %s: %s", stage.name, "done" if code == EXIT_OK else "FAILED (%s)" % detail)
         with lock:
             if code != EXIT_OK:

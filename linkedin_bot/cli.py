@@ -431,6 +431,11 @@ def _post(settings: LinkedInSettings, day: str, path_arg: Optional[str]) -> int:
             result = post_with_browser(settings, text, card)
     except _NeedsHuman as exc:
         logger.error("LinkedIn login needs a human: %s", exc)
+        logger.error(
+            "Choose Visible browser mode in the dashboard, or set HEADLESS=false "
+            "and BACKGROUND=false and omit --headless for a local run. Finish "
+            "the security check in the browser, then retry."
+        )
         send_alert(settings.naukri, "LinkedIn post: login needs a human (%s)" % exc)
         return EXIT_LOGIN
     except PosterError as exc:

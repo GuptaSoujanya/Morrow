@@ -424,11 +424,17 @@ def google_refused_today(settings: Settings) -> bool:
 
 def google_login(driver: Any, settings: Settings, timeout_s: float) -> Tuple[bool, str]:
     """Sign the bot's browser in to GOOGLE_EMAIL; a passkey, phone prompt or code waits for a person."""
-    if not settings.google_email:
+    if not settings.google_email and not settings.session_only:
         return False, "GOOGLE_EMAIL is not set"
     if not ext.safe_get(driver, GOOGLE_HOME):
         return False, "Google's sign-in page did not load"
     _wait_for(lambda: google_signed_in(driver) or _shown(driver, GOOGLE_EMAIL_CSS) is not None, FORM_WAIT_S)
+    if settings.session_only:
+        from common.connections import PROVIDERS, verify
+        result = verify(driver, PROVIDERS["google"], settings.google_email)
+        if result["state"] == "connected":
+            return True, "Saved Google sign-in verified"
+        return False, "Saved Google sign-in could not be verified. Reconnect Google in Connections, then resume this workflow."
     if google_signed_in(driver, settings.google_email):
         return True, "already signed in to Google as %s" % settings.google_email
     if google_signed_in(driver):
@@ -473,7 +479,11 @@ def google_login(driver: Any, settings: Settings, timeout_s: float) -> Tuple[boo
                 "no more tries today. Sign in once by hand with scripts/google_login.sh" % settings.google_email
             )
         if settings.headless:
-            return False, "Google wants a person to finish signing in; run once without --headless"
+            return False, (
+                "Google wants a person to finish signing in. Choose Visible browser mode "
+                "in the dashboard, or set HEADLESS=false and BACKGROUND=false and omit "
+                "--headless for a local run."
+            )
         if not told:
             logger.warning(
                 "Google needs you to finish signing in to %s (passkey, phone prompt or code) in the "

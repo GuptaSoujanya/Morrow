@@ -212,6 +212,14 @@ def load_settings(
         if not isinstance(path_value, str):
             raise TypeError("%s override must be a string" % path_key)
         values[path_key] = _absolute_path(path_value, repo_root)
+    from .connections import managed_profile, read_metadata
+    if managed_profile(values["browser_profile_dir"]):
+        values["session_only"] = True
+        google = read_metadata(Path(values["browser_profile_dir"])).get("google", {})
+        if isinstance(google, dict) and google.get("state") == "connected":
+            # An optional blank hint must not revive a different account from
+            # the old .env. The managed runtime verifies the saved session.
+            values["google_email"] = google.get("verified_account") or ""
     return Settings(**values)
 
 

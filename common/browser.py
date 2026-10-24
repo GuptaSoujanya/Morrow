@@ -1,6 +1,7 @@
 """Browser creation and human-like interaction helpers."""
 
 import logging
+import math
 import os
 import random
 import time
@@ -57,24 +58,22 @@ def profile_dir_for(settings: Settings, browser: str) -> Optional[str]:
 
 def _add_common_options(options, user_agent: str, headless: bool,
                         profile: Optional[str] = None, background: bool = False) -> None:
+    headless = headless or background
     options.add_argument("--disable-blink-features=AutomationControlled")
     options.add_experimental_option("excludeSwitches", ["enable-automation"])
     options.add_experimental_option("useAutomationExtension", False)
     if user_agent:
         options.add_argument("--user-agent=%s" % user_agent)
-    if background and not headless:
-        # Moved off-screen once it opens (see _tuck_away), and kept running at
-        # full speed: Chrome otherwise slows a window nobody can see.
-        options.add_argument("--window-size=1440,900")
-        options.add_argument("--disable-backgrounding-occluded-windows")
-        options.add_argument("--disable-renderer-backgrounding")
-        options.add_argument("--disable-background-timer-throttling")
-    elif os.environ.get("CHROME_WINDOW_SIZE"):
+    if os.environ.get("CHROME_WINDOW_SIZE"):
         # A virtual screen (docker/) has no window manager to maximise to, so fill it exactly.
         options.add_argument("--window-position=0,0")
         options.add_argument("--window-size=%s" % os.environ["CHROME_WINDOW_SIZE"])
     else:
-        options.add_argument("--start-maximized")
+        options.add_argument("--window-size=1440,900")
+        if not headless:
+            # Override a corner position saved by the previous off-screen
+            # mode before Chrome can restore it. Centre once after startup.
+            options.add_argument("--window-position=0,0")
     options.add_argument("--disable-notifications")
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--no-sandbox")
@@ -140,10 +139,15 @@ def create_driver(settings: Settings) -> webdriver.Remote:
     that fails, because a profile directory already held open by another Chrome
     window cannot be reused and must not block the morning run.
     """
+    if settings.session_only:
+        from .connections import create_driver as managed_driver
+        return _register_preview(managed_driver(settings))
+    if settings.background:
+        settings.headless = True
     if profile_dir_for(settings, "chrome") is None:
-        return _tuck_away(_try_create_driver(settings, use_profile=False), settings)
+        return _register_preview(_position_visible_window(_try_create_driver(settings, use_profile=False), settings))
     try:
-        return _tuck_away(_try_create_driver(settings, use_profile=True), settings)
+        return _register_preview(_position_visible_window(_try_create_driver(settings, use_profile=True), settings))
     except BrowserError as exc:
         logger.warning(
             "Could not start a browser with the persistent profile (%s). Close "
@@ -151,28 +155,52 @@ def create_driver(settings: Settings) -> webdriver.Remote:
             "will log in from scratch.",
             exc,
         )
-        return _tuck_away(_try_create_driver(settings, use_profile=False), settings)
+        return _register_preview(_position_visible_window(_try_create_driver(settings, use_profile=False), settings))
 
 
-def _tuck_away(driver: webdriver.Remote, settings: Settings) -> webdriver.Remote:
-    """With BACKGROUND, push the window past the screen's bottom-right corner.
+def _register_preview(driver):
+    from .browser_preview import register
+    register(driver)
+    return driver
 
-    macOS keeps a sliver of any window on screen, so a corner is as far as it
-    goes. Minimising would hide it entirely but tells the page it is hidden.
-    """
-    if settings.background and not settings.headless:
-        try:
-            driver.set_window_position(100000, 100000)
-        except WebDriverException as exc:
-            logger.warning("Could not move the browser window off-screen: %s", exc)
+
+def _position_visible_window(driver: webdriver.Remote, settings: Settings) -> webdriver.Remote:
+    """Place an intentional visible window once; never move it between tabs."""
+    if settings.headless or settings.background or os.environ.get("CHROME_WINDOW_SIZE"):
+        return driver
+    try:
+        screen = driver.execute_script(
+            "return {width: screen.availWidth, height: screen.availHeight, "
+            "left: screen.availLeft ?? 0, top: screen.availTop ?? 0};"
+        )
+        if not isinstance(screen, dict):
+            return driver
+
+        def number(value) -> bool:
+            return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+
+        available_width, available_height = screen.get("width"), screen.get("height")
+        if not all(number(value) and value >= 1 for value in (available_width, available_height)):
+            return driver
+        left, top = screen.get("left", 0), screen.get("top", 0)
+        if not all(number(value) for value in (left, top)):
+            return driver
+        width, height = int(min(1440, available_width)), int(min(900, available_height))
+        driver.set_window_rect(
+            x=int(left + (available_width - width) / 2),
+            y=int(top + (available_height - height) / 2),
+            width=width, height=height,
+        )
+    except (AttributeError, TypeError, ValueError, WebDriverException) as exc:
+        # Startup arguments still leave a usable window near the origin when
+        # a remote driver or desktop cannot report its screen geometry.
+        logger.debug("Could not centre the browser window: %s", exc)
     return driver
 
 
 def _try_create_driver(settings: Settings, use_profile: bool) -> webdriver.Remote:
     if settings.headless:
-        logger.warning(
-            "Headless mode materially raises automation detection risk on Naukri"
-        )
+        logger.info("Browser is running in the background without a window.")
 
     failures: List[str] = []
     driver = None

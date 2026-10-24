@@ -6,11 +6,15 @@ posting, linted like the resume summary, and kept in the job's folder to read.
 """
 
 import os
+import shutil
 import sys
+from pathlib import Path
 
 import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+sys.path.insert(0, str(Path(__file__).parents[1]))
+from pdf_helpers import pdf_bytes
 
 from common import assist
 from sites_bot import external as ext
@@ -179,6 +183,33 @@ def test_no_resume_means_no_writer(tmp_path):
     assert ext.long_answer_writer(engine.settings, engine, _job()) is None
 
 
+def test_pdf_resume_supports_grounded_long_answers_without_tailoring(tmp_path):
+    if not shutil.which("pdftotext"):
+        pytest.skip("Poppler is required for PDF integration tests")
+    pdf = tmp_path / "selected.pdf"
+    pdf.write_bytes(pdf_bytes("I build evaluation pipelines for AI agents at Ethara AI, with LangChain and FastAPI services. Python TypeScript."))
+    client = _Writer({"can_answer": True, "answer": GOOD})
+    engine = _engine(tmp_path, client, resume_path=str(pdf))
+    writer = ext.long_answer_writer(engine.settings, engine, _job())
+    assert writer is not None and writer(QUESTION) == GOOD
+    assert "Ethara AI" in client.prompts[0] and "%PDF" not in client.prompts[0]
+    source = rs.load_source(str(pdf))
+    assert isinstance(source, rs.ResumeSource) and not hasattr(source, "sections")
+    with pytest.raises(rs.ResumeError, match="tailoring requires"):
+        rs.load_base(str(pdf))
+
+
+def test_pdf_grounding_rejects_fabricated_claims(tmp_path):
+    if not shutil.which("pdftotext"):
+        pytest.skip("Poppler is required for PDF integration tests")
+    pdf = tmp_path / "selected.pdf"
+    pdf.write_bytes(pdf_bytes("I build evaluation pipelines for AI agents at Ethara AI, with LangChain and FastAPI services. Python TypeScript."))
+    invented = GOOD + " I also led the Kubernetes migration at Google."
+    client = _Writer({"can_answer": True, "answer": invented}, {"can_answer": True, "answer": invented})
+    assert rs.write_long_answer(client, rs.load_source(str(pdf)), _job(), QUESTION) is None
+    assert len(client.prompts) == 2 and "Kubernetes" in client.prompts[1]
+
+
 # ---------------------------------------------------------------------------
 # Answers marked "[AI writes this for each job]" in answers.txt
 # ---------------------------------------------------------------------------
@@ -217,6 +248,20 @@ def test_a_chat_question_marked_per_job_gets_one_short_sentence_for_this_posting
     assert SHORT not in (tmp_path / "data" / "inputs" / "answers.txt").read_text(encoding="utf-8")
     [record] = [r for r in assist.read_changes(engine.settings) if r["kind"] == "written"]
     assert record["file"] == "this application only" and record["value"] == SHORT
+
+
+def test_per_job_chat_answer_uses_selected_pdf_facts(tmp_path):
+    if not shutil.which("pdftotext"):
+        pytest.skip("Poppler is required for PDF integration tests")
+    client = _Writer({"can_answer": True, "answer": SHORT})
+    engine = _per_job_engine(tmp_path, client)
+    selected = tmp_path / "selected.pdf"
+    selected.write_bytes(pdf_bytes("I build LangChain agent evaluation pipelines in Python at Ethara AI."))
+    engine.settings.resume_path = str(selected)
+    engine.set_job_context(_job())
+    result = engine.resolve(WHY_US)
+    assert not result.abstained and result.answer.text == SHORT
+    assert "Ethara AI" in client.prompts[0] and "%PDF" not in client.prompts[0]
 
 
 def test_each_posting_gets_its_own_answer(tmp_path):

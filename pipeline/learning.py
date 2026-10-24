@@ -10,12 +10,14 @@
 
 import json
 import logging
+import os
 import re
 from datetime import date
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
 
 from common import ai_cli
+from common.profile import ProfileError, extract_resume_text
 
 from . import course, links
 
@@ -239,10 +241,20 @@ _CONTACT_LINE = re.compile(
 )
 
 
-def resume_text(path: Path = RESUME_TEX) -> str:
+def selected_resume_path(path: Optional[Path] = None) -> Path:
+    """Explicit callers win; the runner's selected input wins over legacy data."""
+    return Path(path) if path is not None else Path(os.getenv("RESUME_PATH") or RESUME_TEX)
+
+
+def resume_text(path: Optional[Path] = None) -> str:
+    path = selected_resume_path(path)
     try:
-        text = path.read_text(encoding="utf-8")
-    except OSError:
+        # Keep LaTeX lines intact: redaction and existing briefing skill
+        # selectors depend on their original structure. PDFs need extraction.
+        text = extract_resume_text(str(path)) if path.suffix.lower() == ".pdf" else path.read_text(encoding="utf-8")
+    except ProfileError as exc:
+        raise ai_cli.AIError(str(exc)) from exc
+    except (OSError, UnicodeError):
         return ""
     # Contact lines stay out of the prompt.
     return "\n".join(line for line in text.splitlines() if not _CONTACT_LINE.search(line))
@@ -257,7 +269,7 @@ def resume_prompt(area: str, resume: str) -> str:
     return "\n\n".join([
         "Write a study file for a software engineer preparing interviews on one area of their own "
         "resume: %s." % area,
-        "Their resume (LaTeX source):\n" + resume[:8000],
+        "Their resume:\n" + resume[:8000],
         "Search the web for accurate, current material and link real pages.",
         "Output markdown only. Start with '# <area title>', then these sections in order: "
         "## What it is, ## How you used it (only what the resume says, never invent numbers), "
@@ -266,8 +278,9 @@ def resume_prompt(area: str, resume: str) -> str:
     ])
 
 
-def fill_resume_learning(ask: Ask, root: Path = RESUME_LEARNING, resume_path: Path = RESUME_TEX) -> List[Path]:
+def fill_resume_learning(ask: Ask, root: Path = RESUME_LEARNING, resume_path: Optional[Path] = None) -> List[Path]:
     """Write every missing resume study file, then the index; the files written."""
+    resume_path = selected_resume_path(resume_path)
     resume = resume_text(resume_path)
     if not resume.strip():
         # Without the resume the model would invent "how you used it".

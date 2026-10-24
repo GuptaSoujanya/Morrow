@@ -11,14 +11,13 @@ import datetime as dt
 import json
 import mimetypes
 import os
-import re
 import signal
 import sqlite3
 import subprocess
 import sys
-import threading
 import time
 import urllib.request
+from dataclasses import replace
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -27,6 +26,7 @@ from urllib.parse import parse_qs, unquote, urlsplit, quote
 
 from . import state
 from .state import Command
+from .runner import BatchCommand, Runner
 
 STATIC = Path(__file__).resolve().parent / "static"
 DEFAULT_PORT = 8000
@@ -51,152 +51,6 @@ for _suffix, _type in ((".md", "text/markdown"), (".log", "text/plain"), (".json
 
 def long_date(day: dt.date) -> str:
     return f"{day:%A}, {day.day} {day:%B %Y}"
-
-
-# --- running one command at a time ---------------------------------------------------
-
-_ANSI = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07]*\x07")
-
-
-#: How long output may keep coming after the command itself has exited.
-READ_GRACE_S = 1.0
-
-
-class Runner:
-    """Runs one command at a time and keeps its output for the page to read."""
-
-    MAX_LINES = 5000
-
-    def __init__(self) -> None:
-        self.lock = threading.Lock()
-        self.proc: Optional[subprocess.Popen] = None
-        self.command: Optional[Command] = None
-        self.action = ""
-        self.day = ""
-        self.started = 0.0
-        self.stopping = False
-        self.lines: List[Tuple[int, str]] = []
-        self.count = 0
-        self.last: Optional[Dict[str, Any]] = None
-
-    @property
-    def running(self) -> bool:
-        return self.command is not None
-
-    def _say(self, text: str) -> None:
-        self.lines.append((self.count, text))
-        self.count += 1
-        if len(self.lines) > self.MAX_LINES:
-            del self.lines[: len(self.lines) - self.MAX_LINES]
-
-    def say(self, text: str) -> None:
-        with self.lock:
-            self._say(text)
-
-    def start(self, command: Command, action: str = "", day: str = "") -> None:
-        with self.lock:
-            if self.command is not None:
-                raise RuntimeError(f"{self.command.label} is still running. Stop it first.")
-            self._say(f"→ {command.label}  $ {command.shown}")
-            try:
-                proc = subprocess.Popen(
-                    command.argv,
-                    cwd=str(state.APPLY),
-                    stdin=subprocess.DEVNULL,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    env={**os.environ, "PYTHONUNBUFFERED": "1"},
-                    start_new_session=True,
-                )
-            except OSError as exc:
-                self._say(f"× Could not start: {exc}")
-                raise RuntimeError(f"Could not start {command.label}: {exc}") from None
-            self.proc, self.command, self.action, self.day = proc, command, action, day
-            self.started = time.monotonic()
-            self.stopping = False
-        threading.Thread(target=self._follow, args=(proc, command), daemon=True).start()
-
-    def _read(self, proc: subprocess.Popen) -> None:
-        assert proc.stdout is not None
-        for raw in iter(proc.stdout.readline, b""):
-            text = _ANSI.sub("", raw.decode("utf-8", "replace").rstrip("\r\n"))
-            self.say(text.split("\r")[-1])
-
-    def _follow(self, proc: subprocess.Popen, command: Command) -> None:
-        reader = threading.Thread(target=self._read, args=(proc,), daemon=True)
-        reader.start()
-        code = proc.wait()
-        # A child left running in the background keeps the output pipe open, so
-        # the run ends when the command does, and its leftovers are stopped.
-        reader.join(timeout=READ_GRACE_S)
-        if reader.is_alive():
-            try:
-                os.killpg(proc.pid, signal.SIGTERM)
-            except ProcessLookupError:
-                pass
-            reader.join(timeout=READ_GRACE_S)
-        with self.lock:
-            took = time.monotonic() - self.started
-            stopped = self.stopping and code != 0
-            if code == 0:
-                self._say(f"✓ {command.label}: done in {elapsed(took)}")
-            elif stopped:
-                self._say(f"○ {command.label}: stopped after {elapsed(took)}")
-            else:
-                self._say(f"× {command.label}: failed (exit {code}) after {elapsed(took)}")
-            self.last = {
-                "label": command.label,
-                "action": self.action,
-                "day": self.day,
-                "exit": code,
-                "stopped": stopped,
-                "seconds": round(took),
-                "finished": dt.datetime.now().isoformat(timespec="seconds"),
-            }
-            self.proc, self.command, self.action, self.day = None, None, "", ""
-
-    def _signal(self, sig: int) -> None:
-        if self.proc is not None and self.proc.poll() is None:
-            try:
-                os.killpg(self.proc.pid, sig)
-            except ProcessLookupError:
-                pass
-
-    def stop(self) -> Tuple[bool, str]:
-        with self.lock:
-            if self.command is None:
-                return False, "Nothing is running."
-            if self.stopping:
-                self._signal(signal.SIGKILL)
-                return True, "Forced to stop."
-            self.stopping = True
-            self._signal(signal.SIGINT)
-            return True, "Stopping, letting it close the browser cleanly. Press Stop again to force it."
-
-    def shutdown(self) -> None:
-        with self.lock:
-            self._signal(signal.SIGTERM)
-
-    def snapshot(self, after: Optional[int] = None) -> Dict[str, Any]:
-        with self.lock:
-            out: Dict[str, Any] = {
-                "running": self.command is not None,
-                "label": self.command.label if self.command else "",
-                "shown": self.command.shown if self.command else "",
-                "action": self.action,
-                "seconds": round(time.monotonic() - self.started) if self.command else 0,
-                "stopping": self.stopping,
-                "last": self.last,
-                "next": self.count,
-            }
-            if after is not None:
-                out["lines"] = [[n, text] for n, text in self.lines if n >= after]
-            return out
-
-
-def elapsed(seconds: float) -> str:
-    minutes, seconds = divmod(int(seconds), 60)
-    return f"{minutes}:{seconds:02d}"
 
 
 # --- what each button runs ----------------------------------------------------------------
@@ -274,10 +128,65 @@ ACTIONS: Dict[str, Callable[[Dict[str, Any], bool], Command]] = {
 }
 
 
+BROWSER_ACTIONS = frozenset({"naukri", "boards", "profile", "external", "linkedin", "linkedin_profile", "cold_email", "resume", "assist", "pipeline"})
+
+
 def build(action: str, options: Dict[str, Any], save: bool = False) -> Command:
     if action not in ACTIONS:
         raise ValueError(f"unknown action {action!r}")
-    return ACTIONS[action](options, save)
+    mode = options.get("browser_mode")
+    if "browser_mode" in options:
+        if mode not in ("background", "visible"):
+            raise ValueError("Choose Background or Visible browser mode.")
+        if action not in BROWSER_ACTIONS:
+            raise ValueError("Browser mode is not available for this action.")
+        # Resolve conflicting legacy headless options before constructing argv.
+        options = {**options, "headless": mode == "background"}
+    command = ACTIONS[action](options, save)
+    # Explicit UI choices must also override DRY_RUN inherited from .env.
+    # Only this known option is mapped; requests cannot supply environment keys.
+    if isinstance(options.get("dry_run"), bool):
+        command = replace(command, env=(*command.env, ("DRY_RUN", "true" if options["dry_run"] else "false")))
+    if mode is not None:
+        # Explicit mode beats .env and reaches board/profile/pipeline commands
+        # that do not have a --headless switch. Never expose arbitrary env keys.
+        command = replace(command, env=(*command.env, ("HEADLESS", "true" if mode == "background" else "false"), ("BACKGROUND", "false")))
+    return command
+
+
+def batch_requests(data: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Validate the request envelope before preparing any selected command."""
+    runs = data.get("runs")
+    if not isinstance(runs, list) or not 1 <= len(runs) <= Runner.MAX_ACTIVE:
+        raise ValueError(f"Select between 1 and {Runner.MAX_ACTIVE} agents to run together.")
+    keys = set()
+    for entry in runs:
+        if not isinstance(entry, dict):
+            raise ValueError("Each selected agent must include a key, action, and options object.")
+        key, action, options = entry.get("key"), entry.get("action"), entry.get("options")
+        if not isinstance(key, str) or not key.strip() or len(key) > 128:
+            raise ValueError("Each selected agent needs a non-empty key of at most 128 characters.")
+        if key in keys:
+            raise ValueError("Each selected agent must have a unique key. Remove the duplicate selection.")
+        keys.add(key)
+        if not isinstance(action, str) or not action.strip() or len(action) > 128:
+            raise ValueError("Each selected agent needs a valid action.")
+        if not isinstance(options, dict):
+            raise ValueError("Each selected agent's options must be a JSON object.")
+    return runs
+
+
+def build_batch(requests: List[Dict[str, Any]], save: bool = False) -> List[BatchCommand]:
+    selections = []
+    for entry in requests:
+        key, action, options = entry["key"], entry["action"], entry["options"]
+        try:
+            command = build(action, options, save=save)
+            day = state.parse_day(_text(options, "day")).isoformat() if action == "report" else ""
+            selections.append(BatchCommand(key, action, command, day))
+        except (ValueError, TypeError, AttributeError, OSError) as exc:
+            selections.append(BatchCommand(key, action, error=str(exc)))
+    return selections
 
 
 # --- what the page reads -----------------------------------------------------------------------
@@ -429,6 +338,8 @@ def open_outside(target: str) -> None:
 
 
 MAX_BODY_BYTES = 10 * 1024 * 1024
+EVENT_HEARTBEAT_S = 10.0
+EVENT_AUTH_CHECK_S = 10.0
 
 
 class ApiError(Exception):
@@ -466,7 +377,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", kind)
         self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Cache-Control", "no-store" if urlsplit(self.path).path in ("/api/run/browser", "/api/run/browsers") else "no-cache")
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Referrer-Policy", "no-referrer")
         self.end_headers()
@@ -516,6 +427,105 @@ class Handler(BaseHTTPRequestHandler):
     def do_HEAD(self) -> None:
         self.do_GET()
 
+    def stream_authorized(self) -> bool:
+        """Long-lived streams must also notice logout/session expiry.
+
+        The dashboard checks account access before delegating here; repeat that
+        owner check periodically without writing a JSON response mid-stream.
+        """
+        bridge = getattr(self.server, "account_bridge", None)
+        if bridge is None:
+            return True
+        try:
+            return bridge.is_owner(self, bridge.identity(self))
+        except Exception:
+            # Authorization service unavailable: close rather than expose more output.
+            return False
+
+    def events(self, query: Dict[str, str]) -> None:
+        origin = self.headers.get("Origin")
+        if ((origin is not None and origin not in [f"http://{host}" for host in self.own_hosts()])
+                or self.headers.get("Sec-Fetch-Site") == "cross-site"):
+            self.error(HTTPStatus.FORBIDDEN, "only this site can read live activity")
+            return
+        runner = self.server.runner
+        cursor = self.headers.get("Last-Event-ID", "")
+        epoch = query.get("epoch")
+        after = int(query.get("after") or 0)
+        if cursor:
+            epoch, separator, number = cursor.rpartition(":")
+            if not separator:
+                raise ValueError("The activity cursor is invalid. Reconnect to start again.")
+            after = int(number)
+        if after < 0:
+            raise ValueError("The activity cursor must be zero or greater.")
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-cache, no-store, no-transform")
+        self.send_header("X-Accel-Buffering", "no")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Connection", "close")
+        self.end_headers()
+        self.close_connection = True
+        if self.command == "HEAD":
+            return
+        # A disconnected or stalled browser must not hold a writer indefinitely.
+        self.connection.settimeout(15)
+        checked = time.monotonic()
+        snapshot = runner.snapshot(after, epoch)
+        try:
+            while not runner.closed:
+                if time.monotonic() - checked >= EVENT_AUTH_CHECK_S:
+                    if not self.stream_authorized():
+                        self.wfile.write(b"event: access-revoked\ndata: {}\n\n")
+                        self.wfile.flush()
+                        return
+                    checked = time.monotonic()
+                payload = json.dumps(snapshot, separators=(",", ":"))
+                event = f"id: {snapshot['epoch']}:{snapshot['next']}\nevent: run\ndata: {payload}\n\n"
+                self.wfile.write(event.encode("utf-8"))
+                self.wfile.flush()
+                # Coalesce noisy output so a busy agent cannot flood the UI.
+                with runner.changed:
+                    runner.changed.wait_for(lambda: runner.closed, timeout=0.1)
+                snapshot = runner.wait_snapshot(snapshot["revision"], snapshot["next"], snapshot["epoch"],
+                                                timeout=EVENT_HEARTBEAT_S)
+        except (OSError, ConnectionError):
+            return
+
+    def browser_preview(self, query: Dict[str, str]) -> None:
+        origin = self.headers.get("Origin")
+        if ((origin is not None and origin not in [f"http://{host}" for host in self.own_hosts()])
+                or self.headers.get("Sec-Fetch-Site") == "cross-site"):
+            return self.error(HTTPStatus.FORBIDDEN, "Only this dashboard can view an agent’s browser.")
+        run_id = query.get("id", "")
+        if not run_id or len(run_id) > 128 or any(len(query.get(key, "")) > 256 for key in ("browser", "tab")):
+            return self.error(HTTPStatus.BAD_REQUEST, "Choose a current agent run in Activity.")
+        if not self.stream_authorized():
+            return self.error(HTTPStatus.UNAUTHORIZED, "Sign in to view this browser.")
+        try:
+            frame = self.server.runner.browser_snapshot(run_id, query.get("browser", ""), query.get("tab", ""))
+        except KeyError:
+            return self.error(HTTPStatus.NOT_FOUND, "This run is no longer available. Choose a current run in Activity.")
+        # A session can expire while a frame is being captured. Never deliver a
+        # screenshot after account access has been revoked.
+        if not self.stream_authorized():
+            return self.error(HTTPStatus.UNAUTHORIZED, "Sign in to view this browser.")
+        self.json(frame)
+
+    def browser_inventory(self) -> None:
+        origin = self.headers.get("Origin")
+        if ((origin is not None and origin not in [f"http://{host}" for host in self.own_hosts()])
+                or self.headers.get("Sec-Fetch-Site") == "cross-site"):
+            return self.error(HTTPStatus.FORBIDDEN, "Only this dashboard can view agent browsers.")
+        if not self.stream_authorized():
+            return self.error(HTTPStatus.UNAUTHORIZED, "Sign in to view agent browsers.")
+        inventory = self.server.runner.browser_inventory()
+        # Tab titles and sites are private too. Recheck after the bounded read.
+        if not self.stream_authorized():
+            return self.error(HTTPStatus.UNAUTHORIZED, "Sign in to view agent browsers.")
+        self.json(inventory)
+
     def do_GET(self) -> None:
         if not self.host_ok():
             self.error(HTTPStatus.FORBIDDEN, "only this computer can use this site")
@@ -546,7 +556,13 @@ class Handler(BaseHTTPRequestHandler):
                 self.json(status_json(self.server.runner))
             elif route == "/api/run":
                 after = int(query.get("after") or 0)
-                self.json(self.server.runner.snapshot(after=after))
+                self.json(self.server.runner.snapshot(after=after, epoch=query.get("epoch")))
+            elif route == "/api/events":
+                self.events(query)
+            elif route == "/api/run/browser":
+                self.browser_preview(query)
+            elif route == "/api/run/browsers":
+                self.browser_inventory()
             elif route == "/api/course":
                 self.json(course_json())
             elif route == "/api/overview":
@@ -576,18 +592,38 @@ class Handler(BaseHTTPRequestHandler):
                     self.json({"shown": build(str(data.get("action", "")), data.get("options") or {}).shown})
                 except ValueError as exc:
                     self.json({"needed": str(exc)})
+            elif route in ("/api/run/batch/preview", "/api/run/batch"):
+                requests = batch_requests(data)
+                selections = build_batch(requests)
+                if route.endswith("/preview"):
+                    self.json(runner.batch_plan(selections))
+                else:
+                    # Keep preflight, saved-command validation, and all starts
+                    # in one reservation so another request cannot steal slots.
+                    with runner.lock:
+                        plan = runner.batch_plan(selections)
+                        if plan["ready"]:
+                            result = runner.start_batch(build_batch(requests, save=True))
+                        else:
+                            result = dict(plan, ok=False,
+                                          error="Resolve the highlighted issues before starting these agents.")
+                    self.json(result, HTTPStatus.OK if "results" in result else HTTPStatus.CONFLICT)
             elif route == "/api/run":
                 action = str(data.get("action", ""))
                 options = data.get("options") or {}
                 command = build(action, options, save=True)
                 day = state.parse_day(_text(options, "day")).isoformat() if action == "report" else ""
                 try:
-                    runner.start(command, action, day)
+                    run_id = runner.start(command, action, day)
                 except RuntimeError as exc:
                     raise ApiError(HTTPStatus.CONFLICT, str(exc)) from None
-                self.json({"ok": True, "label": command.label, "shown": command.shown})
+                self.json({"ok": True, "id": run_id, "label": command.label, "shown": command.shown,
+                           "run": runner.snapshot()})
             elif route == "/api/stop":
-                ok, message = runner.stop()
+                run_id = data.get("id")
+                if run_id is not None and (not isinstance(run_id, str) or not run_id):
+                    raise ValueError("Choose a valid agent run to stop.")
+                ok, message = runner.stop(run_id)
                 self.json({"ok": ok, "message": message})
             elif route == "/api/course/read":
                 path = str(data.get("path", ""))

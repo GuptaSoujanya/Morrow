@@ -18,7 +18,9 @@ bad answer leaves no file and the stage stays failed until `pipeline continue`.
 """
 
 import logging
+import os
 import re
+import tempfile
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date
 from pathlib import Path
@@ -260,6 +262,20 @@ def stages_chart(stages: Dict[str, Dict]) -> str:
                      + ['    "%s" : %d' % (_label(status), n) for status, n in sorted(counts.items())] + ["```"])
 
 
+def _publish_text(path: Path, text: str) -> None:
+    """Readers see the previous complete index or the new complete index."""
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent,
+                                         prefix=".%s-" % path.name, suffix=".tmp", delete=False) as output:
+            temporary = Path(output.name)
+            output.write(text)
+        os.replace(temporary, path)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
 def write_index(day: date, stages: Dict[str, Dict], history: List[tuple], applied: List[Dict],
                 root: Path = DAILY, learning_root: Path = learning.LEARNING) -> Path:
     """.research/daily/<date>/README.md: every agent's file and status, and the day in charts."""
@@ -282,10 +298,10 @@ def write_index(day: date, stages: Dict[str, Dict], history: List[tuple], applie
         lines += ["Today (%d): %s" % (len(applied), ", ".join(sorted({row["company"] or "?" for row in applied}))), ""]
     folder.mkdir(parents=True, exist_ok=True)
     path = folder / "README.md"
-    path.write_text("\n".join(lines), encoding="utf-8")
-    (root.parent / "TODAY.md").write_text(
+    _publish_text(path, "\n".join(lines))
+    _publish_text(root.parent / "TODAY.md",
         "# Today\n\nThe briefing for %s: [daily/%s/README.md](daily/%s/README.md)\n"
-        % (day.isoformat(), day.isoformat(), day.isoformat()), encoding="utf-8")
+        % (day.isoformat(), day.isoformat(), day.isoformat()))
     return path
 
 

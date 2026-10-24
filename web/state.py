@@ -41,6 +41,7 @@ START_HERE = "Start here"
 class Command:
     label: str
     argv: Tuple[str, ...]
+    env: Tuple[Tuple[str, str], ...] = ()
 
     @property
     def shown(self) -> str:
@@ -48,7 +49,8 @@ class Command:
         args = list(self.argv)
         if args and args[0] == PYTHON:
             args[0] = "venv/bin/python"
-        return " ".join(shlex.quote(a) for a in args)
+        environment = [f"{name}={shlex.quote(value)}" for name, value in self.env]
+        return " ".join([*environment, *(shlex.quote(a) for a in args)])
 
 
 def py(label: str, *args: str) -> Command:
@@ -201,9 +203,13 @@ def save_job_description(text: str) -> Path:
     """Keep a pasted job description as a file, since the resume tailor reads one."""
     folder = LOGS / "jd"
     folder.mkdir(parents=True, exist_ok=True)
-    path = folder / f"{dt.datetime.now():%Y-%m-%d_%H%M%S}.txt"
-    path.write_text(text.strip() + "\n", encoding="utf-8")
-    return path
+    # Two tabs can submit in the same second, including a request rejected by the
+    # runner afterwards. Never overwrite the input an existing run is reading.
+    with tempfile.NamedTemporaryFile(mode="w", dir=folder, suffix=".txt",
+                                     prefix=f"{dt.datetime.now():%Y-%m-%d_%H%M%S}-",
+                                     encoding="utf-8", delete=False) as output:
+        output.write(text.strip() + "\n")
+        return Path(output.name)
 
 
 # --- what is waiting for you ---------------------------------------------------

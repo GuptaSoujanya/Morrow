@@ -617,9 +617,10 @@ def main(argv: Optional[List[str]] = None) -> int:
         except _NeedsHuman as exc:
             logger.error("Login needs a human: %s", exc)
             logger.error(
-                "Run again without --headless and finish the captcha or OTP in the "
-                "Chrome window within %d minutes; the session is then saved and "
-                "later runs will not ask again.",
+                "Choose Visible browser mode in the dashboard, or set HEADLESS=false "
+                "and BACKGROUND=false and omit --headless for a local run. Finish "
+                "the captcha or OTP in the browser within %d minutes; the session "
+                "is then saved for later runs.",
                 MANUAL_LOGIN_TIMEOUT_S // 60,
             )
             send_alert(settings, "Naukri profile update: login needs a human (%s)" % exc)

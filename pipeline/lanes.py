@@ -29,6 +29,8 @@ import threading
 from pathlib import Path
 from typing import Dict, List, Mapping, Optional, Sequence
 
+from common.pipeline_diagnostics import capture_stage_output
+
 logger = logging.getLogger(__name__)
 
 # Lock files Chrome leaves in a profile it has open; copying them makes the copy look in use.
@@ -133,6 +135,7 @@ def run_isolated(lane: str, command: Sequence[str], overrides: Mapping[str, str]
         logger.error("[%s] could not start %s: %s", lane, argv[0], exc)
         return 3
     for line in process.stdout or ():
+        capture_stage_output(line)
         with _print_lock:
             sys.stderr.write("[%s] %s" % (lane, line))
     return process.wait()

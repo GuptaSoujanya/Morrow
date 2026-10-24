@@ -311,6 +311,9 @@ def ensure_logged_in(driver: WebDriver, settings: Settings) -> LoginResult:
         logger.info("Reusing the saved Naukri session; no login needed")
         return LoginResult(ok=True, reason="session_reused", needs_manual=False)
 
+    if settings.session_only:
+        return LoginResult(ok=False, reason="Saved Naukri sign-in expired. Reconnect Naukri in Connections, then resume this workflow.", needs_manual=True)
+
     logger.info("No saved session to reuse; logging in")
 
     return login(driver, settings)

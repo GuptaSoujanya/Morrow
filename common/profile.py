@@ -3,6 +3,8 @@
 import datetime
 import logging
 import re
+import shutil
+import subprocess
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -64,21 +66,54 @@ _LATEX_WRAPPER = re.compile(
 _LATEX_ENV_LINE = re.compile(r"^\s*\\(?:begin|end)\{[^}]+\}\s*$")
 _LATEX_COMMAND = re.compile(r"\\[A-Za-z@]+\*?(?:\[[^\]]*\])?")
 
+PDF_MAX_BYTES = 10 * 1024 * 1024
+PDF_MAX_PAGES = 20
+PDF_MAX_TEXT = 1024 * 1024
+
+
+def extract_pdf_text(content: bytes) -> str:
+    """Read an uploaded PDF with Poppler, without writing extracted text to disk."""
+    if not isinstance(content, bytes) or not content.startswith(b"%PDF-") or len(content) > PDF_MAX_BYTES:
+        raise ProfileError("Upload a valid resume PDF no larger than 10 MB.")
+    parser = shutil.which("pdftotext")
+    if not parser:
+        raise ProfileError("PDF text extraction is unavailable on this computer. Install Poppler (pdftotext), then finish setup again.")
+    try:
+        result = subprocess.run(
+            [parser, "-f", "1", "-l", str(PDF_MAX_PAGES + 1), "-enc", "UTF-8", "-", "-"],
+            input=content, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=15, check=False,
+        )
+    except subprocess.TimeoutExpired:
+        raise ProfileError("This PDF took too long to read. Export a simpler PDF with selectable text and upload it again.") from None
+    except OSError:
+        raise ProfileError("The PDF reader could not start. Check Poppler is installed, then finish setup again.") from None
+    if result.returncode != 0:
+        raise ProfileError("The resume PDF could not be read. Export an unlocked PDF with selectable text and upload it again.")
+    if len(result.stdout) > PDF_MAX_TEXT or result.stdout.count(b"\f") > PDF_MAX_PAGES:
+        raise ProfileError("Use a resume PDF with no more than 20 pages and less than 1 MB of text.")
+    text = result.stdout.decode("utf-8", errors="replace").replace("\f", "\n").strip()
+    if not text or not re.search(r"[^\W\d_]", text, flags=re.UNICODE):
+        raise ProfileError("This PDF has no readable text. Export a PDF with selectable text instead of a scanned image, then upload it again.")
+    return text
+
 
 def extract_resume_text(path: str) -> str:
-    """Read resume text, simplifying LaTeX while preserving plain text."""
+    """Read PDF, plain-text or LaTeX resume content without interpreting binary as text."""
     resume_path = Path(path)
+    if resume_path.suffix.lower() == ".pdf":
+        try:
+            if resume_path.stat().st_size > PDF_MAX_BYTES:
+                raise ProfileError("Upload a valid resume PDF no larger than 10 MB.")
+            return extract_pdf_text(resume_path.read_bytes())
+        except OSError:
+            raise ProfileError("The resume PDF is missing or unreadable. Select it again in setup.") from None
     try:
         with resume_path.open("r", encoding="utf-8") as resume_file:
             text = resume_file.read()
     except UnicodeError as exc:
-        # A PDF or DOCX resume, which is what most people have. Reading it as
-        # text yields binary noise, and noise in the resume silently degrades
-        # every lexical score, so say what to do instead of guessing.
         raise ProfileError(
-            "Could not read resume at %s: it is not text (%s). Only .tex and "
-            ".txt are supported -- export or copy your resume to a .txt file "
-            "and point RESUME_PATH at that." % (path, exc)
+            "Could not read resume at %s: it is not text. Use a PDF with selectable text, "
+            "a .tex source, or a .txt file." % path
         ) from exc
     except OSError as exc:
         raise ProfileError("Could not read resume at %s: %s" % (path, exc)) from exc

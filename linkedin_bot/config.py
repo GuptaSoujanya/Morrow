@@ -67,7 +67,7 @@ class LinkedInSettings:
 
     def validate(self, needs_browser: bool) -> List[str]:
         problems = []  # type: List[str]
-        if needs_browser:
+        if needs_browser and not self.naukri.session_only:
             if not self.linkedin_email:
                 problems.append("LINKEDIN_EMAIL is not set")
             if not self.linkedin_password:
@@ -154,5 +154,7 @@ def load_settings(
     # The driver reads these from the naukri Settings it is handed, so the
     # LinkedIn session must land in its own profile, never in Naukri's.
     naukri.browser_profile_dir = settings.browser_profile_dir
+    from common.connections import managed_profile
+    naukri.session_only = managed_profile(settings.browser_profile_dir)
     naukri.headless = settings.headless
     return settings

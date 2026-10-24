@@ -1489,7 +1489,11 @@ def test_headless_google_sign_in_never_waits(tmp_path):
 
     ok, how = acc.google_login(_browser(page), _settings(google_email="jane@gmail.com", headless=True), timeout_s=60)
 
-    assert not ok and how == "Google wants a person to finish signing in; run once without --headless"
+    assert not ok and how == (
+        "Google wants a person to finish signing in. Choose Visible browser mode "
+        "in the dashboard, or set HEADLESS=false and BACKGROUND=false and omit "
+        "--headless for a local run."
+    )
 
 
 def test_google_refusing_the_browser_stops_at_once_and_for_the_day(tmp_path):

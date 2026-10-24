@@ -219,6 +219,9 @@ def ensure_logged_in(driver: Any, settings: LinkedInSettings) -> LoginResult:
         logger.info("Reusing the saved LinkedIn session")
         return LoginResult(ok=True, reason="session")
 
+    if settings.naukri.session_only:
+        return LoginResult(ok=False, reason="Saved LinkedIn sign-in expired. Reconnect LinkedIn in Connections, then resume this workflow.", needs_manual=True)
+
     email = _find(driver, LOGIN_EMAIL)
     password = _find(driver, LOGIN_PASSWORD)
     if email is None or password is None:
@@ -465,4 +468,3 @@ def _click_post_and_verify(driver: Any, text: str) -> PublishResult:
     except WebDriverException as exc:
         return PublishResult(False, "unconfirmed", "Post was clicked, then the browser failed: %s"
                              % type(exc).__name__)
-
