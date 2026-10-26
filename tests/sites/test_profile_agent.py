@@ -887,7 +887,10 @@ def test_a_sentence_written_around_the_value_is_checked_by_its_quoted_part():
     told = "After reload, My Profile shows 'B Tech / BE (Full Time) — Medi-Caps University, Indore — 2020 - 2024'"
     assert profile_agent.verify(told, page)[0] is False
     assert profile_agent.confirm(Section(name="Education", action="already_ok", evidence=told), page) == (True, [])
-    assert profile_agent._quoted("Hirist's rows couldn't hold it; she said \"fine\" and 'ok go'") == "fine; ok go"
+    assert profile_agent._quoted("Hirist's rows couldn't hold it; she said \"fine\" and 'ok go'") == "fine, ok go"
+    projects = Section(name="AI Projects", action="already_ok",
+                       evidence="My Profile lists all three projects ending 'Role: Developer.' and 'Open project'")
+    assert profile_agent.confirm(projects, page + " EvalAgentFlow ... Role: Developer. Python Open project") == (True, [])
 
     skills = Section(name="Key skills (Skills Used)", action="already_ok",
                      after="Skills Used chips on registration/addWorkExperience: Python, LangChain, RAG",

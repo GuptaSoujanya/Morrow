@@ -580,7 +580,7 @@ _QUOTED = re.compile(r"(?<![A-Za-z0-9])[\"'\u2018\u201c](.{3,400}?)[\"'\u2019\u2
 
 
 def _quoted(text: str) -> str:
-    return "; ".join(part.strip() for part in _QUOTED.findall(text) if part.strip())
+    return ", ".join(part.strip() for part in _QUOTED.findall(text) if part.strip())
 
 
 def claims(section: "Section") -> List[str]:
@@ -639,6 +639,14 @@ def sections_from(report: Dict[str, Any]) -> List[Section]:
             note=_text(item.get("note")),
         ))
     return sections
+
+
+def _viewport(driver: Any, path: Path) -> Optional[Path]:
+    try:
+        return path if driver.save_screenshot(str(path)) else None
+    except Exception as exc:
+        logger.debug("Viewport screenshot failed: %s", exc)
+        return None
 
 
 def _vision_check(settings: Settings, image: Optional[Path], plan: Any) -> Dict[str, Any]:
@@ -767,6 +775,9 @@ def check(driver: Any, board: Board, settings: Settings, report: Dict[str, Any],
     after = screenshot(driver, workdir / "after.png") if page else None
     if after:
         result.screenshots.append(str(after))
+    # The LLM that looks at the page cannot decode a full-page capture of a long profile; the top of
+    # the page, where the headline, designation and completeness sit, is what it is asked about.
+    view = _viewport(driver, workdir / "after-view.png") if page else None
     for section in result.sections:
         # What the agent says it changed, and what it says was already there: both are claims about
         # the page, and a repair pass that finds a section "already_ok" must leave page evidence too.
@@ -779,7 +790,7 @@ def check(driver: Any, board: Board, settings: Settings, report: Dict[str, Any],
         result.sections.append(Section(name="Headline (planned)", action="checked", after=plan.headline,
                                        on_page=on_page, missing=missing))
     try:
-        result.vision = _vision_check(settings, after, plan)
+        result.vision = _vision_check(settings, view or after, plan)
     except Exception as exc:  # advisory only
         logger.warning("%s: the screenshot check failed: %s", board.label, exc)
     if result.vision.get("completeness") and not result.completeness_after:
