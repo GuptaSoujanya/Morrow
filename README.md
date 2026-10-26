@@ -239,6 +239,20 @@ python3 -m linkedin_bot.update_profile           # LinkedIn: the agent brings he
 it compares the profile with your resume facts, fixes what is missing or out of date (never inventing
 anything), and saves. On LinkedIn it switches off "share with network" first, so nothing is posted.
 
+What the agent writes comes from one plan, made by the LLM from the whole resume first and the
+facts and answers after it (`python3 -m common.profile_plan` prints it, `--fresh` writes it again):
+the headline, designation, profile summary, a short summary for one-paragraph fields, the LinkedIn
+About, the key skills in search order, a job profile and the skills used for every employment, every
+project with its description, the IT skills with years, certifications, links and the preferred roles.
+The draft is read the way a recruiter would (`quality_report`): it has to open with what you build and
+a figure instead of "I am a", carry at least two figures from the resume, name the stack, say what
+you want next, stay inside each board's length limits and use no filler ("passionate",
+"results-driven", "leverage"...). A draft with notes goes back to the model once with those notes,
+the better of the two is kept, and anything still open is printed with the plan. Nothing in it can
+be a new claim: employers, projects, skills, links, certifications and every number are dropped when
+the resume and facts do not contain them. The plan is cached in `.memory/profile-plan.json` until
+the facts change.
+
 The first run from a fresh browser profile is the only one that needs you at the keyboard:
 Naukri sends an OTP to your registered mobile or email, and the run keeps the Chrome window open
 for up to 5 minutes while you type it in. The session is then saved in `data/browser/naukri/` and
