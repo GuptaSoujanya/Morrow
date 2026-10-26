@@ -188,3 +188,44 @@ def test_a_reversed_range_does_not_raise(monkeypatch):
     monkeypatch.setattr(cli.time, "sleep", lambda s: slept.append(s))
     cli._pause_between_applications(_settings(apply_delay_min_s=30, apply_delay_max_s=5))
     assert len(slept) == 1 and slept[0] == 30
+
+
+class _SlowSite:
+    """A driver whose navigation times out while the page is already on screen."""
+
+    def __init__(self, landed="https://www.hirist.tech/jobfeed", state="interactive", fail=True):
+        self.landed, self.state, self.fail, self.scripts, self.gets = landed, state, fail, [], 0
+
+    def get(self, url):
+        self.gets += 1
+        if self.fail:
+            from selenium.common.exceptions import TimeoutException
+            raise TimeoutException("timeout: Timed out receiving message from renderer: -0.005")
+
+    @property
+    def current_url(self):
+        return self.landed
+
+    def execute_script(self, script):
+        self.scripts.append(script)
+        return self.state if "readyState" in script else None
+
+
+def test_a_slow_board_that_is_already_on_screen_counts_as_opened(monkeypatch):
+    """Hirist keeps a request open after the page is drawn, so Chrome's load timeout fired on a
+    readable page and the profile update gave up with 'could not open'."""
+    monkeypatch.setattr(browser.time, "sleep", lambda s: None)
+    driver = _SlowSite()
+    assert browser.safe_get(driver, "https://www.hirist.tech/jobfeed") is True
+    assert driver.gets == 1 and "window.stop()" in driver.scripts[-1]
+
+
+def test_a_timeout_on_another_site_or_a_blank_page_is_still_a_failure(monkeypatch):
+    monkeypatch.setattr(browser.time, "sleep", lambda s: None)
+    elsewhere = _SlowSite(landed="chrome://new-tab-page/")
+    assert browser.safe_get(elsewhere, "https://www.hirist.tech/profile", attempts=2) is False
+    assert elsewhere.gets == 2 and not any("window.stop" in s for s in elsewhere.scripts)
+    loading = _SlowSite(state="loading")
+    assert browser.safe_get(loading, "https://www.hirist.tech/jobfeed", attempts=2) is False
+    assert loading.gets == 2
+    assert browser.safe_get(_SlowSite(fail=False), "https://www.hirist.tech/jobfeed") is True

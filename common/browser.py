@@ -293,13 +293,46 @@ def human_type(
         time.sleep(random.uniform(min_delay, max_delay))
 
 
+def _origin(url: str) -> str:
+    parts = url.split("/", 3)
+    return "/".join(parts[:3]).lower() if len(parts) >= 3 else url.lower()
+
+
+def rendered_despite_timeout(driver: WebDriver, url: str) -> bool:
+    """Whether a navigation that ran out of time still left the page on the site, drawn and usable.
+
+    Boards such as Hirist keep a tracker or a long poll open after the page is on screen, so the
+    load event never comes and Chrome reports a renderer timeout for a page a person can read. The
+    bot stops the loading and goes on when the browser is on the wanted site with a parsed document.
+    """
+    try:
+        current = driver.current_url or ""
+        if _origin(current) != _origin(url):
+            return False
+        state = driver.execute_script("return document.readyState") or ""
+        if state == "loading":
+            return False
+        driver.execute_script("window.stop();")
+        return True
+    except WebDriverException:
+        return False
+
+
 def safe_get(driver: WebDriver, url: str, attempts: int = 3) -> bool:
     """Navigate with bounded retries and exponential jittered backoff."""
     for attempt in range(attempts):
         try:
             driver.get(url)
             return True
-        except (TimeoutException, WebDriverException) as exc:
+        except TimeoutException as exc:
+            if rendered_despite_timeout(driver, url):
+                logger.warning("Navigation to %s ran out of time but the page is on screen; going on with it.", url)
+                return True
+            logger.warning("Navigation to %s failed on attempt %d/%d (%s): %s", url, attempt + 1, attempts,
+                           type(exc).__name__, str(exc).splitlines()[0])
+            if attempt + 1 < attempts:
+                time.sleep((2.0 ** attempt) + random.uniform(0.0, 0.75))
+        except WebDriverException as exc:
             logger.warning(
                 "Navigation to %s failed on attempt %d/%d (%s): %s",
                 url,
