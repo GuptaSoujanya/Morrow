@@ -27,7 +27,9 @@ the way a senior recruiter would want it: complete, keyword-rich and identical i
    the drawer without saving, report Employment with action "failed" and the note "needs salary
    breakdown", and move on. Never answer "No" to "Is this your current employment" or give an end date
    for the job the facts call current, not even to get the drawer to save: that tells recruiters she
-   has left.
+   has left. An internship entry has no Job profile field on Naukri: when its title, company and dates
+   match the facts, report it `already_ok` with a note that the planned description has no field,
+   not `failed`, so no repair pass is spent on it.
 4. **Education**: highest qualification, course, specialisation, institute, passing year, from the facts.
 5. **IT skills**: Naukri holds 10 entries. Add the planned IT skills in their order until the table is
    full: name as Naukri suggests it, version only if stated, experience in years (and months when the
