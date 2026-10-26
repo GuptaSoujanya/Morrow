@@ -10,6 +10,12 @@ echo "== Schedule"
 if launchctl print "gui/$(id -u)/$LABEL" >/dev/null 2>&1; then
   launchctl print "gui/$(id -u)/$LABEL" \
     | grep -E "^[[:space:]]+(state|runs|last exit code) =" | sed 's/^[[:space:]]*/  /'
+  if grep -q "can't open input file" data/logs/launchd-profile-update.err 2>/dev/null; then
+    echo "  BLOCKED: macOS would not let the background job read $(pwd)/scripts/run_profile_update.sh"
+    echo "  (exit code 127). Move the checkout out of Desktop/Documents/Downloads and rerun"
+    echo "  ./scripts/install_profile_updater.sh, or grant /bin/zsh and python access to the folder"
+    echo "  under System Settings > Privacy & Security > Files and Folders."
+  fi
 else
   echo "  NOT INSTALLED - run ./scripts/install_profile_updater.sh"
 fi
