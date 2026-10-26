@@ -18,15 +18,18 @@ the same day skips the done ones and retries the rest.
 6. research:resume      any missing .research/resume-learning file, written by the AI CLI
 7. brief:<agent>        the briefing agents (goal, system-design, papers, tech-news, companies)
 
-The browser stages run one after another. With --bots N (or PIPELINE_BOTS=N) up to
-N sites run at the same time, each site's profile then apply stage in its own process
-and Chrome profile (pipeline/lanes.py). With --containers (or PIPELINE_CONTAINERS=1)
-every site runs at the same time in its own Docker container (docker-compose.yml), and
-a page showing all their screens opens (data/docker/watch.html).
+Every site runs at the same time, each site's profile then apply stage in its own
+process and Chrome profile (pipeline/lanes.py). --bots N (or PIPELINE_BOTS=N) caps
+that at N sites at once; --bots 1 runs the browser stages one after another in this
+process. A site never runs twice at once: its stages share one account and one login.
+With --containers (or PIPELINE_CONTAINERS=1) every site runs in its own Docker
+container (docker-compose.yml), and a page showing all their screens opens
+(data/docker/watch.html).
 
-`learn` (today's study day from the 90-day plan) runs first because the briefing
-agents are told today's topics. The briefing agents then run in parallel with each
-other and with the browser stages (--agents N at a time), each writing its file to
+The browser stages start right away. `learn` (today's study day from the 90-day
+plan) runs next to them, and the briefing agents wait for it because they are told
+today's topics. The agents then run in parallel with each other and with the browser
+stages (--agents N at a time, default one worker per agent), each writing its file to
 .research/daily/<date>/ as soon as it is done; see pipeline/briefing.py.
 
 A stage counts as done only when its tool exits 0 and the files it wrote are still
@@ -59,7 +62,7 @@ logger = logging.getLogger(__name__)
 
 MEMORY_DIR = memory_module.MEMORY_DIR
 WATCH_PAGE = Path("data/docker/watch.html")
-AGENTS_AT_ONCE = 3
+AGENTS_AT_ONCE = 6  # research:resume and the five briefing agents, all in one wave
 
 
 class Stage(NamedTuple):
@@ -289,17 +292,31 @@ def run_day(args: argparse.Namespace, stages: List[Stage], mem: memory_module.Me
             if stage.parallel:
                 write_index(mem)
 
-    # `learn` first (the agents are told today's topics), then the agent pool next to the browser stages.
+    # The browser lanes start at once. `learn` runs next to them; only the agents wait for
+    # it (they are told today's topics), then run in their pool next to the browser stages.
     first = [s for s in stages if s.name == "learn"]
     browser = [s for s in stages if not s.parallel and s.name != "learn"]
     agents = [s for s in stages if s.parallel]
-    for stage in first:
+    learned = threading.Event()
+
+    def learn() -> None:
+        try:
+            for stage in first:
+                one(stage)
+        finally:
+            learned.set()
+
+    def agent(stage: Stage) -> None:
+        learned.wait()
         one(stage)
-    # --bots N: up to N sites at once, each site's stages in order in its own process.
+
+    # --bots N: up to N sites at once, each site's stages in order in its own process;
+    # unset (None) or 0: every site at once; 1: one after another in this process.
     # --containers: every site at once, each in its own container.
     containers = bool(getattr(args, "containers", False)) and bool(browser)
-    lanes = isolated_lanes(args, browser) if (args.bots > 1 or containers) and browser else [browser]
-    workers = len(lanes) if containers else args.bots
+    wanted = args.bots or 0
+    lanes = isolated_lanes(args, browser) if (wanted != 1 or containers) and browser else [browser]
+    workers = len(lanes) if (containers or not wanted) else wanted
     if containers:
         show(args, [lanes_module.lane_of(stages[0].name) for stages in lanes if stages])
 
@@ -307,10 +324,12 @@ def run_day(args: argparse.Namespace, stages: List[Stage], mem: memory_module.Me
         for stage in stages:
             one(stage)
 
-    with ThreadPoolExecutor(max_workers=max(1, args.agents), thread_name_prefix="agent") as pool, \
+    with ThreadPoolExecutor(max_workers=max(1, args.agents) + 1, thread_name_prefix="agent") as pool, \
             ThreadPoolExecutor(max_workers=max(1, workers), thread_name_prefix="bot") as bots:
-        futures = [pool.submit(one, stage) for stage in agents]
-        futures += [bots.submit(lane, stages) for stages in lanes]
+        # `learn` has its own seat in the pool, so a full set of waiting agents cannot block it.
+        futures = [bots.submit(lane, stages) for stages in lanes]
+        futures.append(pool.submit(learn))
+        futures += [pool.submit(agent, stage) for stage in agents]
         for future in futures:
             future.result()
     if args.dry_run:
@@ -371,10 +390,11 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
                         help="AI CLI(s): both (default) has the briefing agents ask claude and kiro and merge")
     parser.add_argument("--done", action="store_true", help="with learn: mark today's study day finished")
     parser.add_argument("--agents", type=int, default=AGENTS_AT_ONCE, metavar="N",
-                        help="briefing agents to run at the same time (default %d)" % AGENTS_AT_ONCE)
-    parser.add_argument("--bots", type=int, default=int(os.environ.get("PIPELINE_BOTS") or 1), metavar="N",
+                        help="briefing agents to run at the same time (default %d: all of them)" % AGENTS_AT_ONCE)
+    parser.add_argument("--bots", type=int, default=int(os.environ.get("PIPELINE_BOTS") or 0) or None,
+                        metavar="N",
                         help="sites to run at the same time, each in its own process and Chrome profile "
-                             "(default 1: one after another; PIPELINE_BOTS sets it)")
+                             "(default: every site at once; 1: one after another; PIPELINE_BOTS sets it)")
     parser.add_argument("--containers", action="store_true", default=os.environ.get("PIPELINE_CONTAINERS") == "1",
                         help="run every site at the same time, each in its own Docker container "
                              "(docker-compose.yml; PIPELINE_CONTAINERS=1 sets it)")

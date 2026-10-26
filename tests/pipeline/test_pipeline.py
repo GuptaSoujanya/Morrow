@@ -63,7 +63,8 @@ def test_run_day_continues_where_it_stopped(tmp_path):
     mem = Memory(tmp_path, DAY)
     stages = [stage("profile:naukri", 0), stage("learn", 3), stage("apply:naukri", 0)]
     assert run.run_day(_args(), stages, mem) == run.EXIT_FAILED
-    assert calls == ["learn", "profile:naukri", "apply:naukri"]
+    assert sorted(calls) == ["apply:naukri", "learn", "profile:naukri"]
+    assert calls.index("profile:naukri") < calls.index("apply:naukri")
     assert Memory(tmp_path, DAY).day_status() == "in progress"
     calls.clear()
     stages[1] = stage("learn", 0)
@@ -80,7 +81,8 @@ def test_run_day_continues_where_it_stopped(tmp_path):
     assert calls == ["learn"] and Memory(tmp_path, DAY).day_status() == "done"
     calls.clear()
     run.run_day(_args(fresh=True), stages, Memory(tmp_path, DAY))
-    assert calls == ["learn", "profile:naukri", "apply:naukri"]
+    assert sorted(calls) == ["apply:naukri", "learn", "profile:naukri"]
+    assert calls.index("profile:naukri") < calls.index("apply:naukri")
 
 
 def test_a_done_stage_whose_file_is_gone_runs_again(tmp_path):
@@ -114,6 +116,45 @@ def test_agents_run_in_parallel_with_the_browser_stages(tmp_path):
     stages = [run.Stage("apply:naukri", meet), run.Stage("brief:goal", meet, True),
               run.Stage("brief:papers", meet, True)]
     assert run.run_day(_args(), stages, Memory(tmp_path, DAY)) == run.EXIT_OK
+
+
+def test_bots_start_while_learn_runs_and_the_agents_wait_for_it(tmp_path):
+    import threading
+    gate = threading.Barrier(2, timeout=5)  # learn and apply:naukri must run at the same time
+    learnt = threading.Event()
+
+    def learn():
+        gate.wait()
+        learnt.set()
+        return 0
+
+    def brief():
+        assert learnt.is_set(), "the agents wait for learn"
+        return 0
+
+    stages = [run.Stage("learn", learn), run.Stage("apply:naukri", lambda: gate.wait() and 0),
+              run.Stage("brief:goal", brief, True), run.Stage("brief:papers", brief, True)]
+    assert run.run_day(_args(agents=1), stages, Memory(tmp_path, DAY)) == run.EXIT_OK
+    assert all(Memory(tmp_path, DAY).is_done(s.name) for s in stages)
+
+
+def test_every_site_runs_at_once_by_default(tmp_path, monkeypatch):
+    import threading
+    base = tmp_path / "browser" / "naukri"
+    (base / "chrome").mkdir(parents=True)
+    (base / "chrome" / "Cookies").write_text("session")
+    from common.connections import mark_managed
+    mark_managed(base)
+    monkeypatch.setattr(run, "base_profile", lambda env: str(base))
+    gate = threading.Barrier(3, timeout=5)  # all three sites' profile stages at the same time
+    monkeypatch.setattr(lanes, "run_isolated", lambda lane, command, env, container=False: gate.wait() and 0)
+    stages = [run._bot("profile:%s" % site, "%s_bot.update_profile" % site, [], lambda: 1)
+              for site in ("naukri", "hirist", "instahyre")]
+    assert run.run_day(_args(bots=None), stages, Memory(tmp_path / "m", DAY)) == run.EXIT_OK
+    monkeypatch.delenv("PIPELINE_BOTS", raising=False)
+    assert run.parse_args([]).bots is None and run.parse_args([]).agents == run.AGENTS_AT_ONCE == 6
+    monkeypatch.setenv("PIPELINE_BOTS", "2")
+    assert run.parse_args([]).bots == 2
 
 
 
