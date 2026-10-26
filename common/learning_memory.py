@@ -37,12 +37,28 @@ def _validate(data):
         raise ValueError("Invalid saved learning plan. Your progress has not been reset.")
     for event in data['history']:
         if (not isinstance(event, dict) or any(not isinstance(event.get(key), str) for key in ('at', 'id', 'title'))
-                or event.get('kind') not in ('course', 'research') or event.get('action') not in ('completed', 'reopened')):
+                or event.get('kind') not in ('course', 'research', 'dsa') or event.get('action') not in ('completed', 'reopened')):
             raise ValueError("Invalid saved learning history. Your progress has not been reset.")
         try:
             dt.datetime.fromisoformat(event['at'])
         except ValueError as exc:
             raise ValueError("Invalid learning history date. Your progress has not been reset.") from exc
+    if 'dsa' in data:
+        dsa = data['dsa']
+        if not isinstance(dsa, dict) or not isinstance(dsa.get('days'), dict):
+            raise ValueError('Invalid DSA progress. Your progress has not been reset.')
+        for day, entry in dsa['days'].items():
+            try:
+                if dt.date.fromisoformat(day).isoformat() != day:
+                    raise ValueError()
+                if (not isinstance(entry, dict) or not isinstance(entry.get('topic'), str)
+                        or type(entry.get('read')) is not bool or not isinstance(entry.get('practiced'), list)
+                        or any(not isinstance(problem, str) for problem in entry['practiced'])):
+                    raise ValueError()
+                if entry.get('completed_at'):
+                    dt.datetime.fromisoformat(entry['completed_at'])
+            except (ValueError, TypeError) as exc:
+                raise ValueError('Invalid DSA progress. Your progress has not been reset.') from exc
     return data
 
 
