@@ -8,8 +8,8 @@ profile's skills, experience and preferences, so the profile must say exactly wh
 1. **Headline / title** and **current role**: the planned headline and designation.
 2. **Skills**: Cutshort ranks on skills with years of experience. Add every planned skill she lacks with the
    years the facts support; keep her existing skills.
-3. **Work experience**: each role from the resume with title, company, dates and a short description from
-   the resume's bullet points. Add missing ones; never delete.
+3. **Work experience**: each role from the plan with title, company, dates and the planned job profile
+   (Cutshort's search embeds this prose, so keep the figures and the stack). Add missing ones; never delete.
 4. **Education**: from the facts.
 5. **About / summary**: the planned summary.
 6. **Job preferences**: desired roles (the planned target roles), preferred locations, remote preference,

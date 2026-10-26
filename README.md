@@ -264,8 +264,27 @@ The new headline is read back from the editor before Save is clicked and from th
 after it; nothing is reported as updated unless both checks pass. The same goes for every other
 section: after the agent is done, the bot reloads the profile and looks for each change where
 that section is on the page, so a skill that only reached the headline does not pass for the
-skills list. Sections the reloaded page does not show are sent back to the agent on their own and
-checked again (`PROFILE_REPAIR_PASSES`, default 1; `0` turns that off).
+skills list. Whatever the reloaded page does not show is sent back to the agent on its own and
+checked again -- a whole section, or one skill of several that did not land
+(`PROFILE_REPAIR_PASSES`, default 1; `0` turns that off). The edit plan the bot wrote before the
+agent started is the contract: a planned section the agent never reported (it ran out of budget
+or turns, or crashed without a report) is looked for on the page too, and goes into the same
+repair pass when it is not there, so a run that stops short is finished rather than lost. A run
+that fails before the agent reports anything is still recorded in the index with its reason.
+Files the agent may upload (the resume) are copied into its run folder and named from there,
+which is the only place the browser tool may upload from. The read-back unfolds every "Read More"
+first and allows the board's own spelling ("Fast API" for FastAPI, "Nextjs" for Next.js, "2 Years
+6 Months" for 2.5 years), so a save that took effect is not sent back as missing. A board that
+edits the profile as a form wizard (Hirist) keeps the About text, skills and work preferences on
+its registration steps; the read-back opens those after the profile page and reads what sits in
+their text boxes and drop-downs, and the page it judged by is kept as `page-after.txt` in the run
+folder. An agent that writes a sentence around a value ("My Profile shows 'Software Engineer'")
+is checked by the quoted part.
+
+Some Naukri forms need facts the resume does not carry, and the agent never makes them up: the
+current job's salary breakdown, a client and start month per project, a proficiency per language.
+Fill `salary_breakdown`, `projects_detail` and `language_proficiency` in `data/inputs/profile.yaml`
+and the next review saves those sections; until then they are reported as failed with the field named.
 
 A run folder fills up with hundreds of browser snapshots, so each run also writes one flat record
 to an index shared by every board. That index, not the run folders, is the place to look:

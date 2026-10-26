@@ -16,12 +16,13 @@ in step with her resume so recruiters using LinkedIn Recruiter find her for her 
    Do not change her name, pronouns, location or contact info.
 2. **About** (max 2600 characters): the planned About text, short paragraphs, first person.
 3. **Experience**: the current position's title and company must match the facts; when its description is
-   empty or thin, write it from the resume's bullet points for that role. Add missing past positions the
-   resume lists; never delete one.
+   empty or thinner than the plan, enter the planned job profile for that role (max 2000 characters, the
+   strongest line first) and its skills. Add missing past positions the plan lists; never delete one.
 4. **Education**: school, degree, field, years, from the facts.
 5. **Skills**: add every planned skill she lacks (pick LinkedIn's exact suggestion); keep the planned top
    skills first if the board allows reordering. Do not remove her skills.
-6. **Licenses & certifications** and **Projects**: only what the facts name.
+6. **Licenses & certifications** and **Projects**: the planned certifications and projects (name,
+   description, skills, URL), nothing the plan does not name.
 
 ## LinkedIn specifics
 

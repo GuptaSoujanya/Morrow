@@ -6,7 +6,15 @@ BOARD = Board(
     name="hirist",
     label="Hirist",
     home="https://www.hirist.tech/jobfeed",
-    profile_url="https://www.hirist.tech/profile",
+    profile_url="https://www.hirist.tech/myprofile",
+    # My Profile shows roles, education and projects only; the summary, skills used, resume and
+    # work preferences live on the registration steps.
+    profile_pages=(
+        "https://www.hirist.tech/registration/addWorkExperience",
+        "https://www.hirist.tech/registration/addEducationalDetails",
+        "https://www.hirist.tech/registration/addPersonalDetails",
+        "https://www.hirist.tech/registration/addAdditionalDetails",
+    ),
     feeds=("https://www.hirist.tech/jobfeed",),
     search="https://www.hirist.tech/search/{slug}",
     job_link=r"^https://www\.hirist\.tech/j/[a-z0-9-]+-\d+",

@@ -485,3 +485,16 @@ def test_one_board_bot_has_no_site_flag():
     assert args.limit == 3 and not hasattr(args, "site")
     with pytest.raises(SystemExit):
         pf.parse_args(["--site", "instahyre"], only=pf.BOARDS["hirist"])
+
+
+def test_the_hirist_profile_lives_at_myprofile():
+    """hirist.tech/profile answers a nginx 504 after a minute for a signed-in person; the jobfeed's own
+    "Update" links point at /myprofile, which opens in seconds."""
+    assert HIRIST.profile_url == "https://www.hirist.tech/myprofile"
+
+
+def test_the_hirist_profile_is_also_read_on_its_registration_steps():
+    """My Profile shows roles, education and projects; the About text, skills used, resume and work
+    preferences are only on the registration steps, which the verifier reads after it."""
+    assert len(HIRIST.profile_pages) == 4
+    assert all(url.startswith("https://www.hirist.tech/registration/add") for url in HIRIST.profile_pages)

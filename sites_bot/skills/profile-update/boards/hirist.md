@@ -8,8 +8,10 @@ experience, current designation, location and notice period.
 1. **Professional details**: current designation and company, total experience (years and months), current
    and expected salary, notice period, current and preferred locations, from the facts.
 2. **Skills**: add every planned skill she lacks; keep her existing skills.
-3. **Profile headline / summary**: the planned headline; the planned summary where a longer field exists.
-4. **Employment**: each role from the resume; add missing ones; never delete.
+3. **Profile headline / summary**: the planned headline; the planned summary where a longer field exists
+   (the planned short summary when the field is one paragraph).
+4. **Employment**: each role from the plan with its job profile shortened to the field's limit; add
+   missing ones; never delete.
 5. **Education**: from the facts.
 6. **Resume**: replace it only if you were given a resume file.
 

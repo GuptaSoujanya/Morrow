@@ -37,3 +37,6 @@ class Board:
     second_apply: str = ""
     # The signed-in candidate's own profile page, where the morning profile update starts.
     profile_url: str = ""
+    # Pages the same profile is spread over: a board that edits it as a form wizard keeps the About
+    # text, skills and preferences on those steps, so the verifier reads them after profile_url.
+    profile_pages: Tuple[str, ...] = ()
