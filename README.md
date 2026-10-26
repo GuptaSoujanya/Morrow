@@ -298,8 +298,11 @@ python3 -m common.profile_record --json          # the same records for a script
 ```
 BOARD   WHEN              RESULT     SECTIONS  COMPLETE     ATS  NOT ON PAGE
 Naukri  2026-10-26 13:25  NOT SAVED  1/3       82% -> 100%  74   Key skills, Profile summary
-Hirist  2026-10-26 13:25  saved      3/3       82% -> 100%  74   -
+Hirist  2026-10-26 13:25  saved      3/3       82% -> 100%  74   AWS Bedrock
 ```
+
+The last column is what the page did not show: the sections that are missing, or, when every
+section is there, the individual values that are not.
 
 It names what did not land, down to the individual skill, in `data/reports/profile/latest.json`
 (and `history.jsonl` for every run before it). A failed run leaves a

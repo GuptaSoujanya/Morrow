@@ -78,6 +78,17 @@ def test_the_table_and_detail_are_short_enough_to_read(tmp_path):
     assert "ok  Resume headline" in detail and "Resume ATS 74/100" in detail
 
 
+def test_the_table_names_a_value_that_did_not_land_when_every_section_is_there(tmp_path):
+    """A skill missing from an otherwise saved section is the whole point of reading the table."""
+    partial = ProfileCheck(saved=True, why="confirmed on the reloaded page, except: AWS Bedrock",
+                           sections=[Section(name="Key skills", action="filled", on_page=True,
+                                             after="LangChain, FastAPI, AWS Bedrock, Go",
+                                             missing=["AWS Bedrock"])])
+    profile_record.save(profile_record.digest("naukri", "Naukri", partial, _plan()), tmp_path)
+    table = profile_record.table(profile_record.load(tmp_path))
+    assert "saved" in table and "AWS Bedrock" in table
+
+
 def test_the_cli_prints_the_table_a_board_and_json(tmp_path, capsys):
     profile_record.save(profile_record.digest("naukri", "Naukri", _result(), _plan()), tmp_path)
     where = ["--dir", str(tmp_path)]
@@ -98,3 +109,39 @@ def test_the_cli_prints_the_table_a_board_and_json(tmp_path, capsys):
 def test_the_cli_says_so_when_nothing_has_run(tmp_path, capsys):
     assert profile_record.main(["--dir", str(tmp_path)]) == 0
     assert "No profile update has been recorded yet" in capsys.readouterr().out
+
+
+def _score_result():
+    return ProfileCheck(
+        saved=False, why="2 of 3 planned sections are on the profile; not on it: Projects",
+        completeness_after="93%",
+        sections=[
+            Section(name="Resume headline", action="checked", after="AI Engineer | Python", on_page=True),
+            Section(name="Key skills", action="checked", after="LangChain, FastAPI", on_page=True,
+                    missing=["FastAPI"]),
+            Section(name="Projects", action="checked", after="EvalAgentFlow", on_page=False),
+        ])
+
+
+def test_a_score_counts_the_planned_sections_it_checked_not_changes():
+    record = profile_record.digest("naukri", "Naukri", _score_result(), _plan(), kind=profile_record.SCORE)
+    assert record["kind"] == "score" and record["saved"] is False
+    assert record["changed"] == 3 and record["confirmed"] == 2
+    assert record["unconfirmed"] == ["Projects"] and record["missing"] == ["FastAPI"]
+    assert profile_record.digest("naukri", "Naukri", _result(), _plan())["kind"] == "run"
+
+
+def test_the_table_and_detail_call_a_score_by_its_name():
+    record = profile_record.digest("naukri", "Naukri", _score_result(), _plan(), kind=profile_record.SCORE)
+    table = profile_record.table({"naukri": record})
+    assert "GAPS" in table and "2/3" in table and "? -> 93%" in table and "NOT SAVED" not in table
+    detail = profile_record.detail(record)
+    assert detail.startswith("Naukri profile score - GAPS (")
+    assert "NO  Projects" in detail and "not on the page: FastAPI" in detail
+    full = dict(record, saved=True)
+    assert "MATCHES RESUME" in profile_record.table({"naukri": full})
+    assert profile_record.detail(_result_record()).startswith("Naukri profile - saved (")
+
+
+def _result_record():
+    return profile_record.digest("naukri", "Naukri", _result(), _plan())

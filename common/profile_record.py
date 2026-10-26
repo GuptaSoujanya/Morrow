@@ -34,6 +34,8 @@ def index_dir(settings: Any = None) -> Path:
     """The index folder beside the run folders, so REPORT_DIR moves both together."""
     root = getattr(settings, "report_dir", "") or "data/reports"
     return Path(root) / "profile"
+
+
 #: Keys every digest carries, so a reader never has to test for their presence.
 FIELDS = ("board", "label", "at", "saved", "why", "changed", "confirmed", "unconfirmed", "missing",
           "completeness_before", "completeness_after", "headline", "skills", "ats_score", "sections",
@@ -45,8 +47,14 @@ def _short(value: Any, limit: int = 200) -> str:
     return text if len(text) <= limit else text[:limit - 3] + "..."
 
 
+RUN = "run"
+#: A read-only check of the live profile against the plan made from the resume: nothing was changed,
+#: so "changed/confirmed" count the planned sections checked and the ones the page shows.
+SCORE = "score"
+
+
 def digest(board_name: str, label: str, result: Any, plan: Any = None, report: Optional[Path] = None,
-           run: Optional[Path] = None, at: Optional[datetime] = None) -> Dict[str, Any]:
+           run: Optional[Path] = None, at: Optional[datetime] = None, kind: str = RUN) -> Dict[str, Any]:
     """The flat record for one profile run: the verdict, what changed, what did not land."""
     sections = []
     for section in result.sections:
@@ -59,15 +67,23 @@ def digest(board_name: str, label: str, result: Any, plan: Any = None, report: O
             row["note"] = _short(section.note)
         sections.append(row)
     ats = getattr(plan, "ats", None) if plan is not None else None
+    if kind == SCORE:
+        checked = [section for section in result.sections if section.on_page is not None]
+        shown = [section for section in checked if section.on_page]
+        absent = [section.name for section in checked if not section.on_page]
+    else:
+        checked, shown = result.changed, result.confirmed
+        absent = [section.name for section in result.unverified]
     return {
         "board": board_name,
         "label": label,
+        "kind": kind,
         "at": (at or datetime.now()).isoformat(timespec="seconds"),
         "saved": bool(result.saved),
         "why": _short(result.why),
-        "changed": len(result.changed),
-        "confirmed": len(result.confirmed),
-        "unconfirmed": [section.name for section in result.unverified],
+        "changed": len(checked),
+        "confirmed": len(shown),
+        "unconfirmed": absent,
         "missing": sorted({item for section in result.sections for item in section.missing}),
         "completeness_before": result.completeness_before,
         "completeness_after": result.completeness_after,
@@ -117,20 +133,28 @@ def history(folder: Path = INDEX_DIR, board: Optional[str] = None) -> List[Dict[
     return out
 
 
+def verdict(record: Dict[str, Any]) -> str:
+    """One word for a record: a run saved or not; a score matching the resume plan or showing gaps."""
+    if record.get("kind") == SCORE:
+        return "MATCHES RESUME" if record.get("saved") else "GAPS"
+    return "saved" if record.get("saved") else "NOT SAVED"
+
+
 def table(latest: Dict[str, Dict[str, Any]]) -> str:
     """The index as a table short enough to read in a terminal."""
     if not latest:
         return "No profile update has been recorded yet. Run one: python3 -m naukri_bot.update_profile"
     rows = [("BOARD", "WHEN", "RESULT", "SECTIONS", "COMPLETE", "ATS", "NOT ON PAGE")]
     for record in sorted(latest.values(), key=lambda item: str(item.get("at")), reverse=True):
+        absent = ", ".join(record.get("unconfirmed") or []) or ", ".join(record.get("missing") or [])
         rows.append((
             str(record.get("label") or record.get("board") or "?"),
             str(record.get("at") or "")[:16].replace("T", " "),
-            "saved" if record.get("saved") else "NOT SAVED",
+            verdict(record),
             "%s/%s" % (record.get("confirmed", "?"), record.get("changed", "?")),
             "%s -> %s" % (record.get("completeness_before") or "?", record.get("completeness_after") or "?"),
             str(record.get("ats_score") if record.get("ats_score") is not None else "-"),
-            _short(", ".join(record.get("unconfirmed") or []) or "-", 40),
+            _short(absent or "-", 40),
         ))
     widths = [max(len(row[column]) for row in rows) for column in range(len(rows[0]))]
     return "\n".join("  ".join(cell.ljust(widths[column]) for column, cell in enumerate(row)).rstrip()
@@ -139,8 +163,9 @@ def table(latest: Dict[str, Dict[str, Any]]) -> str:
 
 def detail(record: Dict[str, Any]) -> str:
     """One board's last run: the verdict, then a line per section."""
-    lines = ["%s profile - %s (%s)" % (record.get("label") or record.get("board"),
-                                       "saved" if record.get("saved") else "NOT SAVED", record.get("at")),
+    lines = ["%s profile %s- %s (%s)" % (record.get("label") or record.get("board"),
+                                         "score " if record.get("kind") == SCORE else "",
+                                         verdict(record), record.get("at")),
              record.get("why") or ""]
     if record.get("completeness_after"):
         lines.append("Completeness %s -> %s" % (record.get("completeness_before") or "?",
