@@ -1,4 +1,4 @@
-"""The control site: a page on this computer that runs the bots, shows what waits for you, and holds the course.
+"""The bot engine behind the dashboard: runs the bots, shows what waits for you, and holds the course.
 
 It only listens on 127.0.0.1. Other web pages can't use it: every request has to
 name this computer as its Host, and anything that changes something has to be a
@@ -6,18 +6,14 @@ JSON request from this site itself.
 """
 from __future__ import annotations
 
-import argparse
 import datetime as dt
 import json
 import mimetypes
 import os
-import signal
 import secrets
 import sqlite3
 import subprocess
-import sys
 import time
-import urllib.request
 from dataclasses import replace
 from http import HTTPStatus
 from http.cookies import CookieError, SimpleCookie
@@ -30,8 +26,6 @@ from . import state
 from .state import Command
 from .runner import BatchCommand, Runner
 
-STATIC = Path(__file__).resolve().parent / "static"
-DEFAULT_PORT = 8000
 
 ANSWER_MODES = [
     ("", "As set in .env"),
@@ -624,11 +618,7 @@ class Handler(BaseHTTPRequestHandler):
         # Links in saved reports are percent-encoded ("my%20file.txt"); inside() still confines them.
         route = unquote(url.path)
         try:
-            if route == "/":
-                self.file(STATIC / "index.html")
-            elif route.startswith("/static/"):
-                self.file(inside(STATIC, route[len("/static/"):]))
-            elif route == "/course":
+            if route == "/course":
                 self.redirect("/course/")
             elif route.startswith("/course/"):
                 relative = route[len("/course/"):]
@@ -782,50 +772,3 @@ class ControlServer(ThreadingHTTPServer):
         super().__init__(("127.0.0.1", port), Handler)
         self.runner = Runner()
 
-
-def already_running(port: int) -> bool:
-    try:
-        with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/meta", timeout=1) as reply:
-            return "answer_modes" in json.loads(reply.read())
-    except (OSError, ValueError):
-        return False
-
-
-def _interrupt(signum: int, frame: Any) -> None:
-    raise KeyboardInterrupt
-
-
-def main(argv: Optional[List[str]] = None) -> int:
-    parser = argparse.ArgumentParser(prog="python -m web", description=__doc__.splitlines()[0])
-    parser.add_argument("--port", type=int, default=DEFAULT_PORT, help=f"port on this computer (default {DEFAULT_PORT})")
-    parser.add_argument("--no-open", action="store_true", help="do not open the page in your browser")
-    args = parser.parse_args(argv)
-    # Started in the background, ctrl+c is ignored and every command run from here would inherit
-    # that, so Stop could not interrupt it. Taking ctrl+c back makes the commands interruptible.
-    signal.signal(signal.SIGINT, signal.default_int_handler)
-    # A kill or a closed terminal ends the site the same way ctrl+c does, so the bot it
-    # started is stopped too instead of running on with nobody able to press Stop.
-    for sig in (signal.SIGTERM, signal.SIGHUP):
-        signal.signal(sig, _interrupt)
-    url = f"http://localhost:{args.port}"
-    try:
-        server = ControlServer(args.port)
-    except OSError:
-        if already_running(args.port):
-            print(f"Already running at {url}")
-            if not args.no_open:
-                open_outside(url)
-            return 0
-        print(f"Port {args.port} is taken by another app. Start with --port <another port>.", file=sys.stderr)
-        return 1
-    print(f"Job hunt is open at {url}  (ctrl+c stops it)", flush=True)
-    if not args.no_open:
-        open_outside(url)
-    try:
-        server.serve_forever()
-    except KeyboardInterrupt:
-        print("\nStopped.")
-    finally:
-        server.runner.shutdown()
-        server.server_close()
-    return 0

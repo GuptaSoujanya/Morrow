@@ -133,37 +133,18 @@ After running, results are saved to **`naukriapplied.csv`** (in the folder you r
 - `passed` — URLs of jobs successfully applied to
 - `failed` — URLs where the apply attempt failed
 
-## 🖥️ web: one page for everything
+## 🖥️ web: the bot engine behind the dashboard
 
-Everything below can be run from one page in your browser, without remembering a single flag:
+`web/` runs the bots, streams their output, and serves the course and reports. It no longer has a
+page of its own: the dashboard in `froned-dashbord` (http://127.0.0.1:8100) is built on it.
+Start everything with `scripts/morrow start`.
 
-```bash
-scripts/web               # opens http://localhost:8000 (or the full path from anywhere)
-venv/bin/python -m web    # the same thing; --port 8899 picks another port, --no-open skips the browser
-```
-
-Pick a section on the left (or press `1`-`9`, `0`), set its options, press **Run**, and watch
-the output stream at the bottom. Each form shows the exact command it will run, so nothing is hidden.
-The page only listens on this computer. The server supports independent agents running
-together; commands sharing a browser session or output files must be started after that
-resource is free. The full dashboard in `froned-dashbord` provides parallel run controls
-and an Activity panel with streamed progress and a Stop control for each agent.
-
-| Section | What it runs |
-|---|---|
-| Overview | Charts read from the bots' database for the last 7, 14 or 30 days or all time: applications sent per day by channel, jobs found and scored, the funnel from found to sent, outcomes, the score spread against `MIN_SCORE`, each board and search, recent runs and the study plan; plus what waits for you and one-press Apply now / Practice run (`#/today` still opens it) |
-| Apply on Naukri | `python -m naukri_bot` with practice run, limit, answer mode, Early Access, keywords, location (a real run asks first) |
-| Company sites | Every waiting application with links to the form, the Naukri listing and the resume to send; `common.assist` for the waiting forms, `sites_bot.external --url ...` for one page |
-| Naukri profile | `naukri_bot.update_profile`, schedule status, turn on the daily schedule |
-| LinkedIn post | `linkedin_bot --dry-run / --propose / --post / --if-due` (publishing asks first) |
-| Tailor resume | `common.resume --tailor`: paste the job description straight into the page |
-| Reports | Every day's report, rendered; build or rebuild any day |
-| Study | The course: today's module from the 8-week plan, every module by track with the ones you marked read (kept in `data/reports/studied.json`), and a reader with next / previous / mark read |
-| Your to-dos | Answer the waiting questions and fill the blank facts right in the page, or edit the whole file |
-| Setup | Google sign-in for company sites, edit `.env`, install requirements, run the tests |
-
-Keys: `x` stops a run (press Stop again to force it), `o` makes the output bigger or smaller.
-In the file editor, `⌘S` saves and `esc` closes.
+The dashboard defaults to the **free beta**: all local tools are available without
+a Morrow account, subscription, or access approval. Each person runs their own copy;
+job-platform connections and Claude/Kiro sessions are configured on that computer.
+The beta launcher does not start the account API or PostgreSQL. Accounts and billing
+can be enabled later with `scripts/morrow start accounts`; see the
+[dashboard setup](froned-dashbord/README.md).
 
 ## 🤖 naukri_bot (v2 — recommended)
 
@@ -266,7 +247,29 @@ you, so it exits with code 2 (and a Telegram alert, if configured) instead: do t
 with a visible window.
 
 The new headline is read back from the editor before Save is clicked and from the profile page
-after it; nothing is reported as updated unless both checks pass. A failed run leaves a
+after it; nothing is reported as updated unless both checks pass. The same goes for every other
+section: after the agent is done, the bot reloads the profile and looks for each change where
+that section is on the page, so a skill that only reached the headline does not pass for the
+skills list. Sections the reloaded page does not show are sent back to the agent on their own and
+checked again (`PROFILE_REPAIR_PASSES`, default 1; `0` turns that off).
+
+A run folder fills up with hundreds of browser snapshots, so each run also writes one flat record
+to an index shared by every board. That index, not the run folders, is the place to look:
+
+```bash
+python3 -m common.profile_record                 # every board: when, saved, sections confirmed, ATS
+python3 -m common.profile_record --board naukri   # one board, a line per section
+python3 -m common.profile_record --json          # the same records for a script or a dashboard
+```
+
+```
+BOARD   WHEN              RESULT     SECTIONS  COMPLETE     ATS  NOT ON PAGE
+Naukri  2026-10-26 13:25  NOT SAVED  1/3       82% -> 100%  74   Key skills, Profile summary
+Hirist  2026-10-26 13:25  saved      3/3       82% -> 100%  74   -
+```
+
+It names what did not land, down to the individual skill, in `data/reports/profile/latest.json`
+(and `history.jsonl` for every run before it). A failed run leaves a
 screenshot in `data/screenshots/` and, if `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` are set in `.env`,
 sends you a Telegram message after the third failed attempt. `DRY_RUN` in `.env` only concerns
 applications; the updater listens to its own `--dry-run` flag.
@@ -867,9 +870,9 @@ Naukri-autoapply-bot/
 │   ├── publisher.py      #   Selenium publish, verified at every stage; selectors at the top
 │   └── cli.py            #   --dry-run / --propose / --post / --if-due
 │
-├── web/                  # the page that runs everything (scripts/web, http://localhost:8000)
+├── web/                  # the bot engine the dashboard runs on (runner, state, API handlers)
 ├── course/               # the PrepForge study site, served by web/ at /course/
-├── scripts/              # the web launcher, launchd install/run/status, google_login.sh
+├── scripts/              # morrow (start/stop everything), launchd install/run/status, google_login.sh
 ├── tests/                # one folder per package: common/, naukri/, sites/, linkedin/, web/
 ├── legacy/               # the original scripts: Naukri-Edge.py, Naukri-Recommended.py, the notebook, their CSVs
 │

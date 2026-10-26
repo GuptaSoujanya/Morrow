@@ -400,11 +400,12 @@ def test_update_profile_needs_the_agent_to_say_done(monkeypatch):
     monkeypatch.setattr(platforms, "signed_out", lambda driver, b: False)
     monkeypatch.setattr(platforms.time, "sleep", lambda s: None)
     monkeypatch.setattr(browser_agent, "facts_text", lambda profile, settings: "facts")
-    prompts = []
+    prompts, systems = [], []
 
     def agent(status):
-        def run_agent(driver, settings, prompt, workdir, files=()):
+        def run_agent(driver, settings, prompt, workdir, files=(), system=""):
             prompts.append(prompt)
+            systems.append(system)
             return browser_agent.AgentRun(report={"status": status, "why": "w", "notes": "n"},
                                           workdir=workdir, seconds=1.0)
         return run_agent
@@ -412,7 +413,7 @@ def test_update_profile_needs_the_agent_to_say_done(monkeypatch):
     settings = Settings(report_dir="reports")
     monkeypatch.setattr(browser_agent, "run_agent", agent("done"))
     assert platforms.update_profile(object(), board, settings, None)
-    assert "Do not apply to any job" in prompts[0]
+    assert "Do not apply to any job" in prompts[0] and systems[0].startswith("# Hirist profile agent")
     monkeypatch.setattr(browser_agent, "run_agent", agent("needs_you"))
     assert not platforms.update_profile(object(), board, settings, None)
     assert platforms.update_profile(object(), board, settings, None, dry_run=True)
@@ -424,6 +425,13 @@ def test_update_profile_needs_the_agent_to_say_done(monkeypatch):
     for site in (linkedin_profile, naukri_profile):
         assert platforms.update_profile(object(), site.PROFILE_BOARD, settings, None, extra="EXTRA-%s" % site.__name__)
         assert prompts[-1].count("EXTRA-%s" % site.__name__) == 1 and urlparse(site.PROFILE_URL).netloc in prompts[-1]
+        assert systems[-1].startswith("# %s profile agent" % site.PROFILE_BOARD.label)
+
+    # With her facts but no LLM-written plan, the profile is not touched with canned text.
+    calls = len(prompts)
+    monkeypatch.setattr(platforms.profile_plan, "plan_for", lambda profile, settings: None)
+    assert not platforms.update_profile(object(), board, settings, object())
+    assert len(prompts) == calls
 
 
 def test_a_signed_out_board_gets_its_profile_created_and_tracked_in_memory(monkeypatch):
@@ -438,7 +446,7 @@ def test_a_signed_out_board_gets_its_profile_created_and_tracked_in_memory(monke
     monkeypatch.setattr(browser_agent, "facts_text", lambda profile, settings: "facts")
     prompts = []
 
-    def run_agent(driver, settings, prompt, workdir, files=()):
+    def run_agent(driver, settings, prompt, workdir, files=(), system=""):
         prompts.append(prompt)
         notes = "Account created. Profile at https://www.hirist.tech/profile/me" if len(prompts) == 1 else "saved"
         return browser_agent.AgentRun(report={"status": "done", "why": "", "notes": notes},

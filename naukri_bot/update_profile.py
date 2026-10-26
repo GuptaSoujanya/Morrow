@@ -72,9 +72,10 @@ def _profile_board() -> Any:
 
 
 PROFILE_BOARD = _profile_board()
-_REVIEW_EXTRA = ("The resume headline was just saved by another step; leave it as it is. Check the key "
-                 "skills, profile summary, employment, career profile (preferred locations, expected "
-                 "salary, notice period) and IT skills sections.")
+# Naukri's sections are in its system prompt (sites_bot/skills/profile-update/boards/naukri.md);
+# this is only what this run knows.
+_REVIEW_EXTRA = ("The resume headline was just saved by another step; change it only when the planned "
+                 "headline below differs from it in wording (ignore a trailing dot).")
 
 _HEADLINE_CARD = ".resumeHeadline"
 _EDIT_ICON = ".resumeHeadline span.edit.icon"

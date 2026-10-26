@@ -243,8 +243,12 @@ _NO_PASSWORD = (
 )
 
 
+_TASK_REPORT = ('When you finish or stop, reply with ONE JSON object and nothing else:\n'
+                '{"status": "done|needs_you|failed", "why": "one or two sentences", "notes": "anything she should know"}')
+
+
 def task_prompt(instruction: str, url: str, facts: str, email: str, files: Tuple[Path, ...] = (),
-                has_password: bool = True) -> str:
+                has_password: bool = True, report: str = _TASK_REPORT) -> str:
     host = urlparse(url).netloc or url
     uploads = (
         "Files you may upload when the task needs them (click the upload control so the file "
@@ -264,8 +268,7 @@ def task_prompt(instruction: str, url: str, facts: str, email: str, files: Tuple
         "says so. " + _NO_PASSWORD,
         _RULES,
         "The facts:\n" + facts,
-        'When you finish or stop, reply with ONE JSON object and nothing else:\n'
-        '{"status": "done|needs_you|failed", "why": "one or two sentences", "notes": "anything she should know"}',
+        report,
     ])
 
 
@@ -300,7 +303,7 @@ def mcp_config(settings: Settings, endpoint: str, workdir: Path, secrets: Option
     return {"mcpServers": {SERVER: {"command": parts[0], "args": args}}}
 
 
-def claude_command(settings: Settings, prompt: str, config_path: Path) -> List[str]:
+def claude_command(settings: Settings, prompt: str, config_path: Path, system: str = "") -> List[str]:
     command = [
         "claude", "-p", prompt,
         "--mcp-config", str(config_path),
@@ -318,6 +321,9 @@ def claude_command(settings: Settings, prompt: str, config_path: Path) -> List[s
         "--no-session-persistence",
         "--max-budget-usd", "%g" % settings.browser_agent_budget_usd,
     ]
+    if system:
+        # The agent's role and standing instructions, kept apart from the task itself.
+        command += ["--append-system-prompt", system]
     if settings.browser_agent_model:
         command += ["--model", settings.browser_agent_model]
     return command
@@ -374,8 +380,12 @@ def run_agent(
     prompt: str,
     workdir: Path,
     files: Tuple[Path, ...] = (),
+    system: str = "",
 ) -> AgentRun:
-    """Run one `claude -p` task against this browser; the report is None when it gave none."""
+    """Run one `claude -p` task against this browser; the report is None when it gave none.
+
+    `system` is appended to claude's system prompt: the agent's role and skill.
+    """
     from common.llm import _extract_json
 
     started = time.monotonic()
@@ -401,9 +411,11 @@ def run_agent(
     config_path = workdir / "mcp.json"
     config_path.write_text(json.dumps(mcp_config(settings, endpoint, workdir, secrets), indent=1), encoding="utf-8")
     (workdir / "task.md").write_text(prompt, encoding="utf-8")
+    if system:
+        (workdir / "system.md").write_text(system, encoding="utf-8")
     try:
         process = subprocess.Popen(
-            claude_command(settings, prompt, config_path),
+            claude_command(settings, prompt, config_path, system),
             cwd=str(workdir),
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,

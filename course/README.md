@@ -22,7 +22,7 @@ python3 serve.py 8000
 
 Then open **http://localhost:8000** in your browser. (`serve.py` is a tiny wrapper around Python's built-in server that disables browser caching, so edits always show up on refresh. It always serves its own folder, so `python3 path/to/course/serve.py` works from any directory. Any static server works too; internet is needed once per session for CDN assets and for live news. If another app is already using a port, pick a different number, e.g. `python3 serve.py 8899`.)
 
-Or open it from the job hunt page (`scripts/web` in the folder above this one): its **Study** section shows today's module from the 8-week plan and every module by track, lets you mark modules read, and serves this site at http://localhost:8000/course/. It is the same page that runs the job bots.
+Or open it from the dashboard (`scripts/morrow start` in the folder above this one, then http://127.0.0.1:8100): its **Study** section shows today's module from the 8-week plan and every module by track, lets you mark modules read, and serves this site at http://127.0.0.1:8100/course/.
 
 - **[Live AI & Tech News](./news.md)** — fetches today's AI/tech headlines from the internet (Hacker News + dev.to) right inside the site.
 - **[Latest AI Trends 2025–26](./04-ml-genai-agents/11-latest-ai-trends.md)** — curated, interview-ready summary of what changed recently.

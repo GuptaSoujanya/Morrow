@@ -28,10 +28,8 @@ PROFILE_URL = "https://www.linkedin.com/in/me/"
 PROFILE_BOARD = Board(name="linkedin", label="LinkedIn", home="https://www.linkedin.com/", feeds=(), search="",
                       job_link="", job_id="", apply="", applied="", profile_url=PROFILE_URL)
 
-_EXTRA = ("On LinkedIn the sections are the headline (in the intro card), About, Experience and Skills; "
-          "edit each through its pencil icon. Before saving any change, switch off \"Share with network\" "
-          "(or \"Notify network\") so no post goes out. Do not post, message or connect with anyone, and "
-          "do not touch the Open to Work settings.")
+# LinkedIn's sections and rules (no network posts, no Open to Work) are in its system prompt:
+# sites_bot/skills/profile-update/boards/linkedin.md.
 
 
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
@@ -67,7 +65,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     try:
         with cli.signed_in_browser(settings) as driver:
             saved = platforms.update_profile(driver, PROFILE_BOARD, settings.naukri, profile,
-                                             dry_run=args.dry_run, extra=_EXTRA)
+                                             dry_run=args.dry_run)
     except cli._NeedsHuman as exc:
         logger.error("LinkedIn login needs a human: %s", exc)
         return EXIT_LOGIN

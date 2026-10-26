@@ -1,4 +1,4 @@
-"""What the control site reads, runs and writes, kept apart from the server so it can be tested.
+"""What the bot engine reads, runs and writes, kept apart from the server so it can be tested.
 
 Every command is the same one you would type in apply/ by hand; the site only
 collects the options, shows the command, and streams its output.

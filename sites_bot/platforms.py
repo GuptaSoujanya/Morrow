@@ -30,10 +30,10 @@ from urllib.parse import quote_plus, urlparse
 
 from selenium.common.exceptions import WebDriverException
 
-from . import browser_agent
+from . import browser_agent, profile_agent
 from . import external as ext
 from .board import Board
-from common import memory
+from common import memory, profile_plan
 from common.browser import human_pause, safe_get
 from common.models import ApplyResult, ApplyStatus, JobPosting, Profile, RunSummary, Settings
 from cutshort_bot.board import BOARD as CUTSHORT
@@ -571,14 +571,10 @@ def _count(summary: RunSummary, result: ApplyResult) -> None:
 # ---------------------------------------------------------------------------
 
 _PROFILE_TASK = (
-    "Open the candidate's own profile on this job board (you start on it; if this page is not the "
-    "profile, find the profile or edit-profile link). Compare it with the facts below: headline or "
-    "summary, current role and company, skills, total experience, notice period, current and preferred "
-    "location, expected salary. Fix anything missing or out of date using only the facts; never invent "
-    "anything. Then save the profile, even if nothing needed fixing, so the board records an update "
-    "today: re-save the headline or summary section. Do not apply to any job and do not change the "
-    "password, email or phone number. In notes, quote the board's own confirmation text "
-    "(for example \"Profile updated successfully\") exactly as shown, and list what you changed."
+    "You start on the candidate's own profile page (if this page is not the profile, find the profile or "
+    "edit-profile link). Bring every section in line with the planned profile and the facts, using only "
+    "them; never invent anything. Save at least once even if nothing needed fixing, so the board records "
+    "an update today. Do not apply to any job and do not change the password, email or phone number."
 )
 
 
@@ -638,6 +634,9 @@ def create_profile(driver: Any, board: Board, settings: Settings, profile: Profi
     time.sleep(PAGE_WAIT_S)
     files = (resume_pdf,) if resume_pdf else ()
     instruction = _CREATE_TASK + (" Upload the resume file given where the profile asks for one." if files else "")
+    plan = profile_plan.plan_for(profile, settings)
+    if plan is not None:
+        instruction += "\n\n" + profile_plan.agent_brief(plan)
     prompt = browser_agent.task_prompt(instruction, board.home, browser_agent.facts_text(profile, settings),
                                        account_email(settings), files,
                                        has_password=bool(settings.company_site_password))
@@ -668,8 +667,6 @@ def update_profile(driver: Any, board: Board, settings: Settings, profile: Profi
 
     With `create`, a board with no session first gets its account and profile made (create_profile).
     """
-    from .accounts import account_email
-
     if not board.profile_url:
         logger.warning("%s: no profile page is known; skipping the profile update.", board.label)
         return False
@@ -696,21 +693,17 @@ def update_profile(driver: Any, board: Board, settings: Settings, profile: Profi
     files = (resume_pdf,) if resume_pdf else ()
     instruction = _PROFILE_TASK + (" If the profile has a resume upload, replace the resume with the file given."
                                    if files else "") + (" " + extra if extra else "")
-    prompt = browser_agent.task_prompt(instruction, board.profile_url,
-                                       browser_agent.facts_text(profile, settings),
-                                       account_email(settings), files,
-                                       has_password=bool(settings.company_site_password))
-    run = browser_agent.run_agent(driver, settings, prompt,
-                                  browser_agent.workdir_for(settings, "%s profile" % board.label), files)
-    report = run.report or {}
-    if run.problem or report.get("status") != "done":
-        logger.error("%s profile not updated: %s", board.label,
-                     run.problem or report.get("why") or "the agent gave no reason")
+    plan = profile_plan.plan_for(profile, settings)
+    if plan is None and profile is not None:
+        logger.error("%s: no LLM-written profile plan, so the profile is left as it is (see the error above).",
+                     board.label)
         return False
-    notes = report.get("notes") or report.get("why") or ""
-    _remember_profile(driver, board, memory.PROFILE_UPDATED, notes)
-    logger.info("%s profile updated in %.0fs: %s", board.label, run.seconds, notes)
-    return True
+    if plan is not None:
+        instruction += "\n\n" + profile_plan.agent_brief(plan)
+    saved, notes = profile_agent.run(driver, board, settings, profile, instruction, files, plan, "profile")
+    if saved:
+        _remember_profile(driver, board, memory.PROFILE_UPDATED, notes)
+    return saved
 
 
 # ---------------------------------------------------------------------------

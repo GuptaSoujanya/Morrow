@@ -424,6 +424,11 @@ class Settings:
     browser_agent_model: str = ""
     # The MCP server command, pinned so a run never waits on a fresh download.
     browser_agent_mcp: str = "npx -y @playwright/mcp@0.0.83"
+    #: The profile agent audits, edits and re-reads every section, so it gets more room than an apply task.
+    profile_agent_timeout_s: int = 2400
+    profile_agent_budget_usd: float = 10.0
+    #: Extra agent passes that re-edit only the sections the reloaded page did not show. 0 turns them off.
+    profile_repair_passes: int = 1
     # Other job boards (python3 -m sites_bot.platforms): which ones a run works
     # on by default, and applications per board per run.
     platforms: str = "hirist,instahyre"

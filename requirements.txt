@@ -30,7 +30,7 @@ Pillow>=13.0.0,<14.0
 # Safe XML parsing of RSS and Atom feeds (linkedin_bot)
 defusedxml>=0.7.1,<1.0
 
-# Daily reports on the control site that runs everything (scripts/web, or python -m web)
+# Daily reports rendered by the dashboard (web/ bot engine)
 markdown-it-py>=3.0,<5.0
 
 # --- Required by the legacy scripts only ---

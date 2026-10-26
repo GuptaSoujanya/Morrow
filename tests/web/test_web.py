@@ -1,4 +1,4 @@
-"""The control site: the commands it builds, the to-dos it reads and writes, and its server."""
+"""The bot engine: the commands it builds, the to-dos it reads and writes, and its server."""
 import datetime as dt
 import http.client
 import json
@@ -386,8 +386,6 @@ def test_static_files_never_leave_their_folder(site):
     assert call(site, "GET", "/course/../.env")[0] == 404
     assert call(site, "GET", "/course/%2e%2e/.env")[0] == 404
     assert call(site, "GET", "/reports/../inputs/answers.txt")[0] == 404
-    status, page = call(site, "GET", "/")
-    assert status == 200 and b"<html" in page
 
 
 def test_preview_explains_what_is_missing(site):
