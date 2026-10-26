@@ -200,6 +200,41 @@ def mark(path: Path, key: str, done: bool) -> None:
     save_state(path, state)
 
 
+def review_due(state: Dict[str, Any], now: datetime, every_days: int) -> bool:
+    """Whether a scheduled run should also review the whole profile with the agent.
+
+    Due when no review was ever confirmed, or the last confirmed one is `every_days` or more
+    days old. A review that failed today is retried at the next slot, up to
+    MAX_ATTEMPTS_PER_SLOT times a day, so a broken agent cannot spend the budget three times.
+    """
+    if every_days <= 0:
+        return False
+    record = state.get("review") or {}
+    today = now.strftime("%Y-%m-%d")
+    if record.get("date") == today and not record.get("saved") \
+            and record.get("attempts", 0) >= MAX_ATTEMPTS_PER_SLOT:
+        return False
+    if not record.get("saved") or not record.get("date"):
+        return True
+    try:
+        last = datetime.strptime(record["date"], "%Y-%m-%d").date()
+    except ValueError:
+        return True
+    return (now.date() - last).days >= every_days
+
+
+def mark_review(path: Path, saved: bool, why: str = "", now: Optional[datetime] = None) -> None:
+    """Record today's whole-profile review: confirmed saved, or another failed attempt."""
+    now = now or datetime.now()
+    state = load_state(path)
+    record = state.get("review") or {}
+    today = now.strftime("%Y-%m-%d")
+    attempts = record.get("attempts", 0) + 1 if record.get("date") == today else 1
+    state["review"] = {"date": today, "saved": bool(saved), "attempts": attempts,
+                       "why": " ".join(why.split())[:300], "last": now.isoformat(timespec="seconds")}
+    save_state(path, state)
+
+
 def resume_due(state: Dict[str, Any], pdf: Path, today: Optional[str] = None) -> bool:
     """True unless this exact PDF already went up today."""
     record = state.get("resume") or {}
@@ -462,6 +497,43 @@ def review_profile(driver: Any, settings: Settings, profile: Any, dry_run: bool 
                                     extra=_REVIEW_EXTRA)
 
 
+def score_profile(settings: Settings) -> int:
+    """Read the live profile and print how much of the resume plan is on it; nothing is changed.
+
+    The same check the review's verifier makes, run on its own, so the score can be seen any time
+    without spending an agent run. The result lands in the shared index like a run does.
+    """
+    from common import profile as profile_module
+    from common import profile_plan
+    from sites_bot import browser_agent, profile_agent
+
+    try:
+        profile = profile_module.load_profile(settings)
+    except Exception as exc:
+        logger.error("Could not load the profile facts: %s", exc)
+        return EXIT_CONFIG
+    plan = profile_plan.plan_for(profile, settings)
+    if plan is None:
+        return EXIT_CONFIG
+    workdir = browser_agent.workdir_for(settings, "Naukri score")
+    workdir.mkdir(parents=True, exist_ok=True)
+    try:
+        result = with_session(settings, lambda driver: profile_agent.score(driver, PROFILE_BOARD, plan, workdir))
+    except (_LoginUnavailable, _NeedsHuman) as exc:
+        logger.error("Naukri sign-in could not be verified: %s", exc)
+        return EXIT_LOGIN
+    except KeyboardInterrupt:
+        logger.warning("Interrupted.")
+        return EXIT_FAILED
+    except Exception as exc:
+        logger.error("Could not score the profile: %s", exc)
+        return EXIT_FAILED
+    report = profile_agent.keep_score(workdir, PROFILE_BOARD, result, plan, settings)
+    print(profile_agent.score_text(PROFILE_BOARD, result, plan))
+    print("\nFull report: %s" % report)
+    return EXIT_OK if result.sections and result.why != "could not read the profile page" else EXIT_FAILED
+
+
 def run_once(
     settings: Settings, dry_run: bool = False, resume_pdf: Optional[Path] = None,
     profile: Any = None,
@@ -478,8 +550,16 @@ def run_once(
                 result.resume_error = str(exc)
                 logger.error("Resume upload failed: %s", exc)
                 _screenshot(driver, settings)
-        if profile is not None and not review_profile(driver, settings, profile, dry_run):
-            result.review_error = "the browser agent did not save the profile"
+        if profile is not None:
+            try:
+                if not review_profile(driver, settings, profile, dry_run):
+                    result.review_error = "the browser agent did not save the profile"
+            except Exception as exc:
+                # The headline is saved by now; a review that blows up must not undo that by
+                # making the whole attempt fail and the next one toggle the dot again.
+                result.review_error = "the profile review failed: %s" % exc
+                logger.error("%s", result.review_error)
+                _screenshot(driver, settings)
         return result
 
     return with_session(settings, _work)
@@ -548,6 +628,15 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--score",
+        action="store_true",
+        help=(
+            "Read the profile and report how much of the plan made from your resume is on it "
+            "(headline, skills, summary, every job, project, IT skill, certification and link) "
+            "plus the completeness Naukri shows. Changes nothing; records the score in the index."
+        ),
+    )
+    parser.add_argument(
         "--headless",
         action="store_true",
         help="Run the browser headless. Login is more likely to be challenged.",
@@ -589,6 +678,9 @@ def main(argv: Optional[List[str]] = None) -> int:
         logger.error("Fix the above in your .env file (see .env.example).")
         return EXIT_CONFIG
 
+    if args.score:
+        return score_profile(settings)
+
     state_path = Path(settings.profile_update_state_path)
     slot = None
     if args.if_due:
@@ -608,14 +700,21 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     resume_pdf = _resume_to_upload(settings, state_path, args.dry_run)
     profile = None
-    if args.review:
+    scheduled_review = (slot is not None and not args.review
+                        and review_due(load_state(state_path), datetime.now(), settings.profile_review_days))
+    if scheduled_review:
+        logger.info("The whole-profile review is due (every %d day(s)); the agent runs after the headline.",
+                    settings.profile_review_days)
+    if args.review or scheduled_review:
         from common import profile as profile_module
 
         try:
             profile = profile_module.load_profile(settings)
         except Exception as exc:
-            logger.error("Could not load the profile facts for --review: %s", exc)
-            return EXIT_CONFIG
+            logger.error("Could not load the profile facts for the review: %s", exc)
+            if args.review:
+                return EXIT_CONFIG
+            profile = None
 
     last_error = None  # type: Optional[BaseException]
     for attempt in range(1, MAX_ATTEMPTS + 1):
@@ -662,6 +761,8 @@ def main(argv: Optional[List[str]] = None) -> int:
             logger.info("Resume on the profile: %s (%s).", result.resume.file_name, result.resume.shown)
         if not args.dry_run:
             report_module.update_quietly(settings)
+        if profile is not None and not args.dry_run:
+            mark_review(state_path, saved=not result.review_error, why=result.review_error or "confirmed")
         if result.resume_error:
             send_alert(settings, "Naukri resume upload failed: %s" % result.resume_error)
             return EXIT_FAILED

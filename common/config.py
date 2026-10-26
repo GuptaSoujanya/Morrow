@@ -185,6 +185,7 @@ def load_settings(
         "profile_agent_timeout_s": _env_int("PROFILE_AGENT_TIMEOUT_S", defaults.profile_agent_timeout_s),
         "profile_agent_budget_usd": _env_float("PROFILE_AGENT_BUDGET_USD", defaults.profile_agent_budget_usd),
         "profile_repair_passes": _env_int("PROFILE_REPAIR_PASSES", defaults.profile_repair_passes),
+        "profile_review_days": _env_int("PROFILE_REVIEW_DAYS", defaults.profile_review_days),
         "platforms": os.getenv("PLATFORMS", defaults.platforms),
         "platform_limit": _env_int("PLATFORM_LIMIT", defaults.platform_limit),
         "cold_email_from": os.getenv("COLD_EMAIL_FROM", defaults.cold_email_from),

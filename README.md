@@ -231,6 +231,7 @@ verified login and saved browser session as the apply run. It spends **none** of
 python3 -m naukri_bot.update_profile --dry-run   # log in, open the editor, read it, change nothing
 python3 -m naukri_bot.update_profile             # toggle the dot once, right now
 python3 -m naukri_bot.update_profile --review    # toggle, then the Playwright agent checks the whole profile
+python3 -m naukri_bot.update_profile --score     # read the profile, score it against the resume plan, change nothing
 python3 -m linkedin_bot.update_profile --dry-run # LinkedIn: sign in, open the profile, change nothing
 python3 -m linkedin_bot.update_profile           # LinkedIn: the agent brings headline, About, Experience, Skills up to date
 ```
@@ -286,6 +287,13 @@ current job's salary breakdown, a client and start month per project, a proficie
 Fill `salary_breakdown`, `projects_detail` and `language_proficiency` in `data/inputs/profile.yaml`
 and the next review saves those sections; until then they are reported as failed with the field named.
 
+`--score` is the review's verifier on its own: it reads the live profile and checks every planned
+value (headline, key skills, summary, each job and its job profile, each project, each IT skill,
+certifications, links) against it, prints Naukri's completeness figure and the resume's ATS score,
+and names what is still missing. It changes nothing and spends no agent budget, so it is the way to
+see where the profile stands before or after a review. Scores land in the same index as runs,
+marked `score` with the verdict `MATCHES RESUME` or `GAPS`.
+
 A run folder fills up with hundreds of browser snapshots, so each run also writes one flat record
 to an index shared by every board. That index, not the run folders, is the place to look:
 
@@ -321,6 +329,12 @@ The agent runs `update_profile --if-due`, which only acts when a slot is due and
 so a laptop that was asleep at 09:00 and 13:30 catches up once when it wakes, not twice. Slot
 memory lives in `data/logs/profile_update.json` and output in `data/logs/profile_update.log`. Uninstall
 with `launchctl bootout gui/$(id -u)/com.naukri-bot.profile-update`.
+
+A scheduled run also does what `--review` does, once every `PROFILE_REVIEW_DAYS` days (default 1)
+since the last review the bot confirmed on the reloaded page: the headline toggle first, then the
+browser agent over the whole profile. A review that fails is retried at the next slot, at most
+twice a day; the headline toggle still counts for that slot. `PROFILE_REVIEW_DAYS=0` keeps the
+schedule to the headline toggle. The review's memory is the `review` entry in the same state file.
 
 Two things to know before scheduling it:
 

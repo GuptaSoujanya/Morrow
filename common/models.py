@@ -429,6 +429,9 @@ class Settings:
     profile_agent_budget_usd: float = 10.0
     #: Extra agent passes that re-edit only the sections the reloaded page did not show. 0 turns them off.
     profile_repair_passes: int = 1
+    #: How often a scheduled Naukri run (--if-due) also reviews the whole profile with the agent, in days
+    #: since the last confirmed review. 0 leaves the schedule to the headline toggle only.
+    profile_review_days: int = 1
     # Other job boards (python3 -m sites_bot.platforms): which ones a run works
     # on by default, and applications per board per run.
     platforms: str = "hirist,instahyre"

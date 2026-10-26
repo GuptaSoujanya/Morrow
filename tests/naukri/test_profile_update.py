@@ -307,3 +307,128 @@ def test_an_unregistered_headless_run_does_not_start_a_visible_manual_wait(monke
 
     assert waited == [], "Only a registered dashboard browser can offer remote sign-in assistance"
     assert driver.quit_calls == 1
+
+
+# --- the scheduled whole-profile review -------------------------------------------
+
+
+def test_a_review_is_due_when_none_was_ever_confirmed():
+    assert up.review_due({}, datetime(2026, 10, 26, 9, 5), 1)
+
+
+def test_a_review_confirmed_today_is_not_repeated_today():
+    state = {"review": {"date": "2026-10-26", "saved": True, "attempts": 1}}
+    assert not up.review_due(state, datetime(2026, 10, 26, 13, 35), 1)
+    assert up.review_due(state, datetime(2026, 10, 27, 9, 5), 1)
+
+
+def test_the_review_interval_is_counted_in_days_since_the_last_confirmed_one():
+    state = {"review": {"date": "2026-10-24", "saved": True, "attempts": 1}}
+    assert not up.review_due(state, datetime(2026, 10, 26, 9, 5), 3)
+    assert up.review_due(state, datetime(2026, 10, 27, 9, 5), 3)
+
+
+def test_zero_days_keeps_the_schedule_to_the_headline():
+    assert not up.review_due({}, datetime(2026, 10, 26, 9, 5), 0)
+
+
+def test_a_failed_review_is_retried_at_the_next_slot_but_not_all_day(tmp_path):
+    path = tmp_path / "profile_update.json"
+    now = datetime(2026, 10, 26, 9, 10)
+    up.mark_review(path, saved=False, why="the agent gave no report", now=now)
+    assert up.review_due(up.load_state(path), datetime(2026, 10, 26, 13, 35), 1)
+    up.mark_review(path, saved=False, why="budget", now=datetime(2026, 10, 26, 13, 40))
+    state = up.load_state(path)
+    assert state["review"]["attempts"] == 2 and state["review"]["why"] == "budget"
+    assert not up.review_due(state, datetime(2026, 10, 26, 18, 35), 1)
+    assert up.review_due(state, datetime(2026, 10, 27, 9, 5), 1), "a new day gets fresh attempts"
+    up.mark_review(path, saved=True, why="confirmed", now=datetime(2026, 10, 27, 9, 20))
+    assert up.load_state(path)["review"] == {"date": "2026-10-27", "saved": True, "attempts": 1,
+                                             "why": "confirmed", "last": "2026-10-27T09:20:00"}
+
+
+def test_a_review_that_blows_up_does_not_undo_the_saved_headline(monkeypatch):
+    from common.models import Settings
+
+    monkeypatch.setattr(up, "with_session", lambda settings, work: work(object()))
+    monkeypatch.setattr(up, "update_resume_headline", lambda d, dry_run=False: up.HeadlineUpdate("A", "A.", saved=True))
+    monkeypatch.setattr(up, "_screenshot", lambda d, s: None)
+
+    def explode(driver, settings, profile, dry_run=False):
+        raise RuntimeError("the browser exposes no DevTools address")
+
+    monkeypatch.setattr(up, "review_profile", explode)
+    result = up.run_once(Settings(email="t@e.com", password="p"), profile=object())
+    assert result.saved is True
+    assert result.review_error == "the profile review failed: the browser exposes no DevTools address"
+
+
+def test_score_reads_the_profile_prints_the_score_and_records_it(monkeypatch, tmp_path, capsys):
+    """--score: the plan from the resume is checked against the live page, nothing is saved."""
+    from common import profile as profile_module
+    from common import profile_plan
+    from common.models import Settings
+    from common.profile_plan import AtsReport, ProfilePlan
+    from sites_bot import browser_agent, profile_agent
+    from sites_bot.profile_agent import ProfileCheck, Section
+
+    plan = ProfilePlan(headline="AI Engineer | LangChain", key_skills=["LangChain", "Python"],
+                       ats=AtsReport(score=90, keyword_score=84, structure_score=100))
+    monkeypatch.setattr(profile_module, "load_profile", lambda settings: object())
+    monkeypatch.setattr(profile_plan, "plan_for", lambda profile, settings: plan)
+    monkeypatch.setattr(browser_agent, "workdir_for", lambda settings, label: tmp_path / "run")
+    scored = ProfileCheck(saved=False, why="1 of 2 planned sections are on the profile; not on it: Key skills",
+                          completeness_after="93%",
+                          sections=[Section(name="Resume headline", action="checked",
+                                            after="AI Engineer | LangChain", on_page=True),
+                                    Section(name="Key skills", action="checked", after="LangChain, Python",
+                                            on_page=False, missing=["LangChain", "Python"])])
+    seen = {}
+
+    def session(settings, work):
+        seen["driver"] = object()
+        return scored
+
+    monkeypatch.setattr(up, "with_session", session)
+    monkeypatch.setattr(profile_agent, "score", lambda driver, board, plan, workdir: scored)
+    settings = Settings(email="t@e.com", password="p", report_dir=str(tmp_path / "reports"))
+
+    assert up.score_profile(settings) == up.EXIT_OK
+    out = capsys.readouterr().out
+    assert "Naukri profile score" in out and "Completeness shown by Naukri: 93%" in out
+    assert "Resume ATS: 90/100" in out and "NO  Key skills" in out
+    assert "1 of 2 planned sections are on the profile" in out
+    latest = json.loads((tmp_path / "reports" / "profile" / "latest.json").read_text())
+    assert latest["naukri"]["kind"] == "score" and latest["naukri"]["confirmed"] == 1
+
+
+def test_score_is_its_own_command_and_touches_no_slot(monkeypatch):
+    args = up.parse_args(["--score"])
+    assert args.score and not args.review and not args.if_due
+    from common.models import Settings
+
+    monkeypatch.setattr(up, "score_profile", lambda settings: 42)
+    monkeypatch.setattr(up, "due_slot", lambda now, state: pytest.fail("a score must not touch the slots"))
+    from common import config
+
+    monkeypatch.setattr(config, "load_settings", lambda env, overrides: Settings(email="t@e.com", password="p"))
+    assert up.main(["--score"]) == 42
+
+
+def test_a_score_that_cannot_open_the_browser_fails_cleanly(monkeypatch, tmp_path):
+    """The shared automation browser was busy with another board; the score used to die with a traceback."""
+    from common import profile as profile_module
+    from common import profile_plan
+    from common.models import Settings
+    from common.profile_plan import ProfilePlan
+    from sites_bot import browser_agent
+
+    monkeypatch.setattr(profile_module, "load_profile", lambda settings: object())
+    monkeypatch.setattr(profile_plan, "plan_for", lambda profile, settings: ProfilePlan(headline="x"))
+    monkeypatch.setattr(browser_agent, "workdir_for", lambda settings, label: tmp_path / "run")
+
+    def busy(settings, work):
+        raise ValueError("This automation browser is already open. Close it before starting a run.")
+
+    monkeypatch.setattr(up, "with_session", busy)
+    assert up.score_profile(Settings(email="t@e.com", password="p")) == up.EXIT_FAILED
