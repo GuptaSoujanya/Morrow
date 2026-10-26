@@ -162,6 +162,15 @@ class ClaudeCLIClient(LLMClient):
 
             combined = completed.stdout or completed.stderr or ""
             if completed.returncode != 0:
+                parsed = _extract_json(completed.stdout or "")
+                if parsed is not None:
+                    # Kiro has answered in full and then exited 1 on a chore of its own; the reply stands.
+                    logger.warning(
+                        "%s exited with code %s after a complete JSON reply; using the reply.",
+                        self.label,
+                        completed.returncode,
+                    )
+                    return parsed
                 logger.warning(
                     "%s exited with code %s; output=%r",
                     self.label,
