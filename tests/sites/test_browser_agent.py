@@ -107,7 +107,7 @@ def claude(monkeypatch):
     _Claude.report = None
     _Claude.hang = False
     monkeypatch.setattr(agent.subprocess, "Popen", _Claude)
-    monkeypatch.setattr(agent.shutil, "which", lambda name: "/usr/local/bin/claude")
+    monkeypatch.setattr(agent.shutil, "which", lambda name: "/usr/local/bin/claude" if name == "claude" else None)
     agent.reset()
     return _Claude
 
@@ -426,3 +426,39 @@ def test_a_single_json_reply_from_an_older_claude_still_reads():
 
 def test_the_prompt_says_how_to_pick_a_bucket_for_a_notice_period():
     assert '15 days -> "1 Month"' in agent._RULES and 'never "Immediately"' in agent._RULES
+
+
+def test_uploads_are_staged_in_the_run_folder_and_named_from_there(tmp_path):
+    original = tmp_path / "private" / "resume.pdf"
+    original.parent.mkdir()
+    original.write_bytes(b"%PDF")
+    workdir = tmp_path / "run"
+    staged = agent.stage_files(workdir, (original, tmp_path / "missing.pdf"))
+    assert staged == ((workdir / "resume.pdf").resolve(),)
+    assert (workdir / "resume.pdf").read_bytes() == b"%PDF"
+    assert agent.stage_files(workdir, staged) == staged, "a file already in the folder is left alone"
+
+
+def test_the_agent_runs_under_caffeinate_so_the_mac_does_not_sleep_on_it(claude, settings, profile, job, tmp_path, monkeypatch):
+    claude.report = {"status": "submitted", "why": "done", "filled": [], "confirmation": THANKS}
+    paths = {"claude": "/usr/local/bin/claude", "caffeinate": "/usr/bin/caffeinate"}
+    monkeypatch.setattr(agent.shutil, "which", paths.get)
+    driver = _Driver({"naukri": "Naukri", "site": "Acme Labs " + THANKS})
+
+    agent.take_over(driver, job, profile, settings, _resume(tmp_path), False, _stuck())
+
+    command = claude.calls[0].command
+    assert command[:4] == ["/usr/bin/caffeinate", "-i", "claude", "-p"]
+    assert agent.keep_awake(["claude", "-p", "x"])[:2] == ["/usr/bin/caffeinate", "-i"]
+    monkeypatch.setattr(agent.shutil, "which", lambda name: None)
+    assert agent.keep_awake(["claude", "-p", "x"]) == ["claude", "-p", "x"], "no caffeinate: run claude as it is"
+
+
+def test_the_stop_reason_names_the_api_error_hidden_behind_a_success_subtype():
+    outer = {"type": "result", "subtype": "success", "is_error": True, "terminal_reason": "api_error",
+             "result": "API Error: 502 An error occurred while processing your request\nCheck the gateway."}
+    assert agent._stop_reason(outer) == "api_error (API Error: 502 An error occurred while processing your request)"
+    assert agent._stop_reason({"subtype": "error_max_budget_usd", "is_error": True}) == "error_max_budget_usd"
+    assert agent._stop_reason({"subtype": "error_max_budget_usd", "result": "error_max_budget_usd"}) == \
+        "error_max_budget_usd"
+    assert agent._stop_reason({}) == "error"

@@ -632,7 +632,8 @@ def create_profile(driver: Any, board: Board, settings: Settings, profile: Profi
         logger.error("%s: could not open %s", board.label, board.home)
         return False
     time.sleep(PAGE_WAIT_S)
-    files = (resume_pdf,) if resume_pdf else ()
+    workdir = browser_agent.workdir_for(settings, "%s create profile" % board.label)
+    files = browser_agent.stage_files(workdir, (resume_pdf,) if resume_pdf else ())
     instruction = _CREATE_TASK + (" Upload the resume file given where the profile asks for one." if files else "")
     plan = profile_plan.plan_for(profile, settings)
     if plan is not None:
@@ -640,8 +641,7 @@ def create_profile(driver: Any, board: Board, settings: Settings, profile: Profi
     prompt = browser_agent.task_prompt(instruction, board.home, browser_agent.facts_text(profile, settings),
                                        account_email(settings), files,
                                        has_password=bool(settings.company_site_password))
-    run = browser_agent.run_agent(driver, settings, prompt,
-                                  browser_agent.workdir_for(settings, "%s create profile" % board.label), files)
+    run = browser_agent.run_agent(driver, settings, prompt, workdir, files)
     report = run.report or {}
     if run.problem or report.get("status") != "done":
         logger.error("%s profile not created: %s", board.label,

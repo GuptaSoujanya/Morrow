@@ -289,6 +289,27 @@ def workdir_for(settings: Settings, label: str, now: Optional[datetime] = None) 
     )
 
 
+def stage_files(workdir: Path, files: Tuple[Path, ...]) -> Tuple[Path, ...]:
+    """Copy the files the agent may upload into its run folder and return those paths.
+
+    The MCP server may only upload from its own output folder (the run folder), so a task
+    that names the original path gets "outside allowed roots" from the upload tool and the
+    resume never lands. Every prompt must name the copy, never the original.
+    """
+    workdir.mkdir(parents=True, exist_ok=True)
+    staged = []
+    for path in files:
+        path = Path(path)
+        if not path.is_file():
+            logger.warning("browser agent: %s is not a file; the agent gets nothing to upload", path)
+            continue
+        copy = workdir / path.name
+        if copy.resolve() != path.resolve():
+            shutil.copy2(str(path), str(copy))
+        staged.append(copy.resolve())
+    return tuple(staged)
+
+
 def _dotenv_value(value: str) -> str:
     if "'" not in value:
         return "'%s'" % value
@@ -327,6 +348,19 @@ def claude_command(settings: Settings, prompt: str, config_path: Path, system: s
     if settings.browser_agent_model:
         command += ["--model", settings.browser_agent_model]
     return command
+
+
+def keep_awake(command: List[str]) -> List[str]:
+    """Run the agent under `caffeinate -i` on a Mac so idle sleep cannot freeze it mid-edit.
+
+    A 40-minute profile run on a laptop outlives the idle-sleep timer; asleep, the browser
+    tools hang, the clock the timeout counts stops, and the agent wakes to a reset tab.
+    Closing the lid on battery still sleeps the Mac; `-i` only stops the idle timer.
+    """
+    caffeinate = shutil.which("caffeinate")
+    if caffeinate is None:
+        return command
+    return [caffeinate, "-i"] + command
 
 
 def _stop(process: subprocess.Popen) -> None:
@@ -374,6 +408,22 @@ def _steps(events: List[Dict[str, Any]]) -> List[str]:
     return steps
 
 
+def _stop_reason(outer: Dict[str, Any]) -> str:
+    """Why claude stopped, from its result event: the terminal reason and the first line of its message.
+
+    A run killed by an API error still carries subtype "success", so the subtype alone would hide
+    the cause.
+    """
+    reason = str(outer.get("terminal_reason") or "").strip()
+    if reason in ("", "success"):
+        reason = str(outer.get("subtype") or "").strip()
+    message = str(outer.get("result") or "").strip().splitlines()
+    first = message[0][:160] if message else ""
+    if reason and first and first != reason:
+        return "%s (%s)" % (reason, first)
+    return reason or first or "error"
+
+
 def run_agent(
     driver: Any,
     settings: Settings,
@@ -398,8 +448,7 @@ def run_agent(
     if shutil.which("claude") is None:
         run.problem = "the claude command is not on PATH"
         return run
-    for path in files:
-        shutil.copy2(str(path), str(workdir / path.name))
+    stage_files(workdir, files)
     secrets = None  # type: Optional[Path]
     if settings.company_site_password:
         # Outside the agent folder: --output-dir is where the browser may upload
@@ -415,7 +464,7 @@ def run_agent(
         (workdir / "system.md").write_text(system, encoding="utf-8")
     try:
         process = subprocess.Popen(
-            claude_command(settings, prompt, config_path, system),
+            keep_awake(claude_command(settings, prompt, config_path, system)),
             cwd=str(workdir),
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
@@ -453,7 +502,7 @@ def run_agent(
         run.cost_usd = outer.get("total_cost_usd")
         run.turns = outer.get("num_turns")
         if outer.get("is_error") and not run.problem:
-            run.problem = "claude stopped: %s" % (outer.get("subtype") or outer.get("result") or "error")
+            run.problem = "claude stopped: %s" % _stop_reason(outer)
         run.report = _extract_json(str(outer.get("result") or ""))
     if run.report is None and not run.problem:
         run.problem = "its reply held no JSON report"
