@@ -243,3 +243,26 @@ def test_the_brief_carries_the_ats_keywords(tmp_path):
     assert "she has; each must appear" in brief and "Spark, Kafka" in brief
     assert "never as a new claim: dbt" in brief
     assert plan.review and "Reviewer's notes still open" in profile_plan.review_text(plan)
+
+
+def test_a_changed_answer_does_not_trade_the_better_plan_for_a_worse_draft(tmp_path):
+    """The model writes a different headline every time it is asked: one added line in profile.yaml
+    rebuilt the plan, the ATS score fell from 90 to 86 and every board got a new headline for nothing."""
+    path = tmp_path / "plan.json"
+    first = profile_plan.build_plan(_profile(), Settings(), facts=RESUME, client=FakeClient(GOOD), path=path)
+    weaker = dict(GOOD, headline="Data Engineer | Spark, Kafka, AWS, Airflow, Python | 5 yrs | Lakehouse platforms",
+                  target_keywords=["Spark", "Kafka", "dbt", "Snowflake"])
+    facts = RESUME + "\nnotice_period_days: 30"
+    again = profile_plan.build_plan(_profile(), Settings(), facts=facts, client=FakeClient(weaker), path=path)
+    assert again.headline == first.headline and again.ats.score == first.ats.score
+    assert json.loads(path.read_text())["key"] == profile_plan._key(facts), "the kept plan is cached for the new facts"
+    assert profile_plan.build_plan(_profile(), Settings(), facts=facts, client=FakeClient(BAD), path=path) is not None
+    assert json.loads(path.read_text())["plan"]["headline"] == first.headline, "no LLM call, the cache answers"
+
+    forced = profile_plan.build_plan(_profile(), Settings(), facts=facts, client=FakeClient(weaker), path=path,
+                                     fresh=True)
+    assert forced.headline.startswith("Data Engineer |"), "--fresh takes the new draft whatever it scores"
+
+    better = dict(GOOD, target_keywords=["Spark", "Kafka", "AWS"])
+    assert profile_plan.build_plan(_profile(), Settings(), facts=facts + "\nx: 1", client=FakeClient(better),
+                                   path=path).ats.score > forced.ats.score, "a draft that scores higher replaces it"

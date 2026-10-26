@@ -34,7 +34,7 @@ import sys
 from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from .models import Profile, Settings
 
@@ -527,12 +527,13 @@ def _key(facts: str) -> str:
     return hashlib.sha256(("v%d\n%s" % (PLAN_VERSION, facts)).encode("utf-8")).hexdigest()[:16]
 
 
-def _load_cached(path: Path, key: str) -> Optional[ProfilePlan]:
+def _read_saved(path: Path) -> Optional[Tuple[str, ProfilePlan]]:
+    """The saved plan and the facts key it was made from; None for no file or an old template plan."""
     try:
         saved = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
-    if not isinstance(saved, dict) or saved.get("key") != key or not isinstance(saved.get("plan"), dict):
+    if not isinstance(saved, dict) or not isinstance(saved.get("plan"), dict):
         return None
     if saved["plan"].get("source") != "llm":  # an old template plan: write it again with the model
         return None
@@ -543,7 +544,42 @@ def _load_cached(path: Path, key: str) -> Optional[ProfilePlan]:
         plan.ats = AtsReport(**ats) if isinstance(ats, dict) else None
     except TypeError:
         return None
-    return plan
+    return str(saved.get("key") or ""), plan
+
+
+def _load_cached(path: Path, key: str) -> Optional[ProfilePlan]:
+    saved = _read_saved(path)
+    return saved[1] if saved is not None and saved[0] == key else None
+
+
+def _rank(plan: ProfilePlan) -> Tuple[int, int]:
+    # Reviewer notes first: the ATS score follows the plan's own keyword list, which a thin plan
+    # with two keywords can top; a plan the reviewer passes is the better one at any score.
+    return -len(plan.review), plan.ats.score if plan.ats is not None else -1
+
+
+def _keep_better(path: Path, fresh: ProfilePlan, profile: Profile, known: str) -> ProfilePlan:
+    """The saved plan once more when it still holds against today's facts and scores at least as well.
+
+    The model writes a different headline and summary every time it is asked, and one added line
+    in the answers file is a new facts key. Without this, that line rebuilt the plan, the ATS
+    score fell from 90 to 86 and every board was given a new headline for nothing.
+    """
+    saved = _read_saved(path)
+    if saved is None:
+        return fresh
+    data = asdict(saved[1])
+    data.pop("ats", None)
+    data.pop("review", None)
+    old = _parse(data, profile, known)
+    old.review = quality_report(old)
+    old.ats = ats_report(profile.resume_text, old.target_keywords or profile.skills)
+    if _rank(old) < _rank(fresh):
+        return fresh
+    logger.info("Keeping the saved profile plan: ATS %d/100 with %d reviewer note(s), against the new draft's "
+                "%d/100 with %d.", old.ats.score, len(old.review), fresh.ats.score if fresh.ats else -1,
+                len(fresh.review))
+    return old
 
 
 def _save(path: Path, key: str, plan: ProfilePlan) -> None:
@@ -619,6 +655,8 @@ def build_plan(profile: Profile, settings: Settings, facts: Optional[str] = None
             logger.warning("The profile plan still has %d reviewer note(s): %s", len(plan.review),
                            " ".join(plan.review))
     plan.ats = ats_report(profile.resume_text, plan.target_keywords or profile.skills)
+    if not fresh:
+        plan = _keep_better(path, plan, profile, known)
     _save(path, key, plan)
     return plan
 
