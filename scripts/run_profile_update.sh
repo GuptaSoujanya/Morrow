@@ -10,6 +10,9 @@ export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
 # Spread the start over 0-10 minutes so the three daily updates do not land on
 # the exact slot minute. A value already in the environment wins.
 export MAX_START_DELAY_SECONDS="${MAX_START_DELAY_SECONDS:-600}"
+# Naukri answers headless Chrome with an "access denied" page, so the scheduled run
+# always opens a real window; .env's BACKGROUND/HEADLESS do not override the environment.
+export BACKGROUND=false HEADLESS=false
 PYTHON="venv/bin/python"
 [ -x "$PYTHON" ] || PYTHON="python3"
 exec "$PYTHON" -m naukri_bot.update_profile --if-due >> data/logs/profile_update.log 2>&1

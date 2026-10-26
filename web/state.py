@@ -61,6 +61,11 @@ def script(label: str, name: str) -> Command:
     return Command(label, ("/bin/zsh", f"scripts/{name}"))
 
 
+# Naukri answers a headless Chrome with "access denied", so a profile job the dashboard starts
+# opens a real window whatever BACKGROUND says in .env, unless headless was asked for.
+VISIBLE_BROWSER = (("BACKGROUND", "false"), ("HEADLESS", "false"))
+
+
 # --- commands -----------------------------------------------------------------
 
 
@@ -138,7 +143,8 @@ def profile_command(*, dry_run: bool = False, if_due: bool = False, headless: bo
     for flag, on in (("--dry-run", dry_run), ("--if-due", if_due), ("--headless", headless)):
         if on:
             args.append(flag)
-    return py("Check the profile editor" if dry_run else "Refresh Naukri profile", *args)
+    return Command("Check the profile editor" if dry_run else "Refresh Naukri profile", (PYTHON, *args),
+                   () if headless else VISIBLE_BROWSER)
 
 
 LINKEDIN_MODES = {
