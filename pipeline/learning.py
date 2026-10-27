@@ -9,6 +9,7 @@
 """
 
 import json
+import hashlib
 import logging
 import os
 import re
@@ -43,17 +44,33 @@ _SKILL_LINE = re.compile(r"^\{\\bfseries (?P<category>[^}]+?):\}[ \t]*(?P<items>
 def resume_areas(resume_path: Optional[Path] = None) -> List[Tuple[str, str, str]]:
     """One study file per area of the resume: (number, slug, title).
 
-    The areas come from user/inputs/persona.yaml (study_areas, written by the first
-    run from the resume). Without them, each category line of the resume's Skills
-    section is one area, so the stage still writes something for a person who
-    skipped onboarding; the file name is free after "NN-".
+    Current resume evidence wins over saved onboarding areas, which may belong
+    to a previous upload. LaTeX categories and recognizable PDF/text skills work
+    without another AI call; unknown stacks use the resume's projects directly.
     """
-    areas = [(area.slug, area.title) for area in persona_module.load_persona().study_areas]
-    if not areas:
-        for match in _SKILL_LINE.finditer(resume_text(resume_path)):
-            category, items = match.group("category").strip(), " ".join(match.group("items").split())
-            if category and items:
-                areas.append((persona_module.slugify(category), "%s: %s" % (category, _plain_tex(items))))
+    resume = resume_text(resume_path)
+    areas = []
+    for match in _SKILL_LINE.finditer(resume):
+        category, items = match.group("category").strip(), " ".join(match.group("items").split())
+        if category and items:
+            areas.append((persona_module.slugify(category), "%s: %s" % (category, _plain_tex(items))))
+    if not areas and resume.strip():
+        # Uploaded PDFs do not contain the old LaTeX skill macros. Derive areas
+        # from the selected resume, never blindly reuse a previous persona.
+        for category, vocabulary in (
+            ("Languages", ("Python", "JavaScript", "TypeScript", "Java", "Go", "Rust", "C++", "SQL")),
+            ("Full-stack engineering", ("React", "Next.js", "Vue", "Angular", "Node.js", "FastAPI", "Django", "Spring")),
+            ("AI and machine learning", ("PyTorch", "TensorFlow", "LLM", "RAG", "LangChain", "Transformers", "machine learning", "AI agents")),
+            ("Data and distributed systems", ("PostgreSQL", "MySQL", "MongoDB", "Redis", "Kafka", "Spark", "Elasticsearch")),
+            ("Cloud and delivery", ("AWS", "Azure", "GCP", "Docker", "Kubernetes", "Terraform", "CI/CD")),
+        ):
+            found = [skill for skill in vocabulary if re.search(r"(?<![\w])" + re.escape(skill) + r"(?![\w])", resume, re.I)]
+            if found:
+                areas.append((persona_module.slugify(category), "%s: %s" % (category, ", ".join(found))))
+        if not areas:
+            areas = [("resume-projects", "Projects and experience evidenced by this resume")]
+    if not resume.strip():
+        areas = [(area.slug, area.title) for area in persona_module.load_persona().study_areas]
     return [("%02d" % number, slug, title) for number, (slug, title) in enumerate(areas[:99], start=1)]
 
 
@@ -189,10 +206,17 @@ def mark_done(root: Path = LEARNING, today: Optional[date] = None) -> int:
 def week_prompt(week: int, root: Path = LEARNING) -> str:
     days = days_of(week)
     who = persona_module.load_persona()
+    resume = resume_text()
     return "\n\n".join([
         "Write week %d of a 90-day study plan for %s who studies 2 hours a day to reach %s."
-        % (week, who.learner_line(), who.goal or DEFAULT_GOAL),
-        "This week's syllabus row (| week | days | system design | ML / GenAI |):\n" + syllabus_row(week, root),
+        % (week, "the engineer described by the current resume" if resume.strip() else who.learner_line(), who.goal or DEFAULT_GOAL),
+        "Resume evidence (contact details removed; authoritative for experience):\n" + (resume[:8000] or "No resume is available. Label this as a general curriculum; do not invent experience."),
+        "Personalize prerequisites, examples and skill gaps to this resume and target roles. Cover "
+        "system design, full-stack engineering (frontend, backend, databases and deployment), and AI agents "
+        "(tool use, retrieval, evaluation and reliability). Include full-stack implementation within the "
+        "System Design block and agent projects within ML / GenAI, with one practical deliverable each week. "
+        "Separate skills demonstrated by the resume from skills the learner still needs to develop.",
+        "This week's existing syllabus is a suggested sequence, not evidence of the learner's skills. Adapt it to the current resume (| week | days | system design | ML / GenAI |):\n" + syllabus_row(week, root),
         "Search the web for current, accurate material and link real pages (official docs, papers, "
         "well-known engineering blogs). Prefer sources from the last two years for GenAI topics.",
         "Output markdown only, nothing before or after it. Start with '# Week %d: <title>' and one "
@@ -208,21 +232,51 @@ def week_prompt(week: int, root: Path = LEARNING) -> str:
 
 
 def ensure_week(week: int, ask: Ask, root: Path = LEARNING) -> Path:
-    """The week file, written by the CLI first when it is missing or short of days."""
+    """Refresh unfinished days for the selected resume, preserving completed work."""
     path = week_path(week, root)
     wanted = set(days_of(week))
+    fingerprint = resume_fingerprint()
+    evidence = resume_text()  # Fail clearly if an explicitly selected resume cannot be read.
+    if fingerprint and not evidence.strip():
+        raise ai_cli.AIError("the selected resume has no readable experience or skills")
+    metadata = _read_metadata(path)
+    previous = ""
     try:
-        if wanted <= set(split_days(path.read_text(encoding="utf-8"))):
+        previous = path.read_text(encoding="utf-8")
+        if wanted <= set(split_days(previous)) and (not fingerprint or metadata.get("resume_sha256") == fingerprint):
             return path
     except OSError:
         pass
+    completed = set(load_progress(root).get("done") or [])
+    old_sections = split_days(previous)
+    if wanted <= completed and wanted <= set(old_sections):
+        return path
     logger.info("Writing %s with the AI CLI.", path)
     text = links.linkify(ai_cli.markdown_from(ask(week_prompt(week, root)), "# Week"))
     missing = wanted - set(split_days(text))
     if missing:
         raise ai_cli.AIError("the week it wrote has no section for day(s) %s" % sorted(missing))
+    if resume_fingerprint() != fingerprint:
+        raise ai_cli.AIError("the selected resume changed during generation; retry with the current resume")
+    completed = set(load_progress(root).get("done") or [])
+    # The model may produce a new whole week, but completed lessons retain their
+    # exact source. Their provenance remains old/unknown, never relabelled.
+    new_sections = split_days(text)
+    text = text[:_DAY.search(text).start()] + "\n".join(
+        old_sections[d] if d in completed and d in old_sections else new_sections[d]
+        for d in days_of(week)
+    )
     path.parent.mkdir(parents=True, exist_ok=True)
+    if previous:
+        _archive(path, previous)
     path.write_text(text, encoding="utf-8")
+    old_sources = metadata.get("day_resume_sha256", {})
+    if not isinstance(old_sources, dict):
+        old_sources = {}
+    _write_metadata(path, {"resume_sha256": fingerprint, "day_resume_sha256": {
+        str(d): old_sources.get(str(d), metadata.get("resume_sha256", ""))
+        if d in completed and d in old_sections else fingerprint for d in days_of(week)
+    }})
     return path
 
 
@@ -237,6 +291,8 @@ def write_today(ask: Ask, root: Path = LEARNING, today: Optional[date] = None) -
     week = week_of(day)
     week_file = ensure_week(week, ask, root)
     section = split_days(week_file.read_text(encoding="utf-8"))[day]
+    sources = _read_metadata(week_file).get("day_resume_sha256", {})
+    source = sources.get(str(day), "") if isinstance(sources, dict) else ""
     head = "\n".join([
         "# %s: Day %d of %d (week %d)" % (today.isoformat(), day, LAST_DAY, week),
         "",
@@ -252,7 +308,13 @@ def write_today(ask: Ask, root: Path = LEARNING, today: Optional[date] = None) -
         # The week's links are relative to weeks/; move them for each copy.
         body = links.relink(section, week_file.parent, path.parent)
         quoted = course.reading(day, section, week_file.parent, path.parent, root)
-        path.write_text("\n".join([head, body, quoted, tail]), encoding="utf-8")
+        content = "\n".join([head, body, quoted, tail])
+        if path == daily and path.exists():
+            previous = path.read_text(encoding="utf-8")
+            if previous != content:
+                _archive(path, previous)
+        path.write_text(content, encoding="utf-8")
+        _write_metadata(path, {"resume_sha256": source, "plan_day": day, "week": week})
     return day, daily
 
 
@@ -271,7 +333,40 @@ _CONTACT_LINE = re.compile(
 
 def selected_resume_path(path: Optional[Path] = None) -> Path:
     """Explicit callers win; the runner's selected input wins over legacy data."""
-    return Path(path) if path is not None else Path(os.getenv("RESUME_PATH") or RESUME_TEX)
+    if path is not None:
+        return Path(path).expanduser()
+    selected = os.getenv("RESUME_PATH", "").strip()
+    return paths.resolve(selected, Path.cwd()) if selected else RESUME_TEX.expanduser()
+
+
+def resume_fingerprint(path: Optional[Path] = None) -> str:
+    """Public provenance contract: SHA256 of the selected resume's raw bytes."""
+    try:
+        return hashlib.sha256(selected_resume_path(path).read_bytes()).hexdigest()
+    except OSError:
+        return ""
+
+
+def _read_metadata(path: Path) -> Dict:
+    try:
+        data = json.loads(path.with_suffix(".meta.json").read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _write_metadata(path: Path, data: Dict) -> None:
+    path.with_suffix(".meta.json").write_text(json.dumps({"schema_version": 1, **data}, indent=2) + "\n", encoding="utf-8")
+
+
+def _archive(path: Path, text: str) -> None:
+    """A content-addressed copy keeps previous lessons and provenance reviewable."""
+    digest = hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
+    archived = path.parent / "archive" / path.stem / (digest + ".md")
+    archived.parent.mkdir(parents=True, exist_ok=True)
+    if not archived.exists():
+        archived.write_text(links.relink(text, path.parent, archived.parent), encoding="utf-8")
+        _write_metadata(archived, _read_metadata(path))
 
 
 def resume_text(path: Optional[Path] = None) -> str:
@@ -282,15 +377,39 @@ def resume_text(path: Optional[Path] = None) -> str:
         text = extract_resume_text(str(path)) if path.suffix.lower() == ".pdf" else path.read_text(encoding="utf-8")
     except ProfileError as exc:
         raise ai_cli.AIError(str(exc)) from exc
-    except (OSError, UnicodeError):
+    except (OSError, UnicodeError) as exc:
+        if os.getenv("RESUME_PATH") or path != RESUME_TEX:
+            raise ai_cli.AIError("could not read the selected resume at %s" % path) from exc
         return ""
     # Contact lines stay out of the prompt.
     return "\n".join(line for line in text.splitlines() if not _CONTACT_LINE.search(line))
 
 
 def missing_resume_areas(root: Path = RESUME_LEARNING, resume_path: Optional[Path] = None) -> List[Tuple[str, str, str]]:
-    have = {path.name[:2] for path in root.glob("[0-9][0-9]-*.md")}
-    return [area for area in resume_areas(resume_path) if area[0] not in have]
+    return [area for area in resume_areas(resume_path)
+            if current_resume_area(area[0], area[1], root, resume_path) is None]
+
+
+def current_resume_area(number: str, slug: str, root: Path = RESUME_LEARNING,
+                        resume_path: Optional[Path] = None) -> Optional[Path]:
+    fingerprint = resume_fingerprint(resume_path)
+    for path in sorted(root.glob("%s-%s*.md" % (number, slug))):
+        metadata = _read_metadata(path)
+        if metadata.get("resume_sha256") == fingerprint and metadata.get("area_slug") == slug:
+            return path
+    return None
+
+
+def _resume_area_path(root: Path, number: str, slug: str, fingerprint: str) -> Path:
+    path = root / ("%s-%s.md" % (number, slug))
+    if path.exists():
+        # Preserve original paths: bookmarks and completion refer to them.
+        path = root / ("%s-%s-%s.md" % (number, slug, fingerprint[:12]))
+        revision = 2
+        while path.exists():
+            path = root / ("%s-%s-%s-%d.md" % (number, slug, fingerprint[:12], revision))
+            revision += 1
+    return path
 
 
 def resume_prompt(area: str, resume: str) -> str:
@@ -309,6 +428,7 @@ def resume_prompt(area: str, resume: str) -> str:
 def fill_resume_learning(ask: Ask, root: Path = RESUME_LEARNING, resume_path: Optional[Path] = None) -> List[Path]:
     """Write every missing resume study file, then the index; the files written."""
     resume_path = selected_resume_path(resume_path)
+    fingerprint = resume_fingerprint(resume_path)
     resume = resume_text(resume_path)
     if not resume.strip():
         # Without the resume the model would invent "how you used it".
@@ -319,21 +439,26 @@ def fill_resume_learning(ask: Ask, root: Path = RESUME_LEARNING, resume_path: Op
         text = links.linkify(ai_cli.markdown_from(ask(resume_prompt(area, resume)), "# "))
         if "## Interview questions" not in text:
             raise ai_cli.AIError("the %s file it wrote has no interview questions section" % slug)
-        path = root / ("%s-%s.md" % (number, slug))
+        if resume_fingerprint(resume_path) != fingerprint:
+            raise ai_cli.AIError("the selected resume changed during generation; retry with the current resume")
+        path = _resume_area_path(root, number, slug, fingerprint)
         root.mkdir(parents=True, exist_ok=True)
         path.write_text(text, encoding="utf-8")
+        _write_metadata(path, {"resume_sha256": fingerprint, "area_slug": slug})
         written.append(path)
-    write_resume_index(root)
+    write_resume_index(root, fingerprint)
     return written
 
 
-def write_resume_index(root: Path = RESUME_LEARNING) -> Path:
+def write_resume_index(root: Path = RESUME_LEARNING, fingerprint: str = "") -> Path:
     lines = ["# Resume learning", "", "One file per area of the resume: what it is, how you used it, "
              "core concepts, interview Q&A, a hands-on exercise, what to read next.", ""]
     for path in sorted(root.glob("[0-9][0-9]-*.md")):
         content = path.read_text(encoding="utf-8").splitlines()
         title = (content[0].lstrip("# ").strip() if content else "") or path.stem
-        lines.append("- [%s](%s)" % (title, path.name))
+        source = _read_metadata(path).get("resume_sha256", "")
+        label = "" if source and source == fingerprint else " — previous resume" if source else " — source resume untracked"
+        lines.append("- [%s](%s)%s" % (title, path.name, label))
     index = root / "README.md"
     index.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return index

@@ -110,15 +110,18 @@ def context(day: date, learning_root: Path = learning.LEARNING) -> str:
         today = (learning_root / "today.md").read_text(encoding="utf-8")
     except OSError:
         today = ""
-    skills = re.findall(r"\\textbf\{([^}]*)\}", learning.resume_text())[:40]
+    resume = learning.resume_text()
+    skills = re.findall(r"\\textbf\{([^}]*)\}", resume)[:40]
     who = persona_module.load_persona()
     return "\n\n".join(part for part in [
         "Today is %s. The learner is %s%s on day %d of a 90-day plan to reach %s, studying 2 hours a day."
-        % (day.isoformat(), who.learner_line(), " in " + who.location if who.location else "",
+        % (day.isoformat(), "the engineer described by the current resume" if resume.strip() else who.learner_line(), " in " + who.location if who.location else "",
            learning.current_day(progress), who.goal or learning.DEFAULT_GOAL),
         "Today's topics: %s." % (learning.today_topics(learning_root) or "system design and LLMs"),
         "Today's study notes (for reference):\n" + today[:6000] if today else "",
         "Resume highlights: " + ", ".join(skills) if skills else "",
+        "Resume evidence (contact details removed; authoritative for experience):\n" + resume[:6000],
+        "Saved goals/location are preferences, not evidence of experience. Study notes may predate the selected resume; use the resume for personal relevance.",
     ] if part)
 
 
@@ -129,7 +132,7 @@ def first_year(agent: Agent, day: date) -> int:
 def brief_for(agent: Agent) -> str:
     """The agent's brief with {focus} and {location} filled from the persona."""
     who = persona_module.load_persona()
-    return (agent.brief.replace("{focus}", who.focus or "the areas this resume covers")
+    return (agent.brief.replace("{focus}", "the skills and projects evidenced by the current resume")
             .replace("{location}", who.location or "their country"))
 
 

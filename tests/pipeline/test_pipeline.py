@@ -317,7 +317,9 @@ def test_resume_learning_fills_only_missing_and_hides_contacts(tmp_path, monkeyp
     prompts = []
     written = learning.fill_resume_learning(
         lambda p: prompts.append(p) or "# Whisper\n\n## Interview questions and answers\n", root, resume)
-    assert [p.name for p in written] == ["02-whisper-and-aws.md"]
+    assert len(written) == 2 and written[0].name.startswith("01-python-")
+    assert written[1].name == "02-whisper-and-aws.md"
+    assert (root / "01-python.md").read_text() == "# Area 01\n"
     assert "example.com" not in prompts[0] and "FastAPI" in prompts[0]
     assert "[Whisper](02-whisper-and-aws.md)" in (root / "README.md").read_text()
 

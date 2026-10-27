@@ -56,7 +56,9 @@ def resume_problems(root: Path = learning.RESUME_LEARNING) -> List[str]:
     problems = []
     have = {path.name[:2]: path for path in root.glob("[0-9][0-9]-*.md")}
     for number, slug, _ in learning.resume_areas():
-        path = have.get(number)
+        path = learning.current_resume_area(number, slug, root)
+        if path is None and not learning.resume_fingerprint():
+            path = have.get(number)
         if not path:
             problems.append("%s: no %s-%s.md" % (root, number, slug))
             continue
