@@ -252,7 +252,7 @@ def test_stage_order_and_selection():
     assert names == ["learn", "profile:naukri", "profile:linkedin", "profile:hirist", "profile:instahyre",
                      "apply:naukri",
                      "apply:hirist", "apply:instahyre", "research:resume", "brief:goal",
-                     "brief:system-design", "brief:papers", "brief:tech-news", "brief:companies"]
+                     "brief:system-design", "brief:papers", "brief:tech-news", "brief:companies", "brief:repositories"]
     stages = run.build_stages(_args(), ["hirist"])
     assert [s.name for s in run.selected(stages, ["profile"], [])] == ["profile:naukri", "profile:linkedin",
                                                                        "profile:hirist"]
@@ -326,8 +326,8 @@ def test_resume_learning_fills_only_missing_and_hides_contacts(tmp_path, monkeyp
 
 def test_briefing_agent_needs_graphs_and_links_then_indexes(tmp_path):
     agent = briefing.by_key("papers")
-    good = ("# Papers to read\n\n## A (2025)\nhttps://arxiv.org/abs/1 https://arxiv.org/abs/2 "
-            "https://arxiv.org/abs/3 https://arxiv.org/abs/4 https://arxiv.org/abs/5\n\n"
+    good = ("# Papers to read\n\n## A (2026)\n**Published**: 2026-10-20\nhttps://arxiv.org/abs/2610.00001\n\n"
+            "## B (2026)\n**Published**: 2026-10-21\nhttps://arxiv.org/abs/2610.00002\n\n"
             "```mermaid\nmindmap\n```\n\n```mermaid\nflowchart LR\nA-->B\n```\n")
     prompts = []
     root = tmp_path / "daily"
@@ -461,11 +461,63 @@ def test_week_check_finds_missing_days_parts_links_and_stray_headings(tmp_path):
 def test_papers_must_be_from_the_last_two_years():
     agent = briefing.by_key("papers")
     body = "".join("https://example.org/%d\n" % n for n in range(5)) + "```mermaid\n```\n" * 2
-    briefing.check(agent, "# Papers to read\n\n## New (2024)\n## Reading order\n" + body, DAY)
+    briefing.check(agent, "# Papers to read\n\n## New (2026)\n**Published**: 2026-10-20\nhttps://arxiv.org/abs/2610.00001\n## Newer (2026)\n**Published**: 2026-10-21\nhttps://arxiv.org/abs/2610.00002\n## Reading order\n" + body, DAY)
     for old in ("## NumPy (2020)\n", "## X (2025)\nhttps://arxiv.org/abs/2006.10256\n"):
         with pytest.raises(ai_cli.AIError, match="before 2024"):
             briefing.check(agent, "# Papers to read\n\n" + old + body, DAY)
     assert briefing.old_papers("## Tools (2026)\nhttps://arxiv.org/abs/2608.11434", 2024) == []
+
+
+def test_daily_papers_require_two_distinct_sources_and_do_not_repeat_recent_work(tmp_path):
+    agent = briefing.by_key('papers')
+    charts = '\n```mermaid\nmindmap\n```\n' * 2
+    good = '# Papers to read\n\n## A (2026)\n**Published**: 2026-10-20\nhttps://arxiv.org/abs/2610.00001\n\n## B (2026)\n**Published**: 2026-10-21\nhttps://arxiv.org/abs/2610.00002\n' + charts
+    briefing.check(agent, good, DAY)
+    for invalid in (good.replace('## B (2026)', '### B (2026)'),
+                    good + '\n## C (2026)\nhttps://arxiv.org/abs/2610.00003\n',
+                    good.replace('https://arxiv.org/abs/2610.00002', 'https://arxiv.org/pdf/2610.00001v2.pdf'),
+                    good.replace('## B (2026)', '## B (2027)')):
+        with pytest.raises(ai_cli.AIError):
+            briefing.check(agent, invalid, DAY)
+    previous = tmp_path / '2026-10-21'
+    previous.mkdir()
+    (previous / '03-papers.md').write_text(good)
+    with pytest.raises(ai_cli.AIError, match='repeats a paper'):
+        briefing.run_agent(agent, lambda prompt: good, DAY, 'Context', tmp_path)
+    assert not (tmp_path / '2026-10-22/03-papers.md').exists()
+
+
+def test_papers_need_recent_first_publication_and_failed_refresh_preserves_existing(tmp_path):
+    agent = briefing.by_key('papers')
+    good = ('# Papers to read\n\n## A (2026)\n**Published**: 2026-10-20\nhttps://arxiv.org/abs/2610.00001\n\n'
+            '## B (2026)\n**Published**: 2026-10-21\nhttps://arxiv.org/abs/2610.00002\n' + '\n```mermaid\nmindmap\n```\n' * 2)
+    saved = briefing.run_agent(agent, lambda prompt: good, DAY, 'ctx', tmp_path)
+    previous = saved.read_text()
+    for invalid in (
+        good.replace('**Published**: 2026-10-20', ''),
+        good.replace('2026-10-20', '2026-10-23'),
+        good.replace('2026-10-20', '2026-09-01'),
+        good.replace('2026-10-20', '2026-02-30'),
+        good.replace('arxiv.org/abs/2610.00001', 'arxiv.org/abs/2608.00001'),
+    ):
+        with pytest.raises(ai_cli.AIError):
+            briefing.run_agent(agent, lambda prompt: invalid, DAY, 'ctx', tmp_path)
+        assert saved.read_text() == previous
+
+
+def test_repository_discovery_requires_distinct_canonical_links():
+    agent = briefing.by_key('repositories')
+    good = '# GitHub discoveries\n' + ''.join(
+        '\n## owner/repo%d\nhttps://github.com/owner/repo%d\n' % (n, n) for n in range(3))
+    briefing.check(agent, good, DAY)
+    for invalid in (
+        good.replace('## owner/repo2', '## Trending tools'),
+        good.replace('https://github.com/owner/repo2', 'https://github.com.evil.test/owner/repo2'),
+        good.replace('owner/repo2', 'owner/repo1'),
+        good + '\n## Other\nhttps://github.com/owner/other\n',
+    ):
+        with pytest.raises(ai_cli.AIError):
+            briefing.check(agent, invalid, DAY)
 
 
 def _fake_cli(prompt):
@@ -475,6 +527,13 @@ def _fake_cli(prompt):
         return _week(week).replace("- [a](http://a)", "- [course](../../../../database/course/x.md) and https://a.dev/%d" % week)
     agent = next(a for a in briefing.AGENTS if briefing.brief_for(a) in prompt)
     heading = agent.heading + (" caching" if agent.heading.endswith(":") else "")
+    if agent.key == 'papers':
+        import re
+        day = re.search(r'Today is (\d{4}-\d{2}-\d{2})', prompt)[1]
+        prefix = day[2:4] + day[5:7] + '.' + day[8:10]
+        heading += f'\n\n## Paper A (2026)\n**Published**: {day}\nhttps://arxiv.org/abs/{prefix}001\n\n## Paper B (2026)\n**Published**: {day}\nhttps://arxiv.org/abs/{prefix}002\n'
+    if agent.key == 'repositories':
+        heading += ''.join(f'\n\n## owner/repository{n}\nhttps://github.com/owner/repository{n}\n' for n in range(3))
     return heading + "\n\n" + "".join("```mermaid\npie\n```\n" for _ in range(agent.graphs)) + "".join(
         "- source https://example.org/%s/%d\n" % (agent.key, n) for n in range(agent.links))
 

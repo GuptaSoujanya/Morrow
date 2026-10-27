@@ -9,9 +9,10 @@ fills in while the rest of the pipeline runs.
 
     01-goal.md            today's goal: what to learn, a concept map and a 2-hour plan
     02-system-design.md   a deep dive into today's design topic with architecture diagrams
-    03-papers.md          recent research papers (last 2 years) the industry builds on, summarised
+    03-papers.md          two recent papers, prioritizing AI and resume relevance
     04-tech-news.md       the week's AI / GenAI / engineering news
     05-companies.md       companies to look at and why
+    06-repositories.md    active GitHub repositories to explore and save
 
 An answer is checked before it is written (headings, links, mermaid graphs), so a
 bad answer leaves no file and the stage stays failed until `pipeline continue`.
@@ -25,6 +26,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import date
 from pathlib import Path
 from typing import Dict, List, NamedTuple, Optional, Union
+from urllib.parse import urlsplit
 
 from common import ai_cli
 from common import persona as persona_module
@@ -66,12 +68,17 @@ AGENTS = (
           "storage, bandwidth), ## Trade-offs (a table: option, gains, costs, when to pick it), ## How "
           "real companies do it (2 or 3 engineering-blog examples with links), ## Interview questions "
           "(5, with answers), ## Sources."),
-    Agent("papers", "03-papers.md", "# Papers to read", 2, 5,
-          "Pick 5 research papers, every one published in the years given below, that matter to the "
+    Agent("papers", "03-papers.md", "# Papers to read", 2, 2,
+          "Pick exactly 2 distinct research papers, every one published in the years given below, that matter to the "
           "tech industry right now: work that companies are shipping, open-source projects are adopting "
           "or labs are building on (LLMs, agents, RAG, inference and serving, evaluation, ML systems, "
-          "distributed systems for AI). 2 of them should fit today's ML / GenAI or system design topic, "
-          "the other 3 are the most talked-about papers of the last 6 months. Prefer arXiv or the venue "
+          "distributed systems for AI). Prioritize AI for both papers: one should directly fit the resume "
+          "and today's learning topic; the other should introduce a new AI idea. Search the newest releases "
+          "first, preferably the last 7 days, widening to 30 days only when necessary and stating the actual "
+          "publication date as **Published**: YYYY-MM-DD in each paper section. Each paper must have been "
+          "first published within the last 30 days, never in the future. Verify that date on its primary "
+          "source; a new revision of an older paper does not make it newly published. Do not present an older paper as newly published. Avoid papers in the recent "
+          "reading history below. Prefer arXiv or the venue "
           "page. For each: ## <paper title> (<year>) with the authors, the link, then **Problem**, "
           "**Idea**, **How it works**, **Results** (only numbers the paper states), **In industry** (who "
           "uses or builds on it: a company, product or open-source project, with a link), **Why it "
@@ -92,6 +99,14 @@ AGENTS = (
           "role that fits, a recent news item or engineering post, and the careers link. Then ## Where "
           "they sit, a mermaid mindmap grouping them (labs, infrastructure, product companies, services), and "
           "## Talking points, how the resume's work maps to each group."),
+    Agent("repositories", "06-repositories.md", "# GitHub discoveries", 0, 3,
+          "Search GitHub and the web for 3 to 5 active repositories gaining attention this week, prioritizing "
+          "AI agents, useful new developer tools, and the resume's skills ({focus}). Verify each repository "
+          "exists at its canonical https://github.com/owner/repository URL. Use exactly one ## owner/repository "
+          "heading for each. Put the canonical link first, then **What it does**, **Why it fits your resume**, "
+          "**Try it** (a small practical experiment), **Activity** (dated evidence with a source), and **License** "
+          "(only when verified). Distinguish evidence of recent activity from evidence of trending; do not "
+          "invent star counts, growth or popularity. No other level-two headings."),
 )
 
 
@@ -122,7 +137,23 @@ def context(day: date, learning_root: Path = learning.LEARNING) -> str:
         "Resume highlights: " + ", ".join(skills) if skills else "",
         "Resume evidence (contact details removed; authoritative for experience):\n" + resume[:6000],
         "Saved goals/location are preferences, not evidence of experience. Study notes may predate the selected resume; use the resume for personal relevance.",
+        "Recent paper reading history (avoid repeating these):\n" + recent_papers(day, learning_root.parent / 'daily'),
     ] if part)
+
+
+def recent_papers(day: date, root: Path = DAILY) -> str:
+    """Bounded prior history helps the daily researchers avoid repeated papers."""
+    lines = []
+    for path in sorted(root.glob('????-??-??/03-papers.md'), reverse=True):
+        try:
+            previous = date.fromisoformat(path.parent.name)
+            if not 0 < (day - previous).days <= 30:
+                continue
+            text = path.read_text(encoding='utf-8')
+        except (ValueError, OSError):
+            continue
+        lines.extend(line for line in text.splitlines() if line.startswith('## ') or 'arxiv.org/' in line)
+    return '\n'.join(lines)[:5000] or 'No previous papers saved.'
 
 
 def first_year(agent: Agent, day: date) -> int:
@@ -149,6 +180,28 @@ _YEAR = re.compile(r"\b(19|20)\d\d\b")
 _ARXIV = re.compile(r"arxiv\.org/(?:abs|pdf)/(\d\d)(\d\d)\.\d{4,5}")
 
 
+def paper_sources(text):
+    """One primary URL per paper; normalize arXiv versions for deduplication."""
+    papers = [part for part in re.split(r'^## ', text, flags=re.M)[1:] if _YEAR.search(part.split('\n')[0])]
+    sources = []
+    for paper in papers:
+        urls = re.findall(r'https?://[^\s)>\]]+', paper)
+        def priority(url):
+            try:
+                return urlsplit(url).hostname not in ('arxiv.org', 'www.arxiv.org', 'openreview.net', 'aclanthology.org', 'proceedings.mlr.press')
+            except ValueError:
+                return True
+        urls.sort(key=priority)
+        url = urls[0].rstrip('.,;') if urls else ''
+        try:
+            parsed = urlsplit(url)
+            arxiv = re.match(r'/(?:abs|pdf)/(\d{4}\.\d{4,5})(?:v\d+)?(?:\.pdf)?/?$', parsed.path) if parsed.hostname in ('arxiv.org', 'www.arxiv.org') else None
+        except ValueError:
+            arxiv = None
+        sources.append('https://arxiv.org/abs/' + arxiv[1] if arxiv else url)
+    return sources
+
+
 def old_papers(text: str, since: int) -> List[str]:
     """Paper headings (## ... with a year) or arXiv links from before `since`."""
     old = []
@@ -173,6 +226,44 @@ def check(agent: Agent, text: str, day: Optional[date] = None) -> None:
         old = old_papers(text, first_year(agent, day))
         if old:
             raise ai_cli.AIError("%s: papers from before %d: %s" % (agent.key, first_year(agent, day), "; ".join(old)))
+    if agent.key == 'papers':
+        sections = re.split(r'^## ', text, flags=re.M)[1:]
+        papers = [section for section in sections if _YEAR.search(section.split('\n')[0])]
+        if len(papers) != 2:
+            raise ai_cli.AIError('papers: expected exactly 2 paper sections with publication years')
+        sources = paper_sources(text)
+        if any(not url for url in sources) or len(set(sources)) != 2:
+            raise ai_cli.AIError('papers: each paper needs its own original source link')
+        if day and any(int(match.group()) > day.year for paper in papers for match in _YEAR.finditer(paper.split('\n')[0])):
+            raise ai_cli.AIError('papers: publication years cannot be in the future')
+        for paper in papers:
+            published = re.search(r'^\*\*Published\*\*:\s*(\d{4}-\d{2}-\d{2})\s*$', paper, re.M)
+            try:
+                stamp = date.fromisoformat(published[1]) if published else None
+            except ValueError:
+                stamp = None
+            if stamp is None:
+                raise ai_cli.AIError('papers: each paper needs a verified **Published**: YYYY-MM-DD date')
+            if day and not 0 <= (day - stamp).days <= 30:
+                raise ai_cli.AIError('papers: first publication must be within the last 30 days')
+            if str(stamp.year) not in paper.split('\n')[0]:
+                raise ai_cli.AIError('papers: heading year must match the publication date')
+            source = paper_sources('## ' + paper)[0]
+            arxiv = _ARXIV.search(source)
+            if arxiv and (2000 + int(arxiv[1]), int(arxiv[2])) != (stamp.year, stamp.month):
+                raise ai_cli.AIError('papers: arXiv submission month must match first publication')
+    if agent.key == 'repositories':
+        sections = re.split(r'^## ', text, flags=re.M)[1:]
+        names = [section.split('\n')[0].strip() for section in sections]
+        if not 3 <= len(names) <= 5 or len({name.casefold() for name in names}) != len(names):
+            raise ai_cli.AIError('repositories: expected 3 to 5 distinct repository sections')
+        for name, section in zip(names, sections):
+            if not re.fullmatch(r'[\w.-]+/[\w.-]+', name, re.ASCII):
+                raise ai_cli.AIError('repositories: use owner/repository headings')
+            urls = re.findall(r'https?://[^\s)>\]]+', section)
+            canonical = 'https://github.com/' + name
+            if not urls or urls[0].rstrip('.,;/') != canonical:
+                raise ai_cli.AIError('repositories: put the matching canonical GitHub URL first')
 
 
 def merge_prompt(agent: Agent, ctx: str, day: date, drafts: Dict[str, str]) -> str:
@@ -230,6 +321,17 @@ def run_agent(agent: Agent, ask: Union[learning.Ask, Dict[str, learning.Ask]], d
     """Research, check and write one agent's file; its path. `ask` is one CLI or a team of them."""
     logger.info("[agent %s] working...", agent.key)
     text = research(agent, ask if isinstance(ask, dict) else {"cli": ask}, day, ctx)
+    if agent.key == 'papers':
+        previous_sources = set()
+        for previous in root.glob('????-??-??/03-papers.md'):
+            try:
+                age = (day - date.fromisoformat(previous.parent.name)).days
+            except ValueError:
+                continue
+            if 0 < age <= 30:
+                previous_sources.update(paper_sources(previous.read_text(encoding='utf-8')))
+        if previous_sources.intersection(paper_sources(text)):
+            raise ai_cli.AIError('papers: this selection repeats a paper from the last 30 days; retry for fresh research')
     path = output_of(agent, day, root)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")

@@ -20,7 +20,7 @@ the same day skips the done ones and retries the rest.
 4. apply:naukri         the Naukri apply run (naukri_bot.cli)
 5. apply:<board>        each board's apply run via its own bot (<board>_bot.cli)
 6. research:resume      any missing user/research/resume-learning file, written by the AI CLI
-7. brief:<agent>        the briefing agents (goal, system-design, papers, tech-news, companies)
+7. brief:<agent>        goal, system-design, papers, tech-news, companies, repositories
 
 Every site runs at the same time, each site's profile then apply stage in its own
 process and Chrome profile (pipeline/lanes.py). --bots N (or PIPELINE_BOTS=N) caps
@@ -67,7 +67,7 @@ logger = logging.getLogger(__name__)
 
 MEMORY_DIR = memory_module.MEMORY_DIR
 WATCH_PAGE = paths.user_dir() / "docker" / "watch.html"
-AGENTS_AT_ONCE = 6  # research:resume and the five briefing agents, all in one wave
+AGENTS_AT_ONCE = 6  # cap concurrent research work; additional briefing stages queue
 
 
 class Stage(NamedTuple):
