@@ -74,4 +74,5 @@ def send_alert(settings: Settings, message: str) -> None:
     try:
         urllib.request.urlopen(request, timeout=15)
     except (OSError, ValueError) as exc:  # alerting must never mask the real failure
-        logger.warning("Telegram alert failed (%s): %s", type(exc).__name__, exc)
+        detail = str(exc).replace(settings.telegram_bot_token, "<token>")
+        logger.warning("Telegram alert failed (%s): %s", type(exc).__name__, detail)

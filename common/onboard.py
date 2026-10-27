@@ -432,7 +432,7 @@ class Onboarding:
 
     def _convert_to_tex(self) -> str:
         """The resume as LaTeX in the template's shape, or "" when the model cannot produce one."""
-        from .resume import ResumeError, _HEADER_NAME, parse_sections
+        from .resume import ResumeError, _HEADER_NAME, parse_sections, unsafe_tex
 
         if self.client is None or not self.client.available():
             return ""
@@ -450,6 +450,9 @@ class Onboarding:
                 continue
             if _HEADER_NAME.search(tex) is None or "\\end{document}" not in tex:
                 logger.warning("Attempt %d: the LaTeX has no header name or no end", attempt)
+                continue
+            if unsafe_tex(tex):
+                logger.warning("Attempt %d: the LaTeX uses %s, which a resume never needs", attempt, unsafe_tex(tex))
                 continue
             return tex + ("\n" if not tex.endswith("\n") else "")
         return ""

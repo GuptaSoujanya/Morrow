@@ -63,6 +63,14 @@ def script(label: str, name: str) -> Command:
     return Command(label, ("/bin/zsh", f"scripts/{name}"))
 
 
+def value(text: str, what: str) -> str:
+    """Text the browser typed, safe to hand a child process as an argument: never a flag."""
+    text = text.strip()
+    if text.startswith("-"):
+        raise ValueError(f"{what} cannot start with '-'")
+    return text
+
+
 # Naukri answers a headless Chrome with "access denied", so a profile job the dashboard starts
 # opens a real window whatever BACKGROUND says in .env, unless headless was asked for.
 VISIBLE_BROWSER = (("BACKGROUND", "false"), ("HEADLESS", "false"))
@@ -97,10 +105,10 @@ def naukri_command(
         args += ["--limit", str(limit)]
     if answer_mode:
         args += ["--answer-mode", answer_mode]
-    if keywords.strip():
-        args += ["--keywords", keywords.strip()]
-    if location.strip():
-        args += ["--location", location.strip()]
+    if value(keywords, "keywords"):
+        args += ["--keywords", value(keywords, "keywords")]
+    if value(location, "location"):
+        args += ["--location", value(location, "location")]
     if early_access_only:
         label = "Share Early Access interest"
     elif dry_run:
@@ -130,10 +138,10 @@ def external_command(
     if not url.startswith(("http://", "https://")):
         raise ValueError("the link has to start with http:// or https://")
     args = ["-m", "sites_bot.external", "--url", url]
-    if title.strip():
-        args += ["--title", title.strip()]
-    if company.strip():
-        args += ["--company", company.strip()]
+    if value(title, "title"):
+        args += ["--title", value(title, "title")]
+    if value(company, "company"):
+        args += ["--company", value(company, "company")]
     for flag, on in (("--dry-run", dry_run), ("--no-tailor", no_tailor), ("--headless", headless)):
         if on:
             args.append(flag)
@@ -161,8 +169,8 @@ def linkedin_command(*, mode: str, draft: str = "", headless: bool = False) -> C
     if mode not in LINKEDIN_MODES:
         raise ValueError(f"unknown LinkedIn mode {mode!r}")
     args = ["-m", "linkedin_bot", f"--{mode}"]
-    if mode == "post" and draft.strip():
-        args.append(draft.strip())
+    if mode == "post" and value(draft, "draft"):
+        args.append(value(draft, "draft"))
     if headless:
         args.append("--headless")
     return py(LINKEDIN_MODES[mode], *args)
@@ -171,7 +179,7 @@ def linkedin_command(*, mode: str, draft: str = "", headless: bool = False) -> C
 def resume_command(
     *, jd_file: str, title: str = "", company: str = "", headless: bool = False, must_exist: bool = True
 ) -> Command:
-    jd_file = jd_file.strip()
+    jd_file = value(jd_file, "the job description file")
     if not jd_file:
         raise ValueError("paste the job description, or give the path of a file with it")
     path = Path(jd_file).expanduser()
@@ -180,10 +188,10 @@ def resume_command(
     if must_exist and not path.is_file():
         raise ValueError(f"no file at {jd_file}")
     args = ["-m", "common.resume", "--tailor", str(path)]
-    if title.strip():
-        args += ["--title", title.strip()]
-    if company.strip():
-        args += ["--company", company.strip()]
+    if value(title, "title"):
+        args += ["--title", value(title, "title")]
+    if value(company, "company"):
+        args += ["--company", value(company, "company")]
     if headless:
         args.append("--headless")
     return py(f"Tailor resume for {company.strip() or 'this job'}", *args)

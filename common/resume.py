@@ -611,6 +611,18 @@ def write_long_answer(
     return None
 
 
+#: TeX primitives that run programs or read files other than the resume itself.
+_UNSAFE_TEX = re.compile(
+    r"\\(write18|ShellEscape|directlua|input|include|InputIfFileExists|openin|openout|read|immediate|csname)(?![A-Za-z])"
+)
+
+
+def unsafe_tex(tex: str) -> Optional[str]:
+    """The first command in the LaTeX that could run a program or read another file, or None."""
+    match = _UNSAFE_TEX.search(tex)
+    return match.group(0) if match else None
+
+
 def find_compiler(preferred: str = "") -> Optional[Tuple[str, str]]:
     """(name, path) of the first LaTeX compiler on PATH, or None."""
     names = [preferred.strip()] if preferred.strip() else ["tectonic", "pdflatex", "xelatex", "lualatex"]
@@ -637,8 +649,10 @@ def compile_pdf(tex_path: Path, out_dir: Path, compiler: str = "", timeout_s: in
     if name == "tectonic":
         command = [path, "--outdir", str(out_dir), str(tex_path)]
     else:
+        # The .tex may carry model-written lines; never let it run shell commands (\write18).
         command = [
             path,
+            "-no-shell-escape",
             "-interaction=nonstopmode",
             "-halt-on-error",
             "-output-directory=%s" % out_dir,

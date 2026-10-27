@@ -384,6 +384,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store" if urlsplit(self.path).path in ("/api/run/browser", "/api/run/browsers", "/api/run/browser/input", "/api/run/answers") else "no-cache")
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Referrer-Policy", "no-referrer")
+        self.send_header("X-Frame-Options", "SAMEORIGIN")
         self.end_headers()
         if self.command != "HEAD":
             self.wfile.write(body)

