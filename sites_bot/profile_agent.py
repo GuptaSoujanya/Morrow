@@ -9,7 +9,7 @@ system prompt, for a section-by-section edit plan against the planned profile.
   ranks profiles, its sections and quirks), then skills/profile-update/SKILL.md (audit,
   decide, edit one section at a time, read back, reload, report per section);
 - task: the board task, the LLM-written profile plan with its ATS report
-  (common.profile_plan), the edit plan for the live profile, and her facts.
+  (common.profile_plan), the edit plan for the live profile, and their facts.
 
 The agent's word is not the end of it. Afterwards the bot reloads the profile itself and
 looks for each changed section's new text where that section is on the page, not anywhere
@@ -251,8 +251,8 @@ _EDIT_SCHEMA = ('{"completeness": "", "sections": [{"name": "...", "current": ".
                 '"action": "update | fill | keep | skip", "why": "..."}], "gaps": ["..."]}')
 
 _EDIT_INSTRUCTIONS = """You plan the edits a browser agent will make to a candidate's profile on %(board)s.
-Below are: the board agent's own instructions, the planned profile (written from her resume, with its ATS
-report), the text the bot just read from her LIVE profile page, and her facts.
+Below are: the board agent's own instructions, the planned profile (written from their resume, with its ATS
+report), the text the bot just read from their LIVE profile page, and their facts.
 
 For EVERY section that board's instructions list (and any other section the live page shows), give:
 - name: the section as the board labels it; one entry per employment, project and IT skill when the board
@@ -286,8 +286,8 @@ def edit_plan(settings: Settings, board: Board, plan: Any, facts: str, current: 
         _EDIT_INSTRUCTIONS % {"board": board.label},
         "--- The board agent's instructions ---\n" + board_prompt(board),
         "--- The planned profile ---\n" + profile_plan.agent_brief(plan),
-        "--- Her live profile page, as text ---\n" + current[:_PAGE_CHARS],
-        "--- Her facts ---\n" + facts[:_FACTS_CHARS],
+        "--- Their live profile page, as text ---\n" + current[:_PAGE_CHARS],
+        "--- Their facts ---\n" + facts[:_FACTS_CHARS],
     ])
     raw = client.complete_json(text, _EDIT_SCHEMA)
     sections = raw.get("sections") if isinstance(raw, dict) else None
@@ -1107,7 +1107,7 @@ def run(driver: Any, board: Board, settings: Settings, profile: Optional[Profile
             return False, reason
     result = check(driver, board, settings, report, plan, workdir, edits)
     if status == "needs_you":
-        # A captcha, a code or a question only she can answer: a second pass would hit the same wall.
+        # A captcha, a code or a question only they can answer: a second pass would hit the same wall.
         result.saved, result.why = False, reason
         _finish(workdir, board, result, plan, settings)
         return False, reason

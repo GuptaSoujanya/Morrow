@@ -548,14 +548,14 @@ LONG_ANSWER_MAX_CHARS = 700
 _LONG_ANSWER_SCHEMA = '{"can_answer": true, "answer": ""}'
 _LONG_ANSWER_PROMPT = (
     "Write the candidate's answer to one question on a job application form, as "
-    "she would type it herself: first person, plain and specific, %s, "
-    "under %d characters, one paragraph. Use only facts from her "
+    "they would type it themselves: first person, plain and specific, %s, "
+    "under %d characters, one paragraph. Use only facts from their "
     "resume below; you may name the company, the role and what the posting says "
     "the team works on. Never invent a project, number, employer, date, feeling "
     "or plan the resume does not state. No buzzwords, no em or en dashes, no "
     "exclamation marks, no lists, no greeting or sign-off. If the resume cannot "
     "answer it (a reference, a date, a legal or personal fact), set can_answer "
-    "to false.%s\n\nHER RESUME\n%s\n\nTHE JOB\n%s at %s\n%s\n\nQUESTION\n%s"
+    "to false.%s\n\nTHE CANDIDATE'S RESUME\n%s\n\nTHE JOB\n%s at %s\n%s\n\nQUESTION\n%s"
 )
 
 
@@ -566,7 +566,7 @@ def write_long_answer(
     question: str,
     max_chars: int = LONG_ANSWER_MAX_CHARS,
 ) -> Optional[str]:
-    """Her answer to a form's long question, from the resume and the posting only.
+    """The candidate's answer to a form's long question, from the resume and the posting only.
 
     None when the model declines, or when after two tries the text still names
     something neither source mentions or trips the same lint as the summary.

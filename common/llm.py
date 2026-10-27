@@ -646,38 +646,38 @@ def resolve_answer(
 JUDGED_MAX_CHARS = 90
 
 _JUDGE_PROMPT = (
-    "A job application asks the candidate a screening question that her stated "
+    "A job application asks the candidate a screening question that their stated "
     "facts do not answer directly. Decide whether ONE of these honest inferences "
     "answers it. If none does, set can_answer to false: a skipped question costs "
-    "one job, a wrong answer is a false statement made in her name.\n"
-    "1. A skill, tool, framework, language or domain that appears nowhere in her "
-    "facts: she has no recorded experience with it. Answer 0 for years (or the "
+    "one job, a wrong answer is a false statement made in their name.\n"
+    "1. A skill, tool, framework, language or domain that appears nowhere in their "
+    "facts: they have no recorded experience with it. Answer 0 for years (or the "
     "option meaning none, 0 or less than a year) and No for 'have you worked "
     "with it'.\n"
-    "2. A skill her resume shows her using: the years are the time of the role "
-    "or project where she used it, never more than her total experience. Quote "
+    "2. A skill their resume shows them using: the years are the time of the role "
+    "or project where they used it, never more than their total experience. Quote "
     "that resume line.\n"
-    "3. A follow-up whose premise her facts make false, such as 'If yes, share "
-    "your employee code' when her facts say she never worked there: answer N/A, "
+    "3. A follow-up whose premise their facts make false, such as 'If yes, share "
+    "your employee code' when their facts say they never worked there: answer N/A, "
     "or the option meaning not applicable.\n"
-    "4. A choice list without her stated value: pick the range that contains her "
+    "4. A choice list without their stated value: pick the range that contains their "
     "number, or Other, None of these or Not applicable when nothing else fits.\n"
-    "5. A question her facts already answer in other words (a city she lists, a "
-    "work mode or shift she accepts or declined): give that answer and quote "
+    "5. A question their facts already answer in other words (a city they list, a "
+    "work mode or shift they accept or declined): give that answer and quote "
     "the fact.\n"
     "Never answer about gender, religion, caste, race, disability, criminal "
     "history, visa, sponsorship, citizenship or the legal right to work in a "
     "country. Never write a motivation or essay answer. Never invent a number, "
-    "date, name, percentage or year that is not written in her facts.\n"
-    "evidence: copy a phrase word for word from her facts (or from the job, when "
+    "date, name, percentage or year that is not written in their facts.\n"
+    "evidence: copy a phrase word for word from their facts (or from the job, when "
     "the answer rests on it) unless the answer is 0, None, No, N/A or Other. "
     "reason: one short sentence a person can check, for example 'CrewAI is not "
-    "named in her resume, profile or answers'. depends_on_posting: true when the "
+    "named in their resume, profile or answers'. depends_on_posting: true when the "
     "answer rests on this job's details (its city, its company) rather than on "
-    "her alone.\n"
+    "them alone.\n"
     "Keep answer under 90 characters: a bare value, Yes or No, or one short "
     "sentence. With options, copy one option exactly.\n\n"
-    "HER FACTS\n%s\n\nTHE JOB\n%s\n\nINPUT\n%s"
+    "THE CANDIDATE'S FACTS\n%s\n\nTHE JOB\n%s\n\nINPUT\n%s"
 )
 _JUDGE_SCHEMA = (
     '{"can_answer": false, "answer": "", "evidence": "", "reason": "", '
@@ -692,7 +692,7 @@ _NUMBER = re.compile(r"\d+(?:\.\d+)?")
 
 
 def claims_nothing(answer: str) -> bool:
-    """0 years, No, N/A, Other: an answer that asserts no experience or fact of hers."""
+    """0 years, No, N/A, Other: an answer that asserts no experience or fact of theirs."""
     if _NOTHING_CLAIMED.match(answer):
         return True
     numbers = [float(n) for n in _NUMBER.findall(answer)]
@@ -762,10 +762,10 @@ def judge_answer(
         stated = set(_NUMBER.findall(candidate_text))
         invented = [n for n in _NUMBER.findall(answer) if float(n) != 0 and n not in stated]
         if invented:
-            refusal = "%s is not written in her facts" % ", ".join(invented)
+            refusal = "%s is not written in their facts" % ", ".join(invented)
     if not refusal and not claims_nothing(answer):
         if not _quoted(evidence, candidate_text + "\n" + job_text):
-            refusal = "the evidence %r is not a quote from her facts" % evidence
+            refusal = "the evidence %r is not a quote from their facts" % evidence
     if refusal:
         logger.info("Refused the judged answer %r to %r: %s", answer, question, refusal)
         return None

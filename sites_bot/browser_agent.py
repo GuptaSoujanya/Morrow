@@ -114,7 +114,7 @@ def _text(value: Any) -> str:
 
 
 def facts_text(profile: Profile, settings: Settings) -> str:
-    """Every fact she gave: profile.yaml, her answers.txt answers, then the resume."""
+    """Every fact they gave: profile.yaml, their answers.txt answers, then the resume."""
     from common.answers import PER_JOB, AnswerBook, answers_file_path
     from .external import known_values
 
@@ -132,11 +132,11 @@ def facts_text(profile: Profile, settings: Settings) -> str:
         if answer and answer.strip() != PER_JOB
     ]
     if answered:
-        lines += ["", "Her own answers to screening questions:"]
+        lines += ["", "Their own answers to screening questions:"]
         for questions, answer in answered:
             lines.append("- Q: %s\n  A: %s" % (" / ".join(questions), " ".join(answer.split())))
     if profile.resume_text:
-        lines += ["", "Her resume (plain text):", profile.resume_text[:FACTS_RESUME_CHARS]]
+        lines += ["", "Their resume (plain text):", profile.resume_text[:FACTS_RESUME_CHARS]]
     return "\n".join(lines)
 
 
@@ -146,7 +146,7 @@ _RULES = """Rules, in order of importance:
    needs_you.
 2. Stop and report needs_you for a verification code or link sent by email or
    SMS, a two-factor prompt, any payment, or an identity number (PAN, SSN,
-   passport number) she has not given.
+   passport number) they have not given.
 3. Use only the facts below. Never invent a fact, a number, a date or a yes/no.
    When a required question is not answered by them, do not guess and do not pick
    any option just to move on: leave it, finish what you can, and list the
@@ -206,7 +206,7 @@ def application_prompt(
         resume = "There is no resume file for this task; if the form requires one, list it in missing."
     return "\n\n".join([
         "You are completing a job application on a company career site for %s, in a Chrome "
-        "window her job bot already has open. You control the browser only through the browser "
+        "window their job bot already has open. You control the browser only through the browser "
         "tools." % (job_owner(facts) or "the candidate"),
         "Job: %s at %s\nApplication page: %s\nWhat the bot managed before it stopped: %s"
         % (job.title or "(title unknown)", job.company or "(company unknown)", url, previous or "nothing yet"),
@@ -214,13 +214,13 @@ def application_prompt(
         "Goal: " + goal,
         "Resume: " + resume,
         ("Accounts: if the site wants you to sign in or create an account, use the email %s. For the "
-         "password, type exactly the word %s into the password box: the browser substitutes her saved "
+         "password, type exactly the word %s into the password box: the browser substitutes their saved "
          "password, which you never see. Creating an account with that email and password is allowed "
          "(except in a dry run). Use \"Continue with Google\" only if it signs in without asking for a "
          "password or code." % (email or "(none given; report needs_you)", SECRET_NAME))
         if has_password else _NO_PASSWORD,
         "A required free-text question such as \"Why do you want to join us?\": write two or three "
-        "plain first-person sentences using only facts from her resume and the posting, and list the "
+        "plain first-person sentences using only facts from their resume and the posting, and list the "
         'question and your text under "written".',
         _RULES,
         "The facts:\n" + facts,
@@ -245,7 +245,7 @@ _NO_PASSWORD = (
 
 
 _TASK_REPORT = ('When you finish or stop, reply with ONE JSON object and nothing else:\n'
-                '{"status": "done|needs_you|failed", "why": "one or two sentences", "notes": "anything she should know"}')
+                '{"status": "done|needs_you|failed", "why": "one or two sentences", "notes": "anything they should know"}')
 
 
 def task_prompt(instruction: str, url: str, facts: str, email: str, files: Tuple[Path, ...] = (),
@@ -257,7 +257,7 @@ def task_prompt(instruction: str, url: str, facts: str, email: str, files: Tuple
         if files else "There are no files to upload for this task."
     )
     return "\n\n".join([
-        "You are helping a job seeker in a Chrome window her job bot already has open. You control "
+        "You are helping a job seeker in a Chrome window their job bot already has open. You control "
         "the browser only through the browser tools.",
         "First list the browser tabs and select the tab whose address is on %s." % host,
         "Task: " + instruction,
@@ -334,7 +334,7 @@ def claude_command(settings: Settings, prompt: str, config_path: Path, system: s
         "--tools", "",
         "--allowedTools", "mcp__%s" % SERVER,
         # Closing the only tab ends the bot's browser session; Chrome quits with it.
-        # run_code_unsafe runs code in the MCP server on her Mac, not in the page:
+        # run_code_unsafe runs code in the MCP server on their Mac, not in the page:
         # a posting could talk the agent into using it.
         "--disallowedTools", "mcp__%s__browser_close,mcp__%s__browser_run_code_unsafe" % (SERVER, SERVER),
         "--permission-mode", "dontAsk",

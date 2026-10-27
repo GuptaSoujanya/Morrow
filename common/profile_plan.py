@@ -3,25 +3,25 @@
 The profile agents used to get only "fix what is out of date". This module asks the
 LLM for the profile a recruiter should see -- headline, designation, summary, About,
 key skills, every employment's job profile, projects, IT skills, certifications and
-preferred roles -- grounded in her own facts, scores the resume for ATS keyword
+preferred roles -- grounded in their own facts, scores the resume for ATS keyword
 coverage and structure, and hands the agent the exact text to write on every board.
 
     python3 -m common.profile_plan            # print the ATS score, the review and the planned profile
     python3 -m common.profile_plan --fresh    # ask the LLM again even if the facts did not change
 
 The writing is held to a recruiter's rubric (quality_report): a hook instead of "I am
-a ...", figures from the resume, the stack named, a line on what she wants, no filler
+a ...", figures from the resume, the stack named, a line on what they want, no filler
 words, length limits per board. A draft that fails it goes back to the model once with
 the reviewer's notes; the better of the two drafts is kept and its remaining notes are
 saved with it.
 
 Every word of the plan is written by the LLM; there is no template fallback. With no
 model, or no usable answer after a retry, build_plan raises PlanError and the profile
-agents do not run, rather than write canned text onto her profile.
+agents do not run, rather than write canned text onto their profile.
 
 Nothing here invents facts: skills, employers, projects, links and certifications the
 resume and facts never mention are dropped, and sentences with numbers the facts do
-not contain are cut. The plan is cached in .memory/profile-plan.json until the facts
+not contain are cut. The plan is cached in user/memory/profile-plan.json until the facts
 (or this planner) change.
 """
 
@@ -85,7 +85,7 @@ _PHONE = re.compile(r"(?:\+?\d[\d\s-]{8,}\d)")
 _NUMBER = re.compile(r"\d+(?:\.\d+)?")
 # "40%", "2 million events", "5 engineers": a figure with what it counts, not a date or phone.
 _IMPACT = re.compile(r"(?<![\d-])\d+(?:\.\d+)?\s*(?:%|\+|x\b|[kKmM]\b|[A-Za-z]{3,})")
-_RESUME_MARKER = "Her resume (plain text):"
+_RESUME_MARKER = "Their resume (plain text):"
 
 
 @dataclass
@@ -183,16 +183,16 @@ _SCHEMA = (
 
 _INSTRUCTIONS = """You are a senior technical recruiter who writes candidate profiles that get recruiter calls,
 and an ATS specialist. Write the job-board profile this candidate should have (Naukri, LinkedIn, Hirist,
-Cutshort, Instahyre, Wellfound), using ONLY the facts below: her resume first, then her facts file and her
+Cutshort, Instahyre, Wellfound), using ONLY the facts below: their resume first, then their facts file and their
 own answers to screening questions. Never invent an employer, title, number, date, skill, degree,
 certification or link the facts do not state; every number you write must appear in the facts.
 
 How recruiters read a profile: they keyword-search the headline, skills, summary, designation and IT skills,
 open the profile, and read the first two lines of the summary and of the current job before deciding. So:
-- Lead with what she builds and the proof, never with "I am a ..."; the first sentence must stand alone and
+- Lead with what they build and the proof, never with "I am a ..."; the first sentence must stand alone and
   carry a number from the resume.
 - Specific beats general: name the systems, the scale, the models, the stack, using the resume's own figures
-  (counts, percentages, limits, dates). Every sentence should tell a recruiter something she did.
+  (counts, percentages, limits, dates). Every sentence should tell a recruiter something they did.
 - No filler: never write passionate, results-driven, leverage, cutting-edge, state-of-the-art, dynamic,
   motivated, hard-working, team player, quick learner, seeking a challenging role, utilize, drive innovation,
   delve, spearhead, robust, seamless, transformative, synergy, proven track record, highly skilled or
@@ -205,14 +205,14 @@ open the profile, and read the first two lines of the summary and of the current
 Fields:
 - headline: %(headline_min)d-%(headline)d characters, "Role | 4-6 skills recruiters search | years | one proof
   or domain", with the role and first keyword in the first 60 characters. No availability, no qualities.
-- designation: her current job title exactly as the facts give it.
-- summary: %(summary_min)d-%(summary)d characters, first person, 4-6 sentences in this order: the hook (what she
+- designation: their current job title exactly as the facts give it.
+- summary: %(summary_min)d-%(summary)d characters, first person, 4-6 sentences in this order: the hook (what they
   builds, the domain, one number), two or three proofs with figures from the resume, one sentence naming
-  the stack (at least %(skills_in_summary)d of the key skills), one sentence on what she wants next (roles,
+  the stack (at least %(skills_in_summary)d of the key skills), one sentence on what they want next (roles,
   locations or remote; the notice period only if the facts state it).
 - short_summary: at most %(short)d characters: the hook plus one proof, for boards with a one-paragraph field.
 - about: %(about_min)d-%(about)d characters, the LinkedIn About: the hook as its own first paragraph (under
-  %(hook)d characters), then two or three short paragraphs of proof, a stack line, and what she wants; a
+  %(hook)d characters), then two or three short paragraphs of proof, a stack line, and what they want; a
   blank line between paragraphs.
 - key_skills: 18-%(skills)d skills, most searched first, exact tool or skill names only, one tag each
   ("LangChain", "RAG", "FastAPI"), no soft skills; every one named in the facts.
@@ -225,20 +225,20 @@ Fields:
   when the facts give them (boards ask for a client and a start month; leave them "" rather than guess).
 - it_skills: up to %(it)d software or skill names for Naukri's IT skills table (it holds %(it)d), most
   searched first, each with years (from the
-  facts' years per skill, or her total experience when the resume shows the skill through the whole
+  facts' years per skill, or their total experience when the resume shows the skill through the whole
   tenure) and last_used (the current year for skills in the current role).
 - certifications: exactly as the facts name them.
-- links: her portfolio, GitHub and LinkedIn URLs from the facts.
-- target_roles: 3-5 job titles she fits, from her titles and experience.
+- links: their portfolio, GitHub and LinkedIn URLs from the facts.
+- target_roles: 3-5 job titles they fit, from their titles and experience.
 - target_keywords: 15-25 keywords and phrases recruiters' ATS filters use for those roles (these may include
-  ones her resume lacks; they score the resume, they do not describe her).
-- suggestions: up to 6 concrete, honest edits that would raise her resume's ATS score."""
+  ones their resume lacks; they score the resume, they do not describe them).
+- suggestions: up to 6 concrete, honest edits that would raise their resume's ATS score."""
 
 _EDITOR = """You are the editor of a job-board profile. Below are the facts (the candidate's resume, facts file
 and answers), the draft profile as JSON, and the reviewer's notes on it. Rewrite the fields the notes name so
 every note is resolved, keep every other field exactly as it is, and return the whole JSON object. The
 writing rules still hold: only facts and figures from the facts below, no invented employer, title, number,
-date, skill or link; lead with what she builds, not "I am a"; no filler words (passionate, results-driven,
+date, skill or link; lead with what they build, not "I am a"; no filler words (passionate, results-driven,
 leverage, cutting-edge, dynamic, motivated, robust, seamless, utilize, responsible for...); first person in the
 summary and About, none in the headline.
 
@@ -359,7 +359,7 @@ def _it_skills(raw: Any, facts: str, profile: Profile) -> List[Dict[str, str]]:
             continue
         seen.add(name.casefold())
         years = _words(item.get("years"))
-        if not _grounded_numbers(years, facts):   # a figure the facts do not hold: her total experience instead
+        if not _grounded_numbers(years, facts):   # a figure the facts do not hold: their total experience instead
             years = total
         last_used = _words(item.get("last_used"))
         if last_used != str(datetime.now().year) and not _grounded_numbers(last_used, facts):
@@ -375,7 +375,7 @@ def _parse(raw: Dict[str, Any], profile: Profile, facts: str) -> ProfilePlan:
         value = raw.get(key)
         return _unique([item for item in value if isinstance(item, str)]) if isinstance(value, list) else []
 
-    # Where the model left a list empty, her own facts fill it; prose comes only from the model.
+    # Where the model left a list empty, their own facts fill it; prose comes only from the model.
     skills = [skill for skill in strings("key_skills") if _mentions(facts, skill)][:MAX_SKILLS]
     headline = _clip(_grounded_numbers(str(raw.get("headline") or ""), facts), HEADLINE_CHARS)
     summary = _clip(_grounded_numbers(str(raw.get("summary") or ""), facts), SUMMARY_CHARS)
@@ -412,7 +412,7 @@ def _parse(raw: Dict[str, Any], profile: Profile, facts: str) -> ProfilePlan:
 def _filler(name: str, text: str) -> List[str]:
     low = text.casefold()
     found = [phrase for phrase in BANNED_PHRASES if phrase in low]
-    notes = ["%s: uses filler (%s); say what she did instead." % (name, ", ".join(found[:4]))] if found else []
+    notes = ["%s: uses filler (%s); say what they did instead." % (name, ", ".join(found[:4]))] if found else []
     if "\u2014" in text:
         notes.append("%s: has an em dash; use a comma, colon or full stop." % name)
     return notes
@@ -438,16 +438,16 @@ def quality_report(plan: ProfilePlan) -> List[str]:
             notes.append("headline: names fewer than 3 of the key skills.")
         if plan.target_roles and not any(plan.headline.casefold().startswith(role.casefold())
                                          for role in plan.target_roles):
-            notes.append("headline: start with one of her target roles (%s) so a title search matches it."
+            notes.append("headline: start with one of their target roles (%s) so a title search matches it."
                          % ", ".join(plan.target_roles[:3]))
         if re.search(r"\b(?:looking for|open to|seeking|available|immediate)\b", plan.headline, re.IGNORECASE):
-            notes.append("headline: no availability; put what she builds there.")
+            notes.append("headline: no availability; put what they build there.")
 
     if not plan.summary:
         notes.append("summary: missing.")
     else:
         if re.match(r"\s*(?:I am|I'm|I’m)\s+an?\b", plan.summary):
-            notes.append("summary: opens with 'I am a'; lead with what she builds and one figure.")
+            notes.append("summary: opens with 'I am a'; lead with what they build and one figure.")
         figures = set(_NUMBER.findall(plan.summary))
         if len(figures) < 2:
             notes.append("summary: carries %d figure(s); use at least 2 from the resume (scale, counts, "
@@ -457,7 +457,7 @@ def quality_report(plan: ProfilePlan) -> List[str]:
             notes.append("summary: names only %d of the key skills; name at least %d in a stack sentence."
                          % (named, MIN_SKILLS_IN_SUMMARY))
         if not re.search(r"\b(?:looking for|open to|want|next|interested in|seeking)\b", plan.summary, re.IGNORECASE):
-            notes.append("summary: no sentence on what she wants next (roles, locations or remote).")
+            notes.append("summary: no sentence on what they want next (roles, locations or remote).")
         if len(plan.summary) < SUMMARY_MIN_CHARS:
             notes.append("summary: only %d characters; write %d-%d." % (len(plan.summary), SUMMARY_MIN_CHARS,
                                                                         SUMMARY_CHARS))
@@ -486,7 +486,7 @@ def quality_report(plan: ProfilePlan) -> List[str]:
         label = "experience '%s'" % (role.get("company") or role.get("title"))
         words = len(role.get("description", "").split())
         if words < JOB_PROFILE_MIN_WORDS:
-            notes.append("%s: job profile has %d words; write 3-5 lines of what she did there, %d words or more."
+            notes.append("%s: job profile has %d words; write 3-5 lines of what they did there, %d words or more."
                          % (label, words, JOB_PROFILE_MIN_WORDS))
         elif number == 0 and not _NUMBER.search(role.get("description", "")):
             # The current role is what recruiters read; an old internship may have no figures to give.
@@ -498,7 +498,7 @@ def quality_report(plan: ProfilePlan) -> List[str]:
         if len(project.get("description", "").split()) < 8:
             notes.append("project '%s': description is too thin; say what it does and with what." % project["name"])
     if not plan.it_skills:
-        notes.append("it_skills: empty; list her tools with years for Naukri's IT skills table.")
+        notes.append("it_skills: empty; list their tools with years for Naukri's IT skills table.")
     if len(skills) < 10:
         notes.append("key_skills: only %d; list 18-%d searched skills from the facts." % (len(skills), MAX_SKILLS))
     return notes
@@ -520,7 +520,7 @@ def planner_facts(profile: Profile, facts: str) -> str:
     parts = []
     if profile.resume_text.strip():
         parts.append(_RESUME_MARKER + "\n" + profile.resume_text.strip())
-    parts.append("Her facts file and her own answers to screening questions:\n" + rest.strip()[:_PROMPT_FACTS_CHARS])
+    parts.append("Their facts file and their own answers to screening questions:\n" + rest.strip()[:_PROMPT_FACTS_CHARS])
     return "\n\n".join(parts)
 
 
@@ -699,7 +699,7 @@ def _project_line(number: int, project: Dict[str, str]) -> str:
 def agent_brief(plan: ProfilePlan) -> str:
     """The exact text the browser agent should write, appended to its profile task."""
     lines = [
-        "Planned profile (written from her resume and answers; use this exact text, trimming only to fit "
+        "Planned profile (written from their resume and answers; use this exact text, trimming only to fit "
         "a field's length limit, and do not add anything the facts do not support):",
     ]
     if plan.headline:
@@ -715,7 +715,7 @@ def agent_brief(plan: ProfilePlan) -> str:
     if plan.about and plan.about != plan.summary:
         lines.append("- About (long fields, e.g. LinkedIn; keep the paragraph breaks):\n%s" % plan.about)
     if plan.key_skills:
-        lines.append("- Key skills, most important first (add the missing ones; remove skills she does not "
+        lines.append("- Key skills, most important first (add the missing ones; remove skills they do not "
                      "list only if the board has a limit): %s" % ", ".join(plan.key_skills))
     if plan.target_roles:
         lines.append("- Preferred / desired roles: %s" % ", ".join(plan.target_roles))
@@ -741,13 +741,13 @@ def agent_brief(plan: ProfilePlan) -> str:
                  "answer, do not guess: leave that section unsaved, name the field in your report, and go on.")
     report = plan.ats
     if report is not None:
-        lines += ["", "ATS: her resume scores %d/100 (keyword coverage %d, structure %d) for these roles."
+        lines += ["", "ATS: their resume scores %d/100 (keyword coverage %d, structure %d) for these roles."
                   % (report.score, report.keyword_score, report.structure_score)]
         if report.matched:
-            lines.append("- Keywords recruiters search that she has; each must appear in the headline, skills or "
+            lines.append("- Keywords recruiters search that they have; each must appear in the headline, skills or "
                          "summary on this board: %s" % ", ".join(report.matched))
         if report.missing:
-            lines.append("- Keywords her resume does not mention; add one only when the facts plainly cover it (e.g. as an "
+            lines.append("- Keywords their resume does not mention; add one only when the facts plainly cover it (e.g. as an "
                          "abbreviation), never as a new claim: %s"
                          % ", ".join(report.missing))
     return "\n".join(lines)

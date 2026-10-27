@@ -122,14 +122,14 @@ def test_a_plan_cached_by_an_older_planner_is_written_again(tmp_path):
 
 def test_the_model_reads_the_whole_resume_before_the_answer_key(tmp_path):
     answers = "\n".join("- Q: question %d\n  A: answer %d" % (n, n) for n in range(900))
-    facts = "- full name: Asha Rao\n\nHer own answers to screening questions:\n" + answers + \
-            "\nHer resume (plain text):\n" + RESUME[:200]
+    facts = "- full name: Asha Rao\n\nTheir own answers to screening questions:\n" + answers + \
+            "\nTheir resume (plain text):\n" + RESUME[:200]
     assert len(answers) > profile_plan._PROMPT_FACTS_CHARS // 2
     client = FakeClient(GOOD)
     profile_plan.build_plan(_profile(), Settings(), facts=facts, client=client, path=tmp_path / "p.json")
     prompt = client.prompts[0]
     body = prompt.split("The facts:\n", 1)[1]
-    assert body.startswith("Her resume (plain text):\nAsha Rao")
+    assert body.startswith("Their resume (plain text):\nAsha Rao")
     assert "migrated 120 Airflow DAGs" in body                      # the whole resume, not a cut copy
     assert body.index("Airflow DAGs") < body.index("- Q: question 0")
     assert body.count("Asha Rao  asha@example.com") == 1           # the facts' own resume copy is not repeated
@@ -163,13 +163,13 @@ def test_quality_report_reads_like_a_recruiter():
     assert profile_plan.quality_report(good) == []
     bad = profile_plan._parse(BAD, _profile(), RESUME)
     notes = " ".join(profile_plan.quality_report(bad))
-    assert "passionate" in notes and "opens with 'I am a'" in notes and "what she wants next" in notes
+    assert "passionate" in notes and "opens with 'I am a'" in notes and "what they want next" in notes
     assert "experience: no roles" in notes and "it_skills: empty" in notes and "about: missing" in notes
     long_hook = profile_plan._parse(dict(GOOD, about=("x" * 250) + "\n\nmore " * 300), _profile(), RESUME)
     assert any("hook" in note for note in profile_plan.quality_report(long_hook))
     no_role = profile_plan._parse(dict(GOOD, headline="Streaming & Lakehouse Specialist | Spark, Kafka, AWS, "
                                                       "Airflow | 5 yrs"), _profile(), RESUME)
-    assert any("start with one of her target roles (Data Engineer" in note
+    assert any("start with one of their target roles (Data Engineer" in note
                for note in profile_plan.quality_report(no_role))
     intern = profile_plan._parse(dict(GOOD, experience=GOOD["experience"] + [
         {"title": "Senior Data Engineer", "company": "Acme", "start": "2019", "end": "2019",
@@ -239,8 +239,8 @@ def test_the_brief_carries_the_ats_keywords(tmp_path):
                          "target_keywords": ["Spark", "Kafka", "dbt"]})
     plan = profile_plan.build_plan(_profile(), Settings(), facts=RESUME, client=client, path=tmp_path / "p.json")
     brief = profile_plan.agent_brief(plan)
-    assert "ATS: her resume scores %d/100" % plan.ats.score in brief
-    assert "she has; each must appear" in brief and "Spark, Kafka" in brief
+    assert "ATS: their resume scores %d/100" % plan.ats.score in brief
+    assert "they have; each must appear" in brief and "Spark, Kafka" in brief
     assert "never as a new claim: dbt" in brief
     assert plan.review and "Reviewer's notes still open" in profile_plan.review_text(plan)
 

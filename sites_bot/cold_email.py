@@ -1,13 +1,13 @@
-"""Cold emails to recruiters, written in her voice and left as drafts for her to send.
+"""Cold emails to recruiters, written in their voice and left as drafts for them to send.
 
 Addresses come only from where a company published them: a posting's text
 ("share your CV at ..."), a career page the bot or the browser agent read, or
 a Naukri job page. Nothing is guessed or looked up elsewhere. Each email is
-written from her resume and that posting, checked like the tailored summary
-(no claim the resume does not make, no filler words), signed with her real
+written from their resume and that posting, checked like the tailored summary
+(no claim the resume does not make, no filler words), signed with their real
 contact details, and saved as a draft: an .eml file under
-data/reports/<date>/emails/, and in Gmail's Drafts folder when GMAIL_APP_PASSWORD
-is set. Nothing is ever sent. Every draft is recorded in data/inputs/cold_emails.jsonl
+user/reports/<date>/emails/, and in Gmail's Drafts folder when GMAIL_APP_PASSWORD
+is set. Nothing is ever sent. Every draft is recorded in user/inputs/cold_emails.jsonl
 so no address is written to twice.
 
     python3 -m sites_bot.cold_email [--scan-naukri] [--limit 10] [--dry-run]
@@ -221,9 +221,9 @@ def _record(settings: Settings, lead: Lead, subject: str, eml: Path, gmail: bool
 # Writing the email
 # ---------------------------------------------------------------------------
 
-_PROMPT = """Write a short cold email from a job seeker to a company's recruiter, in her own voice.
+_PROMPT = """Write a short cold email from a job seeker to a company's recruiter, in their own voice.
 
-Her resume (the only source of facts about her):
+Their resume (the only source of facts about them):
 %s
 
 The role: %s at %s
@@ -233,12 +233,12 @@ The posting, as the company published it (may be empty):
 Rules:
 - First person, plain and direct, %d to %d words for the body. No greeting name you do not know:
   start with "Hi," or "Hello %s team,".
-- Say which role she is writing about, two or three concrete things from her resume that fit this
-  posting, and ask whether they would consider her application. Mention that her resume is attached.
+- Say which role they are writing about, two or three concrete things from their resume that fit this
+  posting, and ask whether they would consider their application. Mention that their resume is attached.
 - Use only facts from the resume and the posting. No numbers, employers, tools or titles they do not name.
 - No buzzwords (passionate, results-driven, synergy, leverage, cutting-edge, delve, thrilled, excited to
   share), no em or en dashes, no exclamation marks, no emojis, no bullet lists, no placeholders.
-- Do not sign it; her signature is added after your text.
+- Do not sign it; their signature is added after your text.
 
 Reply with JSON: {"can_write": true, "subject": "...", "body": "..."}. Set can_write to false when the
 posting gives nothing to write about."""
@@ -246,7 +246,7 @@ _SCHEMA = '{"can_write": true, "subject": "", "body": ""}'
 
 
 def write_email(client: Any, base: Any, lead: Lead) -> Optional[Tuple[str, str]]:
-    """(subject, body) from her resume and the posting; None when it cannot be made clean in two tries."""
+    """(subject, body) from their resume and the posting; None when it cannot be made clean in two tries."""
     from common.resume import _lint, _terms, ungrounded_terms
 
     if client is None or not client.available():
@@ -366,7 +366,7 @@ def own_addresses(settings: Settings, profile: Profile) -> set:
 
 
 def unique_leads(settings: Settings, profile: Profile, leads: List[Lead]) -> List[Lead]:
-    """One lead per address, never her own; the posting saved for that job is used when there is one."""
+    """One lead per address, never their own; the posting saved for that job is used when there is one."""
     from common.resume import saved_tailoring_dir
 
     own = own_addresses(settings, profile)
