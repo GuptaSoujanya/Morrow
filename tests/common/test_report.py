@@ -1,4 +1,4 @@
-"""data/reports/<date>/report.md: the day's work and what is left, from the records alone."""
+"""user/reports/<date>/report.md: the day's work and what is left, from the records alone."""
 
 import json
 import os
@@ -51,7 +51,7 @@ def _settings(tmp_path, **overrides):
         email="t@example.com",
         password="secret",
         db_path=str(tmp_path / "naukri_bot.db"),
-        profile_path=str(tmp_path / "data" / "inputs" / "profile.yaml"),
+        profile_path=str(tmp_path / "user" / "inputs" / "profile.yaml"),
         profile_update_state_path=str(tmp_path / "logs" / "profile_update.json"),
         resume_out_dir=str(tmp_path / "resume" / "out"),
         report_dir=str(tmp_path / "reports"),
@@ -159,7 +159,7 @@ def test_a_day_without_a_run_says_so_and_creates_no_database(tmp_path):
 
 def test_what_is_left_comes_from_the_data_folder(tmp_path):
     settings = _settings(tmp_path)
-    data = tmp_path / "data" / "inputs"
+    data = tmp_path / "user" / "inputs"
     data.mkdir(parents=True)
     (data / "answers.txt").write_text("Q: Expected CTC\nA:\n\nQ: Notice period\nA: 30 days\n", encoding="utf-8")
     (data / "profile.yaml").write_text("full_name: Jane\ncurrent_ctc_lpa: null\nextra_facts:\n  gender:\n  country: India\n", encoding="utf-8")

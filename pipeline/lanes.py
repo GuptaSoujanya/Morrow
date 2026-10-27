@@ -12,11 +12,11 @@ Chrome refuses to open a profile another Chrome already holds.
               closed managed Naukri profile when one is available
 
 The child reads the same .env; the variables set here win because python-dotenv
-never overrides the environment. Only the parent writes .memory/.
+never overrides the environment. Only the parent writes user/memory/.
 
 With --containers each site's stages run in that site's own Docker container instead
 (`docker compose run <site>`, docker-compose.yml): its own Chromium, virtual screen and
-Chrome profile under data/docker/browser/. Each screen is shown in a web page on its own
+Chrome profile under user/docker/browser/. Each screen is shown in a web page on its own
 port (WATCH_PORTS), and watch_page() puts them all on one page so you can see every bot.
 """
 

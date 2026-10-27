@@ -74,7 +74,7 @@ def _limit(options: Dict[str, Any]) -> Optional[int]:
 def _resume(options: Dict[str, Any], save: bool) -> Command:
     pasted = str(options.get("jd_text") or "")
     if pasted.strip():
-        jd_file = str(state.save_job_description(pasted)) if save else "data/logs/jd/<pasted text>.txt"
+        jd_file = str(state.save_job_description(pasted)) if save else "user/logs/jd/<pasted text>.txt"
     else:
         jd_file = _text(options, "jd_file")
     return state.resume_command(

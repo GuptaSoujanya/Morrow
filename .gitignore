@@ -81,3 +81,8 @@ docs/
 
 # Playwright MCP scratch output (console logs, page snapshots)
 .playwright-mcp/
+
+# The user's private repo (scripts/setup_user.sh) and the shared Morrow-database
+# clone: separate repos, never part of Morrow itself.
+user/
+database/

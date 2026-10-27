@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from .models import Settings
+from . import paths
 
 
 logger = logging.getLogger(__name__)
@@ -64,10 +65,8 @@ def _env_list(key: str, default: List[str]) -> List[str]:
 def _absolute_path(value: str, repo_root: Path) -> str:
     if not value:
         return value
-    path = Path(value).expanduser()
-    if not path.is_absolute():
-        path = repo_root / path
-    return str(path.resolve())
+    # user/... and database/... follow MORROW_USER_DIR and MORROW_DATABASE_DIR.
+    return str(paths.resolve(value, repo_root).resolve())
 
 
 def load_settings(

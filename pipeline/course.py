@@ -11,10 +11,11 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 from . import links
+from common import paths
 
-COURSE = Path("course")
+COURSE = paths.course_dir()
 #: LEARNING and LAST_DAY (learning imports this module, so not imported here).
-LEARNING = Path(".research/learning")
+LEARNING = paths.research_dir() / "learning"
 LAST_DAY = 90
 SIDEBAR = "_sidebar.md"
 #: Tracks the plan is built on: every chapter of these must be linked by some week.

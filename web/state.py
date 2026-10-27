@@ -21,16 +21,18 @@ from typing import Any, Callable, Dict, List, Optional, Set, Tuple, TypeVar
 
 from common.models import ApplyStatus, Settings
 from common.report import OUTCOMES, course_modules as plan_order
+from common import paths
 
 APPLY = Path(__file__).resolve().parent.parent
-COURSE = APPLY / "course"
+COURSE = APPLY / paths.course_dir()
 PYTHON = sys.executable
-ANSWERS = APPLY / "data" / "inputs" / "answers.txt"
-PROFILE = APPLY / "data" / "inputs" / "profile.yaml"
-COMPANY_SITES = APPLY / "data" / "inputs" / "company_sites.md"
-RESUMES = APPLY / "data" / "resume"
-REPORTS = APPLY / "data" / "reports"
-LOGS = APPLY / "data" / "logs"
+USER = APPLY / paths.user_dir()
+ANSWERS = USER / "inputs" / "answers.txt"
+PROFILE = USER / "inputs" / "profile.yaml"
+COMPANY_SITES = USER / "inputs" / "company_sites.md"
+RESUMES = USER / "resume"
+REPORTS = USER / "reports"
+LOGS = USER / "logs"
 STUDIED = REPORTS / "studied.json"
 #: Pages that only work in a browser: the news page fetches its headlines with JavaScript.
 BROWSER_ONLY = {"news.md"}

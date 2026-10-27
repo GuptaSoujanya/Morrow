@@ -6,7 +6,7 @@ from the search pages, ranks them with the same scoring as Naukri, opens each
 chosen job, clicks Apply, answers any form with the company-site filler, and
 counts the application only when the board shows the job as applied after a
 reload. A board page the script cannot finish goes to the browser agent when
-it is on, and otherwise to data/inputs/company_sites.md for a person.
+it is on, and otherwise to user/inputs/company_sites.md for a person.
 
 Each board is its own bot (hirist_bot, instahyre_bot, cutshort_bot,
 wellfound_bot) with its Board in <name>_bot/board.py; this module is the loop
@@ -614,7 +614,7 @@ def _remember_profile(driver: Any, board: Board, action: str, notes: str) -> Non
                 or board.profile_url or board.home)
         memory.record_profile(board.name, action, link, notes)
     except OSError as exc:
-        logger.warning("%s: could not note the profile in .memory (%s)", board.label, exc)
+        logger.warning("%s: could not note the profile in user/memory (%s)", board.label, exc)
 
 
 def create_profile(driver: Any, board: Board, settings: Settings, profile: Profile,

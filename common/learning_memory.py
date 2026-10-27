@@ -13,6 +13,8 @@ from pathlib import Path
 import tempfile
 import threading
 
+from . import paths
+
 _lock = threading.RLock()
 
 
@@ -27,9 +29,9 @@ def _json(path, default):
 
 def _validate(data):
     if not isinstance(data, dict) or data.get("version") != 1:
-        raise ValueError("Unsupported .memory/learning.json. Your progress has not been reset.")
+        raise ValueError("Unsupported user/memory/learning.json. Your progress has not been reset.")
     if any(not isinstance(data.get(k), dict) for k in ("course", "documents", "plan")) or not isinstance(data.get("history"), list):
-        raise ValueError("Invalid .memory/learning.json. Your progress has not been reset.")
+        raise ValueError("Invalid user/memory/learning.json. Your progress has not been reset.")
     if any(not isinstance(v, dict) or not isinstance(v.get("done"), bool) for k in ("course", "documents") for v in data[k].values()):
         raise ValueError("Invalid saved completion. Your progress has not been reset.")
     plan = data["plan"]
@@ -63,8 +65,8 @@ def _validate(data):
 
 
 def _initial(root, studied=None):
-    courses = _json(studied or root / "data/reports/studied.json", [])
-    plan = _json(root / ".research/learning/progress.json", {})
+    courses = _json(studied or root / paths.reports_dir() / "studied.json", [])
+    plan = _json(root / paths.research_dir() / "learning" / "progress.json", {})
     if not isinstance(courses, list) or not isinstance(plan, dict):
         raise ValueError("Legacy learning progress is invalid. It has not been changed.")
     return _validate({"version": 1, "course": {p: {"done": True, "imported": True} for p in courses if isinstance(p, str)},
@@ -73,7 +75,7 @@ def _initial(root, studied=None):
 
 def transact(root, change=None, *, studied=None):
     root = Path(root)
-    folder = root / ".memory"
+    folder = root / paths.memory_dir()
     folder.mkdir(parents=True, exist_ok=True)
     path = folder / "learning.json"
     with _lock, (folder / "learning.lock").open("a") as lock:

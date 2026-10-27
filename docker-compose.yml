@@ -9,10 +9,10 @@
 # Watch a bot (or sign in) at http://localhost:<port>/vnc.html: naukri 6081, linkedin 6082,
 # hirist 6083, instahyre 6084, cutshort 6085, wellfound 6086 (pipeline/lanes.py WATCH_PORTS).
 # The pipeline itself runs on your Mac, so the briefing agents can use claude and kiro and only
-# one process writes .memory/.
+# one process writes user/memory/.
 #
-# The repo is mounted at /app, so .env, data/ and .memory/ are shared with your machine. Each
-# container keeps its own Chrome profile in data/docker/browser/: a macOS profile does not open
+# The repo is mounted at /app, so .env, user/ are shared with your machine. Each
+# container keeps its own Chrome profile in user/docker/browser/: a macOS profile does not open
 # in Linux Chromium. The claude CLI needs CLAUDE_CODE_OAUTH_TOKEN (run `claude setup-token` on
 # your Mac) or ANTHROPIC_API_KEY, in your shell or in .env.
 #
@@ -44,7 +44,7 @@ services:
     environment:
       <<: *env
       SITE: naukri
-      BROWSER_PROFILE_DIR: data/docker/browser/naukri
+      BROWSER_PROFILE_DIR: user/docker/browser/naukri
       LOGIN_URL: https://www.naukri.com/nlogin/login
     ports: ["127.0.0.1:6081:6080"]
 
@@ -53,8 +53,8 @@ services:
     environment:
       <<: *env
       SITE: linkedin
-      BROWSER_PROFILE_DIR: data/docker/browser/linkedin
-      LINKEDIN_BROWSER_PROFILE_DIR: data/docker/browser/linkedin
+      BROWSER_PROFILE_DIR: user/docker/browser/linkedin
+      LINKEDIN_BROWSER_PROFILE_DIR: user/docker/browser/linkedin
       LOGIN_URL: https://www.linkedin.com/login
     ports: ["127.0.0.1:6082:6080"]
 
@@ -63,7 +63,7 @@ services:
     environment:
       <<: *env
       SITE: hirist
-      BROWSER_PROFILE_DIR: data/docker/browser/lanes/hirist
+      BROWSER_PROFILE_DIR: user/docker/browser/lanes/hirist
       LOGIN_URL: https://www.hirist.tech/
     ports: ["127.0.0.1:6083:6080"]
 
@@ -72,7 +72,7 @@ services:
     environment:
       <<: *env
       SITE: instahyre
-      BROWSER_PROFILE_DIR: data/docker/browser/lanes/instahyre
+      BROWSER_PROFILE_DIR: user/docker/browser/lanes/instahyre
       LOGIN_URL: https://www.instahyre.com/login/
     ports: ["127.0.0.1:6084:6080"]
 
@@ -81,7 +81,7 @@ services:
     environment:
       <<: *env
       SITE: cutshort
-      BROWSER_PROFILE_DIR: data/docker/browser/lanes/cutshort
+      BROWSER_PROFILE_DIR: user/docker/browser/lanes/cutshort
       LOGIN_URL: https://cutshort.io/login
     ports: ["127.0.0.1:6085:6080"]
 
@@ -90,7 +90,7 @@ services:
     environment:
       <<: *env
       SITE: wellfound
-      BROWSER_PROFILE_DIR: data/docker/browser/lanes/wellfound
+      BROWSER_PROFILE_DIR: user/docker/browser/lanes/wellfound
       LOGIN_URL: https://wellfound.com/login
     ports: ["127.0.0.1:6086:6080"]
 
@@ -99,8 +99,8 @@ services:
     shm_size: 2gb
     environment:
       <<: *env
-      BROWSER_PROFILE_DIR: data/docker/browser/naukri
-      LINKEDIN_BROWSER_PROFILE_DIR: data/docker/browser/linkedin
+      BROWSER_PROFILE_DIR: user/docker/browser/naukri
+      LINKEDIN_BROWSER_PROFILE_DIR: user/docker/browser/linkedin
       PIPELINE_AI_CLI: claude
       PIPELINE_BOTS: ${PIPELINE_BOTS:-4}
     ports: ["127.0.0.1:6080:6080", "127.0.0.1:5900:5900"]

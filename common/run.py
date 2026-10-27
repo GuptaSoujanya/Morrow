@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Optional
 
 from .models import Settings
+from . import paths
 
 logger = logging.getLogger(__name__)
 
@@ -37,10 +38,10 @@ class _KeptLog(logging.FileHandler):
 
 
 def keep_log(settings: Settings, tool: str, now: Optional[datetime] = None) -> Optional[Path]:
-    """Also write this run's log to data/reports/<date>/logs/, next to the day's report."""
+    """Also write this run's log to user/reports/<date>/logs/, next to the day's report."""
     now = now or datetime.now()
     path = (
-        Path(settings.report_dir or "data/reports")
+        Path(settings.report_dir or paths.user("reports"))
         / now.strftime("%Y-%m-%d")
         / "logs"
         / ("%s-%s.log" % (tool, now.strftime("%H%M%S")))

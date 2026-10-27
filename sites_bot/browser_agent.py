@@ -28,6 +28,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 
 from common.models import ApplyStatus, JobPosting, Profile, Settings
+from common import paths
 
 logger = logging.getLogger(__name__)
 
@@ -282,7 +283,7 @@ def workdir_for(settings: Settings, label: str, now: Optional[datetime] = None) 
 
     now = now or datetime.now()
     return (
-        Path(settings.report_dir or "data/reports")
+        Path(settings.report_dir or paths.user("reports"))
         / now.strftime("%Y-%m-%d")
         / "agent"
         / ("%s %s %s" % (now.strftime("%H%M%S"), _folder_name(label) or "task", uuid.uuid4().hex[:12]))
@@ -699,8 +700,8 @@ def take_over(
 
 
 def records_for(settings: Settings, day: str) -> List[Dict[str, Any]]:
-    """The day's agent tasks, oldest first, from data/reports/<day>/agent/*/report.json."""
-    folder = Path(settings.report_dir or "data/reports") / day / "agent"
+    """The day's agent tasks, oldest first, from user/reports/<day>/agent/*/report.json."""
+    folder = Path(settings.report_dir or paths.user("reports")) / day / "agent"
     records = []
     for path in sorted(folder.glob("*/report.json")):
         try:

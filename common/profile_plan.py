@@ -37,10 +37,11 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from .models import Profile, Settings
+from . import paths
 
 logger = logging.getLogger(__name__)
 
-PLAN_FILE = Path(".memory") / "profile-plan.json"
+PLAN_FILE = paths.memory_dir() / "profile-plan.json"
 #: Bump when the prompt or the plan's shape changes: cached plans are then written again.
 PLAN_VERSION = 3
 HEADLINE_CHARS = 220        # LinkedIn's limit; Naukri allows 250

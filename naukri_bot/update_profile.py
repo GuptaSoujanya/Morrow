@@ -57,6 +57,7 @@ from common import resume as resume_module
 from common.browser import human_pause, safe_get
 from common.run import EXIT_CONFIG, EXIT_FAILED, EXIT_LOGIN, EXIT_OK, configure_logging, keep_log, send_alert
 from common.models import LoginResult, Settings
+from common import paths
 
 logger = logging.getLogger(__name__)
 
@@ -430,7 +431,7 @@ def update_resume_headline(driver: Any, dry_run: bool = False) -> HeadlineUpdate
 
 
 def _screenshot(driver: Any, settings: Settings) -> None:
-    directory = Path(settings.screenshot_dir or "data/screenshots")
+    directory = Path(settings.screenshot_dir or paths.user("screenshots"))
     try:
         directory.mkdir(parents=True, exist_ok=True)
         path = directory / (
@@ -586,13 +587,13 @@ def _resume_to_upload(settings: Settings, state_path: Path, dry_run: bool) -> Op
 
 
 def _remember_profile() -> None:
-    """Track the update in .memory/profiles.json with the profile link."""
+    """Track the update in user/memory/profiles.json with the profile link."""
     from common import memory
 
     try:
         memory.record_profile("naukri", memory.PROFILE_UPDATED, PROFILE_URL, "headline re-saved")
     except OSError as exc:
-        logger.warning("Could not note the profile in .memory (%s)", exc)
+        logger.warning("Could not note the profile in user/memory (%s)", exc)
 
 
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:

@@ -21,6 +21,7 @@ from .models import (
     Profile,
     Settings,
 )
+from . import paths
 
 if TYPE_CHECKING:
     from .ledger import Ledger
@@ -39,7 +40,7 @@ def _number_text(value: Any) -> str:
     return str(value)
 
 
-_UNANSWERED_FILE = "data/worklists/unanswered_questions.md"
+_UNANSWERED_FILE = "user/worklists/unanswered_questions.md"
 _seen_unanswered = set()
 _unanswered_loaded = False
 
@@ -52,7 +53,7 @@ _book = None  # type: Optional[AnswerBook]
 
 
 def answers_file_path(settings: Any) -> str:
-    return os.path.join(getattr(settings, "data_dir", "") or "data/inputs", _ANSWERS_FILE_NAME)
+    return os.path.join(getattr(settings, "data_dir", "") or paths.user("inputs"), _ANSWERS_FILE_NAME)
 
 
 def _question_key(text: str) -> str:
@@ -135,7 +136,7 @@ def match_options(answer: str, options: List[str]) -> Optional[List[str]]:
 
 
 class AnswerBook:
-    """The user's own answers in data/inputs/answers.txt, and the questions left for them."""
+    """The user's own answers in user/inputs/answers.txt, and the questions left for them."""
 
     def __init__(self, path: str):
         self.path = path
@@ -672,7 +673,7 @@ class AnswerEngine:
         )
 
     def own_answer(self, question: str, options: Optional[List[str]] = None) -> Optional[str]:
-        """The answer from data/inputs/answers.txt alone: no cache, no model, nothing recorded."""
+        """The answer from user/inputs/answers.txt alone: no cache, no model, nothing recorded."""
         self._refresh_fingerprint()
         resolution = self._own_answer(question, options)
         if resolution is None or resolution.answer is None:
@@ -682,7 +683,7 @@ class AnswerEngine:
     def _own_answer(
         self, question: str, options: Optional[List[str]]
     ) -> Optional[AnswerResolution]:
-        """What the user wrote in data/inputs/answers.txt, when it fits the rendered options."""
+        """What the user wrote in user/inputs/answers.txt, when it fits the rendered options."""
         text = self.book.answer_for(question, options)
         if text is None:
             return None
@@ -705,7 +706,7 @@ class AnswerEngine:
         return AnswerResolution.resolved(
             Answer(
                 text=text,
-                grounded_in="data/inputs/answers.txt",
+                grounded_in="user/inputs/answers.txt",
                 source=AnswerSource.DATA,
                 confidence=self.book.last_match.score if self.book.last_match else 1.0,
             )
@@ -767,7 +768,7 @@ class AnswerEngine:
                     self._record_abstain(question, "propose_mode", options)
                     return None, "propose_mode"
                 self.answered += 1
-                logger.info("[multi] %s -> %s (data/inputs/answers.txt)", question, chosen)
+                logger.info("[multi] %s -> %s (user/inputs/answers.txt)", question, chosen)
                 return chosen, ""
             logger.info(
                 "Your answer %r to %r names none of the options %s; asking the model",

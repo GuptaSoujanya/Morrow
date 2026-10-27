@@ -29,6 +29,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from common.models import JobPosting, Profile, Settings
+from common import paths
 
 logger = logging.getLogger(__name__)
 
@@ -107,7 +108,7 @@ def _posting_header(text: str) -> Dict[str, str]:
 
 
 def leads_from_files(settings: Settings) -> List[Lead]:
-    """Postings saved with tailored resumes, browser-agent reports, and data/inputs/company_sites.md."""
+    """Postings saved with tailored resumes, browser-agent reports, and user/inputs/company_sites.md."""
     leads = []  # type: List[Lead]
     from common.resume import tailored_artifact_paths
 
@@ -117,7 +118,7 @@ def leads_from_files(settings: Settings) -> List[Lead]:
         for address in find_addresses(text):
             leads.append(Lead(address, header.get("Company", ""), header.get("Title", ""), header.get("URL", ""),
                               "posting saved in %s" % posting.parent.name, text))
-    for record_path in sorted(Path(settings.report_dir or "data/reports").glob("*/agent/*/report.json")):
+    for record_path in sorted(Path(settings.report_dir or paths.user("reports")).glob("*/agent/*/report.json")):
         try:
             record = json.loads(record_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
@@ -176,7 +177,7 @@ def leads_from_naukri(driver: Any, settings: Settings, ledger: Any, days: int, l
 
 
 def records_path(settings: Settings) -> Path:
-    return Path(settings.data_dir or "data/inputs") / RECORDS_NAME
+    return Path(settings.data_dir or paths.user("inputs")) / RECORDS_NAME
 
 
 def read_records(settings: Settings) -> List[Dict[str, Any]]:
@@ -393,7 +394,7 @@ def draft_all(settings: Settings, profile: Profile, client: Any, leads: List[Lea
     records = read_records(settings)
     sender = settings.cold_email_from or settings.google_email or settings.email
     base = resume_module.load_base(settings.resume_path)
-    folder = Path(settings.report_dir or "data/reports") / now.strftime("%Y-%m-%d") / "emails"
+    folder = Path(settings.report_dir or paths.user("reports")) / now.strftime("%Y-%m-%d") / "emails"
     for lead in unique_leads(settings, profile, leads):
         if counts["drafted"] >= limit:
             break

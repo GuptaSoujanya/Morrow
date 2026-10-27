@@ -114,7 +114,7 @@ def claude(monkeypatch):
 
 @pytest.fixture
 def settings(tmp_path):
-    data = tmp_path / "data" / "inputs"
+    data = tmp_path / "user" / "inputs"
     data.mkdir(parents=True)
     (data / "answers.txt").write_text(
         "Q: What is your notice period?\nA: 15 days\n\n"

@@ -64,7 +64,7 @@ def test_a_missing_or_broken_index_reads_as_empty(tmp_path):
 
 def test_the_index_sits_beside_the_run_folders():
     assert profile_record.index_dir(Settings(report_dir="/tmp/runs")).as_posix() == "/tmp/runs/profile"
-    assert profile_record.index_dir(None).as_posix() == "data/reports/profile"
+    assert profile_record.index_dir(None).as_posix() == "user/reports/profile"
 
 
 def test_the_table_and_detail_are_short_enough_to_read(tmp_path):

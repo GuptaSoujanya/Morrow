@@ -1,6 +1,6 @@
 # One image for every bot's container: Chromium on a virtual screen you can watch
 # in a web page (noVNC), the claude CLI and the Playwright MCP the browser agent drives it with. The repo is mounted at /app
-# (docker-compose.yml), so the code, .env, data/, .memory/ and .research/ are the
+# (docker-compose.yml), so the code, .env, user/ and database/ are the
 # ones on your machine. Build: docker compose build
 FROM node:22-bookworm-slim AS node
 

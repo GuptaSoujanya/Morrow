@@ -5,6 +5,7 @@ import hashlib
 import json
 import secrets
 from pathlib import Path
+from common import paths
 
 PREFIX = "MORROW_ANSWER_EVENT "
 MAX_EVENT_BYTES = 65536
@@ -38,8 +39,8 @@ def answers_path(root: Path, runner) -> Path:
     command = Command("Agent answer sheet", ())
     runtime = runner.environment_provider(command, "answers") if runner.environment_provider else {}
     values = _settings(root, command, runtime)
-    folder = Path(values.get("DATA_DIR") or "data/inputs").expanduser()
-    return ((folder if folder.is_absolute() else root / folder) / "answers.txt").resolve()
+    folder = paths.resolve(values.get("DATA_DIR") or "user/inputs", root)
+    return (folder / "answers.txt").resolve()
 
 
 def revision(text: str) -> str:

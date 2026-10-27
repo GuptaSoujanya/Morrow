@@ -3,7 +3,7 @@
 Uploaded PDFs are read for grounding and attached unchanged. Tailoring requires
 the editable LaTeX source; a PDF never becomes a tailoring template.
 
-The resume at RESUME_PATH (data/resume/base.tex) is the copy the user edits by
+The resume at RESUME_PATH (user/resume/base.tex) is the copy the user edits by
 hand; the bot never writes to it. For one job, three parts are adjusted: the
 one-line subtitle under the name, the Summary paragraph, and the order of the
 items inside each Skills category. Nothing else changes, and nothing is
@@ -49,6 +49,7 @@ from .browser import human_pause, safe_get
 from .llm import LLMClient
 from .models import JobPosting, Settings
 from .profile import ProfileError, extract_resume_text
+from . import paths
 
 logger = logging.getLogger(__name__)
 
@@ -64,7 +65,7 @@ _RESUME_MESSAGE = "#attachCVMsgBox"
 #: Naukri shows "Resume has been successfully uploaded." within a second and clears it after ~5 s.
 UPLOAD_WAIT_S = 60
 
-# The three tailored parts, located by the structure of data/resume/base.tex.
+# The three tailored parts, located by the structure of user/resume/base.tex.
 _SUBTITLE = re.compile(
     r"(\{\\normalsize\\color\{muted\}\s*)(?P<subtitle>[^\n}]*?)(\s*\}\\\\\[\d+pt\])"
 )
@@ -757,7 +758,7 @@ def tailored_dir(settings: Settings, job: JobPosting) -> Path:
 
 def tailored_artifact_paths(settings: Settings, filename: str) -> List[Path]:
     """Read legacy and isolated run artifacts without sharing their output folders."""
-    output = Path(settings.resume_out_dir or "data/resume/out").resolve()
+    output = Path(settings.resume_out_dir or paths.user("resume/out")).resolve()
     library = Path(os.environ.get("MORROW_RESUME_LIBRARY_DIR") or output).resolve()
     roots = {output, library}
     roots.update(path for path in (library / "runs").glob("*") if path.is_dir())

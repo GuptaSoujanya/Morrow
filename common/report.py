@@ -1,6 +1,6 @@
 """One Markdown file a day: what the bots did, where you applied, what is left.
 
-data/reports/<YYYY-MM-DD>/report.md is rebuilt from the records whenever a bot
+user/reports/<YYYY-MM-DD>/report.md is rebuilt from the records whenever a bot
 finishes (the morning run, the profile updater, the LinkedIn poster), so it
 always covers the whole day so far. `python3 -m common.report` rebuilds it
 by hand. Every line comes from the ledger, the state files and the data folder;
@@ -19,6 +19,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from sites_bot import browser_agent, cold_email
 from .models import ApplyStatus, Settings
 from .shared_files import atomic_write_text, locked_file
+from . import paths
 
 
 logger = logging.getLogger(__name__)
@@ -224,8 +225,8 @@ def _linkedin(day: date) -> Dict[str, Any]:
     """Today's LinkedIn state, read from the poster's own files (same env keys, same defaults)."""
     import os
 
-    state = _read_json(_from_repo(os.getenv("LINKEDIN_STATE_PATH", "data/linkedin/state.json")))
-    drafts = _from_repo(os.getenv("LINKEDIN_DRAFT_DIR", "data/linkedin/drafts"))
+    state = _read_json(_from_repo(os.getenv("LINKEDIN_STATE_PATH", "user/linkedin/state.json")))
+    drafts = _from_repo(os.getenv("LINKEDIN_DRAFT_DIR", "user/linkedin/drafts"))
     key = day.isoformat()
     posted = [entry for entry in state.get("posted", []) if isinstance(entry, dict) and entry.get("date") == key]
     draft = drafts / ("%s.md" % key)
@@ -268,7 +269,7 @@ def _course_start(settings: Settings, today: date) -> date:
         except ValueError:
             logger.warning("COURSE_START_DATE %r is not YYYY-MM-DD; counting from today", settings.course_start_date)
             return today
-    path = Path(settings.report_dir or "data/reports") / "learning.json"
+    path = Path(settings.report_dir or paths.user("reports")) / "learning.json"
     state = _read_json(path)
     try:
         return date.fromisoformat(str(state.get("start")))
@@ -424,7 +425,7 @@ def build_report(settings: Settings, day: Optional[date] = None, now: Optional[d
     else:
         out.append("The Naukri bot did not run today.")
 
-    out += ["", "## Left for you", "", "### Company-site applications to finish (data/inputs/company_sites.md)", ""]
+    out += ["", "## Left for you", "", "### Company-site applications to finish (user/inputs/company_sites.md)", ""]
     if sites:
         for entry in sites[-MAX_LISTED:]:
             out.append(
@@ -442,7 +443,7 @@ def build_report(settings: Settings, day: Optional[date] = None, now: Optional[d
             out.append("- ...and %d older ones in the file." % (len(sites) - MAX_LISTED))
     else:
         out.append("None.")
-    out += ["", "### Questions to answer (data/inputs/answers.txt)", ""]
+    out += ["", "### Questions to answer (user/inputs/answers.txt)", ""]
     if questions:
         out += ["- %s" % _cell(question, 200) for question in questions[:MAX_LISTED]]
         if len(questions) > MAX_LISTED:
@@ -458,14 +459,14 @@ def build_report(settings: Settings, day: Optional[date] = None, now: Optional[d
         out.append("Employers get one or the other depending on how they word the question. Make them match.")
     else:
         out.append("None.")
-    out += ["", "### Facts to fill (data/inputs/profile.yaml)", ""]
+    out += ["", "### Facts to fill (user/inputs/profile.yaml)", ""]
     out += ["- %s" % fact for fact in facts] if facts else ["None."]
     if untried:
         out += [
             "",
             "### Company-site roles nobody has tried yet",
             "",
-            "`data/worklists/external_jobs.md` lists %d role(s). Set EXTERNAL_APPLY=true to let the bot try them, "
+            "`user/worklists/external_jobs.md` lists %d role(s). Set EXTERNAL_APPLY=true to let the bot try them, "
             "or open them by hand." % untried,
         ]
 
@@ -576,7 +577,7 @@ def build_report(settings: Settings, day: Optional[date] = None, now: Optional[d
 
 
 def report_path(settings: Settings, day: date) -> Path:
-    return Path(settings.report_dir or "data/reports") / day.isoformat() / REPORT_NAME
+    return Path(settings.report_dir or paths.user("reports")) / day.isoformat() / REPORT_NAME
 
 
 def write_daily_report(settings: Settings, day: Optional[date] = None, now: Optional[datetime] = None) -> Path:
@@ -607,7 +608,7 @@ def update_quietly(settings: Settings) -> Optional[Path]:
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="python3 -m common.report",
-        description="Rebuild data/reports/<date>/report.md: applications, what is left for you, profile, LinkedIn, learning.",
+        description="Rebuild user/reports/<date>/report.md: applications, what is left for you, profile, LinkedIn, learning.",
     )
     parser.add_argument("--date", metavar="YYYY-MM-DD", help="the day to report on (default: today)")
     parser.add_argument("--print", action="store_true", help="also print the report")

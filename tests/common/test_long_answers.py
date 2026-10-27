@@ -112,8 +112,8 @@ def test_a_question_the_resume_cannot_answer_is_declined(base):
 
 
 def _engine(tmp_path, client, **overrides):
-    (tmp_path / "data" / "inputs").mkdir(parents=True, exist_ok=True)
-    (tmp_path / "data" / "inputs" / "answers.txt").write_text("Q: Tell us about yourself\nA: My own words.\n", encoding="utf-8")
+    (tmp_path / "user" / "inputs").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "user" / "inputs" / "answers.txt").write_text("Q: Tell us about yourself\nA: My own words.\n", encoding="utf-8")
     (tmp_path / "base.tex").write_text(TEX, encoding="utf-8")
     values = dict(email="t@example.com", password="secret", resume_path=str(tmp_path / "base.tex"),
                   resume_out_dir=str(tmp_path / "out"), report_dir=str(tmp_path / "reports"))
@@ -134,7 +134,7 @@ def test_a_required_box_she_has_not_answered_is_written(tmp_path):
     engine = _engine(tmp_path, _Writer())
 
     assert ext._own_words(engine, QUESTION, True, lambda q: "written for " + q) == "written for " + QUESTION
-    assert QUESTION not in (tmp_path / "data" / "inputs" / "answers.txt").read_text(encoding="utf-8")
+    assert QUESTION not in (tmp_path / "user" / "inputs" / "answers.txt").read_text(encoding="utf-8")
 
 
 def test_an_optional_box_is_never_written(tmp_path):
@@ -147,7 +147,7 @@ def test_a_box_nobody_could_write_is_left_in_answers_txt(tmp_path):
     engine = _engine(tmp_path, _Writer())
 
     assert ext._own_words(engine, QUESTION, True, lambda q: None) is None
-    assert "Q: %s\nA:\n" % QUESTION in (tmp_path / "data" / "inputs" / "answers.txt").read_text(encoding="utf-8")
+    assert "Q: %s\nA:\n" % QUESTION in (tmp_path / "user" / "inputs" / "answers.txt").read_text(encoding="utf-8")
 
 
 def test_the_writer_keeps_each_answer_in_the_jobs_folder(tmp_path):
@@ -245,7 +245,7 @@ def test_a_chat_question_marked_per_job_gets_one_short_sentence_for_this_posting
     assert not resolution.abstained and resolution.answer.text == SHORT
     assert "one sentence, under 90 characters" in client.prompts[0]
     assert "Build LangChain agents in Python." in client.prompts[0]
-    assert SHORT not in (tmp_path / "data" / "inputs" / "answers.txt").read_text(encoding="utf-8")
+    assert SHORT not in (tmp_path / "user" / "inputs" / "answers.txt").read_text(encoding="utf-8")
     [record] = [r for r in assist.read_changes(engine.settings) if r["kind"] == "written"]
     assert record["file"] == "this application only" and record["value"] == SHORT
 
@@ -285,7 +285,7 @@ def test_no_posting_or_a_declining_model_leaves_it_unanswered(tmp_path):
 
     engine.set_job_context(_job())
     assert engine.resolve(WHY_US).abstained
-    assert "[AI writes this for each job]" in (tmp_path / "data" / "inputs" / "answers.txt").read_text(encoding="utf-8")
+    assert "[AI writes this for each job]" in (tmp_path / "user" / "inputs" / "answers.txt").read_text(encoding="utf-8")
 
 
 def test_an_optional_box_marked_per_job_is_written_on_company_forms(tmp_path):

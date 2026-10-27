@@ -20,6 +20,7 @@ from common.browser import human_pause, human_type, safe_get
 from common.models import LoginResult
 
 from .config import LinkedInSettings
+from common import paths
 
 logger = logging.getLogger(__name__)
 
@@ -292,9 +293,9 @@ def _enabled(element: Any) -> bool:
         return False
 
 
-def screenshot(driver: Any, directory: str = "data/screenshots") -> Optional[Path]:
+def screenshot(driver: Any, directory: str = "user/screenshots") -> Optional[Path]:
     try:
-        folder = Path(directory or "data/screenshots")
+        folder = Path(directory or paths.user("screenshots"))
         folder.mkdir(parents=True, exist_ok=True)
         path = folder / ("linkedin-%s.png" % datetime.now().strftime("%Y%m%d-%H%M%S"))
         if driver.save_screenshot(str(path)):
@@ -309,7 +310,7 @@ def publish(
     driver: Any,
     text: str,
     image_path: str,
-    screenshot_dir: str = "data/screenshots",
+    screenshot_dir: str = "user/screenshots",
     document_path: str = "",
     document_title: str = "",
 ) -> PublishResult:

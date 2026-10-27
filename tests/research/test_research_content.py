@@ -1,7 +1,7 @@
-"""The reading material in the repository's .research/: every week, resume file and link is sound.
+"""The reading material in the repository's user/research/: every week, resume file and link is sound.
 
 The suite's conftest moves each test into a temporary folder, so the real
-.research/ is found from this file's own location.
+user/research/ is found from this file's own location.
 """
 
 import pytest
@@ -10,9 +10,9 @@ from pathlib import Path
 
 from pipeline import content, learning
 
-RESEARCH = Path(__file__).resolve().parents[2] / ".research"
+RESEARCH = Path(__file__).resolve().parents[2] / "user" / "research"
 
-pytestmark = pytest.mark.skipif(not (RESEARCH / "learning" / "weeks").is_dir(), reason="no .research/ here")
+pytestmark = pytest.mark.skipif(not (RESEARCH / "learning" / "weeks").is_dir(), reason="no user/research/ here")
 
 
 @pytest.mark.parametrize("week", range(1, learning.week_of(learning.LAST_DAY) + 1))
@@ -51,8 +51,8 @@ def test_every_briefing_day_on_disk_is_complete():
         assert [p for p in problems if "learning/today.md" not in p] == [], day
 
 
-COURSE = RESEARCH.parent / "course"
-course_here = pytest.mark.skipif(not (COURSE / "_sidebar.md").exists(), reason="no course/ here")
+COURSE = RESEARCH.parent.parent / "database" / "course"
+course_here = pytest.mark.skipif(not (COURSE / "_sidebar.md").exists(), reason="no database/course/ here")
 
 
 @course_here

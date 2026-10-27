@@ -65,7 +65,7 @@ class _Client:
 
 
 def _setup(tmp_path, answers=ANSWERS, profile_yaml=PROFILE_YAML):
-    data = tmp_path / "data" / "inputs"
+    data = tmp_path / "user" / "inputs"
     data.mkdir(parents=True)
     (data / "answers.txt").write_text(answers, encoding="utf-8")
     (data / "profile.yaml").write_text(profile_yaml, encoding="utf-8")
@@ -104,16 +104,16 @@ def test_blanks_are_filled_from_quoted_lines_and_marked(tmp_path):
         "Do you have a valid passport?",
         "extra_facts.contract_roles",
     ]
-    book = AnswerBook(str(tmp_path / "data" / "inputs" / "answers.txt"))
+    book = AnswerBook(str(tmp_path / "user" / "inputs" / "answers.txt"))
     assert book.answer_for("Notice period (in days)") == "15 days"
     assert book.answer_for("Do you have a valid passport?") == "Yes"
     assert book.answer_for("Do you know Kubernetes?") is None
-    text = (tmp_path / "data" / "inputs" / "answers.txt").read_text(encoding="utf-8")
+    text = (tmp_path / "user" / "inputs" / "answers.txt").read_text(encoding="utf-8")
     assert '# AI filled this on' in text and 'from your profile: "notice_period_days: 15"' in text
-    facts = yaml.safe_load((tmp_path / "data" / "inputs" / "profile.yaml").read_text(encoding="utf-8"))
+    facts = yaml.safe_load((tmp_path / "user" / "inputs" / "profile.yaml").read_text(encoding="utf-8"))
     assert facts["extra_facts"]["contract_roles"] == "Yes, open to contract roles of 12 months or more"
     assert facts["extra_facts"]["pan_number"] is None
-    backups = sorted(path.name.split(".")[0] for path in (tmp_path / "data" / "inputs" / "backups").iterdir())
+    backups = sorted(path.name.split(".")[0] for path in (tmp_path / "user" / "inputs" / "backups").iterdir())
     assert backups == ["answers", "profile"]
     recorded = assist.changes_on(settings, changes[0].at[:10])
     assert [record["value"] for record in recorded] == ["15 days", "Yes", "Yes, open to contract roles of 12 months or more"]
@@ -139,8 +139,8 @@ def test_a_dry_run_changes_no_file(tmp_path):
     changes = assist.fill_blanks(settings, profile, _Client(GOOD), write=False)
 
     assert len(changes) == 3
-    assert (tmp_path / "data" / "inputs" / "answers.txt").read_text(encoding="utf-8") == ANSWERS
-    assert (tmp_path / "data" / "inputs" / "profile.yaml").read_text(encoding="utf-8") == PROFILE_YAML
+    assert (tmp_path / "user" / "inputs" / "answers.txt").read_text(encoding="utf-8") == ANSWERS
+    assert (tmp_path / "user" / "inputs" / "profile.yaml").read_text(encoding="utf-8") == PROFILE_YAML
     assert not (tmp_path / "reports").exists()
 
 
@@ -152,7 +152,7 @@ def test_a_blank_the_model_could_not_answer_is_not_asked_again_until_a_file_chan
     assist.fill_blanks(settings, profile, client)
     assert len(client.prompts) == 1
 
-    with open(tmp_path / "data" / "inputs" / "answers.txt", "a", encoding="utf-8") as handle:
+    with open(tmp_path / "user" / "inputs" / "answers.txt", "a", encoding="utf-8") as handle:
         handle.write("\nQ: Kubernetes experience\nA: Three years of Kubernetes in production\n")
     assist.fill_blanks(settings, profile, client)
     assert len(client.prompts) == 2
@@ -187,7 +187,7 @@ def test_disagreements_between_the_two_files_are_named(tmp_path):
     settings, _ = _setup(tmp_path, answers=answers)
     profile = Profile(expected_ctc_lpa=18, notice_period_days=15, serving_notice=True)
 
-    found = assist.disagreements(profile, AnswerBook(str(tmp_path / "data" / "inputs" / "answers.txt")))
+    found = assist.disagreements(profile, AnswerBook(str(tmp_path / "user" / "inputs" / "answers.txt")))
 
     assert [(item.topic, item.in_answers, item.in_profile) for item in found] == [
         ("expected CTC", "20 LPA", "expected_ctc_lpa: 18"),
@@ -205,7 +205,7 @@ def test_shift_answers_that_disagree_with_the_profile_facts_are_named(tmp_path):
     settings, _ = _setup(tmp_path, answers=answers)
     profile = Profile(extra_facts={"willing_night_shifts": "false", "willing_rotational_shifts": True})
 
-    found = assist.disagreements(profile, AnswerBook(str(tmp_path / "data" / "inputs" / "answers.txt")))
+    found = assist.disagreements(profile, AnswerBook(str(tmp_path / "user" / "inputs" / "answers.txt")))
 
     assert [(item.topic, item.in_answers, item.in_profile) for item in found] == [
         ("rotational shifts", "No", "extra_facts.willing_rotational_shifts: true"),

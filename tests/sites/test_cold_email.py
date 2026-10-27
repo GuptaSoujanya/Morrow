@@ -53,7 +53,7 @@ class _Client:
 def settings(tmp_path):
     tex = tmp_path / "base.tex"
     tex.write_text(TEX, encoding="utf-8")
-    return Settings(data_dir=str(tmp_path / "data" / "inputs"), report_dir=str(tmp_path / "reports"),
+    return Settings(data_dir=str(tmp_path / "user" / "inputs"), report_dir=str(tmp_path / "reports"),
                     resume_out_dir=str(tmp_path / "out"), resume_path=str(tex),
                     google_email="jane.jobs@example.org")
 

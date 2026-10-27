@@ -109,7 +109,7 @@ def board_page(monkeypatch, tmp_path):
 
 
 def _settings(tmp_path, **values):
-    return Settings(data_dir=str(tmp_path / "data" / "inputs"), report_dir=str(tmp_path / "reports"), **values)
+    return Settings(data_dir=str(tmp_path / "user" / "inputs"), report_dir=str(tmp_path / "reports"), **values)
 
 
 def _job(number="1"):

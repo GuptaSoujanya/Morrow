@@ -310,7 +310,7 @@ def test_overview_counts_what_the_ledger_holds(tmp_path, monkeypatch):
 
 @pytest.fixture
 def site(tmp_path, monkeypatch):
-    data = tmp_path / "data"
+    data = tmp_path / "user"
     (data / "inputs").mkdir(parents=True)
     monkeypatch.setattr(state, "APPLY", tmp_path)
     monkeypatch.setattr(state, "ANSWERS", data / "inputs" / "answers.txt")
@@ -366,7 +366,7 @@ def test_answers_and_facts_are_saved_from_the_page(site):
 
 def test_files_open_and_save_only_by_name(site):
     status, data = call(site, "GET", "/api/file?name=answers")
-    assert status == 200 and data["path"] == "data/inputs/answers.txt" and data["line"] == 2
+    assert status == 200 and data["path"] == "user/inputs/answers.txt" and data["line"] == 2
     assert call(site, "POST", "/api/file", {"name": "env", "text": "SECRET=2\n"})[0] == 200
     assert (state.APPLY / ".env").read_text() == "SECRET=2\n"
     assert call(site, "GET", "/api/file?name=../../etc/passwd")[0] == 400

@@ -31,12 +31,12 @@ def test_three_real_chrome_instances_keep_independent_cookies_tabs_and_lifetimes
         def log_message(self, *_):
             pass
 
-    source = tmp_path / "data/browser/naukri"
+    source = tmp_path / "user/browser/naukri"
     connections.mark_managed(source)
     connections.write_metadata(source, {"google": {"state": "connected", "verified_account": "synthetic@example.invalid"}})
     monkeypatch.setenv("BROWSER_PROFILE_DIR", str(source))
-    monkeypatch.setenv("RESUME_OUT_DIR", str(tmp_path / "data/resume/out"))
-    monkeypatch.setenv("SCREENSHOT_DIR", str(tmp_path / "data/screenshots"))
+    monkeypatch.setenv("RESUME_OUT_DIR", str(tmp_path / "user/resume/out"))
+    monkeypatch.setenv("SCREENSHOT_DIR", str(tmp_path / "user/screenshots"))
     server = ThreadingHTTPServer(("127.0.0.1", 0), Page)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     url = f"http://127.0.0.1:{server.server_port}/"

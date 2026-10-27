@@ -1,7 +1,7 @@
 """The AI keeps your data files filled in, from what you have already written down.
 
-Questions the bot could not answer land in data/inputs/answers.txt with an empty A:,
-and some facts in data/inputs/profile.yaml are still null. Before and after each run
+Questions the bot could not answer land in user/inputs/answers.txt with an empty A:,
+and some facts in user/inputs/profile.yaml are still null. Before and after each run
 this asks the model to answer them from three sources only: the resume, the
 profile and the answers already in answers.txt. An answer is written only when
 the model quotes, word for word, the line of a source that supports it; the
@@ -28,6 +28,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from .answers import AnswerBook, _question_key, answers_file_path
 from .models import Profile, Settings
 from .shared_files import atomic_write_text, locked_file
+from . import paths
 
 
 logger = logging.getLogger(__name__)
@@ -225,7 +226,7 @@ def build_prompt(items: List[Dict[str, str]], texts: Dict[str, str]) -> str:
 
 
 def _backup(path: Path, settings: Settings) -> None:
-    folder = Path(settings.data_dir or "data/inputs") / "backups"
+    folder = Path(settings.data_dir or paths.user("inputs")) / "backups"
     folder.mkdir(parents=True, exist_ok=True)
     shutil.copy2(str(path), str(folder / ("%s.%s" % (path.name, datetime.now().strftime("%Y%m%d-%H%M%S-%f")))))
     old = sorted(folder.glob("%s.*" % path.name))
@@ -273,7 +274,7 @@ def fill_fact(text: str, dotted: str, value: str, note: str) -> Optional[str]:
 
 
 def changes_path(settings: Settings) -> Path:
-    return Path(settings.report_dir or "data/reports") / CHANGES_FILE
+    return Path(settings.report_dir or paths.user("reports")) / CHANGES_FILE
 
 
 def record_change(settings: Settings, change: Change) -> None:

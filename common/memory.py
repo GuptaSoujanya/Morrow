@@ -1,10 +1,10 @@
-"""The day's checkpoint in .memory/, so a second run the same day continues.
+"""The day's checkpoint in user/memory/, so a second run the same day continues.
 
-.memory/progress.json holds, per date, every pipeline stage with its status and
+user/memory/progress.json holds, per date, every pipeline stage with its status and
 attempts, and the companies applied to that day (read back from the ledger, so
-only verified applications are listed). .memory/<date>.md is the same thing for
-a person to read, and .memory/README.md says how to continue.
-.memory/profiles.json tracks every board profile the bots created or updated,
+only verified applications are listed). user/memory/<date>.md is the same thing for
+a person to read, and user/memory/README.md says how to continue.
+user/memory/profiles.json tracks every board profile the bots created or updated,
 with its link, so the checkpoint links straight to each profile.
 """
 
@@ -20,8 +20,9 @@ from typing import Any, Dict, Iterable, Iterator, List, Optional
 from .models import ApplyStatus
 from .pipeline_diagnostics import process_alive, sanitize_detail
 from .shared_files import atomic_write_text, locked_file
+from . import paths
 
-MEMORY_DIR = Path(".memory")
+MEMORY_DIR = paths.memory_dir()
 PROFILES_FILE = "profiles.json"
 
 #: What a bot did to a board profile.
@@ -41,7 +42,7 @@ DAY_NOT_STARTED = "not started"
 #: Ledger statuses that mean an application really went through.
 APPLIED_STATUSES = (ApplyStatus.APPLIED, ApplyStatus.APPLIED_EXTERNAL, ApplyStatus.APPLIED_PLATFORM)
 
-_README = """# .memory: the pipeline's checkpoint
+_README = """# user/memory: the pipeline's checkpoint
 
 `python3 -m pipeline` writes here after every stage. Run it again the same day
 (or say "continue") and it skips every stage already done and retries the rest.

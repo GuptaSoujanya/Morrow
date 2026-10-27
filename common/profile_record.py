@@ -4,8 +4,8 @@ A profile run leaves a folder of dozens of MCP snapshots and screenshots. This m
 keeps the part worth reading: a flat digest per board, written to one index that holds
 the latest run for every board and an append-only log of every run before it.
 
-    data/reports/profile/latest.json     board -> the last run's digest
-    data/reports/profile/history.jsonl   one digest per line, oldest first
+    user/reports/profile/latest.json     board -> the last run's digest
+    user/reports/profile/history.jsonl   one digest per line, oldest first
 
     python3 -m common.profile_record             # the table: board, when, saved, sections, ATS
     python3 -m common.profile_record --json      # the whole latest.json
@@ -22,17 +22,18 @@ import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+from . import paths
 
 logger = logging.getLogger(__name__)
 
-INDEX_DIR = Path("data/reports") / "profile"
+INDEX_DIR = paths.reports_dir() / "profile"
 LATEST = "latest.json"
 HISTORY = "history.jsonl"
 
 
 def index_dir(settings: Any = None) -> Path:
     """The index folder beside the run folders, so REPORT_DIR moves both together."""
-    root = getattr(settings, "report_dir", "") or "data/reports"
+    root = getattr(settings, "report_dir", "") or paths.user("reports")
     return Path(root) / "profile"
 
 
@@ -191,7 +192,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--board", default=None, help="Only this board, with a line per section.")
     parser.add_argument("--json", action="store_true", help="Print the records as JSON.")
     parser.add_argument("--history", action="store_true", help="Every recorded run, not just the latest.")
-    parser.add_argument("--dir", default=None, metavar="PATH", help="The index folder (default data/reports/profile).")
+    parser.add_argument("--dir", default=None, metavar="PATH", help="The index folder (default user/reports/profile).")
     args = parser.parse_args(argv)
     folder = Path(args.dir) if args.dir else INDEX_DIR
 

@@ -2,7 +2,7 @@
 # Health check for the LinkedIn poster: agent loaded?, today's entry, last log lines.
 cd "$(dirname "$0")/.."
 LABEL="com.naukri-bot.linkedin-post"
-STATE="${LINKEDIN_STATE_PATH:-data/linkedin/state.json}"
+STATE="${LINKEDIN_STATE_PATH:-user/linkedin/state.json}"
 PYTHON="venv/bin/python"
 [ -x "$PYTHON" ] || PYTHON="python3"
 
@@ -36,5 +36,5 @@ else
   echo "  nothing yet"
 fi
 
-echo "== Last 8 log lines (data/logs/linkedin.log)"
-tail -8 data/logs/linkedin.log 2>/dev/null | cut -c1-150 | sed 's/^/  /' || true
+echo "== Last 8 log lines (user/logs/linkedin.log)"
+tail -8 user/logs/linkedin.log 2>/dev/null | cut -c1-150 | sed 's/^/  /' || true

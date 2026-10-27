@@ -18,9 +18,9 @@ from web.state import Command
 @pytest.fixture
 def site(tmp_path, monkeypatch):
     monkeypatch.setattr(state, "APPLY", tmp_path)
-    monkeypatch.setenv("BROWSER_PROFILE_DIR", str(tmp_path / "data/browser/naukri"))
-    monkeypatch.setenv("RESUME_OUT_DIR", str(tmp_path / "data/resume/out"))
-    monkeypatch.setenv("SCREENSHOT_DIR", str(tmp_path / "data/screenshots"))
+    monkeypatch.setenv("BROWSER_PROFILE_DIR", str(tmp_path / "user/browser/naukri"))
+    monkeypatch.setenv("RESUME_OUT_DIR", str(tmp_path / "user/resume/out"))
+    monkeypatch.setenv("SCREENSHOT_DIR", str(tmp_path / "user/screenshots"))
     httpd = server.ControlServer(0)
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
     yield httpd
@@ -119,11 +119,11 @@ def test_three_job_sites_overlap_with_private_sessions_outputs_and_independent_s
         {"key": "instahyre", "action": "boards", "options": {"board": "instahyre"}},
     ]}
     assert call(site, "/api/run/batch/preview", data)[1]["ready"]
-    assert not (tmp_path / "data").exists(), "Previews must not create browser profiles"
+    assert not (tmp_path / "user").exists(), "Previews must not create browser profiles"
     status, launched = call(site, "/api/run/batch", data)
     assert status == 200 and launched["ok"] and launched["run"]["active_count"] == 3
     deadline = time.monotonic() + 5
-    output = tmp_path / "data/resume/out"
+    output = tmp_path / "user/resume/out"
     while len(list(output.glob("runs/*/probe.json"))) < 3 and time.monotonic() < deadline:
         time.sleep(.01)
     probes = [json.loads(path.read_text()) for path in output.glob("runs/*/probe.json")]

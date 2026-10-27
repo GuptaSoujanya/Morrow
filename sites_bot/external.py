@@ -3,10 +3,10 @@
 "Apply on company site" opens the employer's career page, nearly always an
 applicant tracking system (Greenhouse, Lever, Ashby, Workable, SmartRecruiters,
 Workday, ...). This module follows that link in a new tab, fills the form from
-the facts file, data/inputs/answers.txt and the resume, attaches the PDF, and submits
+the facts file, user/inputs/answers.txt and the resume, attaches the PDF, and submits
 only when every required field has an answer and the site then confirms the
-submission. Anything short of that is written to data/inputs/company_sites.md for a
-person to finish, and the open questions wait in data/inputs/answers.txt.
+submission. Anything short of that is written to user/inputs/company_sites.md for a
+person to finish, and the open questions wait in user/inputs/answers.txt.
 """
 
 import argparse
@@ -33,6 +33,7 @@ from common.answers import _NOT_FOR_JUDGEMENT, match_option
 from common.browser import human_pause, human_type, safe_get
 from common.models import AnswerMode, ApplyResult, ApplyStatus, JobPosting, Profile, Settings
 from common.shared_files import atomic_write_text, locked_file
+from common import paths
 
 
 logger = logging.getLogger(__name__)
@@ -1610,8 +1611,8 @@ def apply_on_company_site(
 
 
 def record_company_site(settings: Settings, job: JobPosting, result: ExternalResult) -> Path:
-    """Append the half-done application to data/inputs/company_sites.md for a person."""
-    path = Path(settings.data_dir or "data/inputs") / "company_sites.md"
+    """Append the half-done application to user/inputs/company_sites.md for a person."""
+    path = Path(settings.data_dir or paths.user("inputs")) / "company_sites.md"
     header = (
         "# Applications on company websites that need you\n\n"
         "The bot opened these from Naukri's \"Apply on company site\" button, filled\n"
@@ -1648,7 +1649,7 @@ def record_company_site(settings: Settings, job: JobPosting, result: ExternalRes
 
 def forget_company_site(settings: Settings, job: JobPosting) -> None:
     """Drop the job's entry once the bot has finished that application itself."""
-    path = Path(settings.data_dir or "data/inputs") / "company_sites.md"
+    path = Path(settings.data_dir or paths.user("inputs")) / "company_sites.md"
     try:
         with locked_file(path) as target:
             head, blocks = _read_company_sites(target)
@@ -1677,8 +1678,8 @@ def _same_job(block: str, job: JobPosting) -> bool:
 
 
 def pending_company_sites(settings: Settings) -> List[Dict[str, str]]:
-    """Entries still listed in data/inputs/company_sites.md, newest last."""
-    path = Path(settings.data_dir or "data/inputs") / "company_sites.md"
+    """Entries still listed in user/inputs/company_sites.md, newest last."""
+    path = Path(settings.data_dir or paths.user("inputs")) / "company_sites.md"
     try:
         text = path.read_text(encoding="utf-8")
     except OSError:
@@ -1733,7 +1734,7 @@ def retry_pending(
     driver: Any, settings: Settings, profile: Profile, answer_engine: Any, ledger: Any,
     base_pdf: Optional[Path], dry_run: bool,
 ) -> Dict[str, int]:
-    """Work through data/inputs/company_sites.md again; counts of what became of each entry tried."""
+    """Work through user/inputs/company_sites.md again; counts of what became of each entry tried."""
     counts = {"tried": 0, "applied": 0, "gone": 0, "still waiting": 0}
     walls = {}  # type: Dict[str, ExternalResult]
     home = driver.current_window_handle
@@ -1796,7 +1797,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument(
         "--retry-pending",
         action="store_true",
-        help="try data/inputs/company_sites.md again, skipping entries that wait on your answers or a code from your inbox",
+        help="try user/inputs/company_sites.md again, skipping entries that wait on your answers or a code from your inbox",
     )
     parser.add_argument("--title", default="", help="job title, for the tailored resume and the records")
     parser.add_argument("--company", default="", help="company name, for the tailored resume and the records")

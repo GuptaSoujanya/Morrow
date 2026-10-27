@@ -317,7 +317,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     mode.add_argument(
         "--propose",
         action="store_true",
-        help="Like --dry-run, but also save data/linkedin/drafts/<date>.md and send it on Telegram.",
+        help="Like --dry-run, but also save user/linkedin/drafts/<date>.md and send it on Telegram.",
     )
     mode.add_argument(
         "--post",
