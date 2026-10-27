@@ -87,7 +87,7 @@ the browsers you sign in to and the AI CLI you already use.
 | | Connections: one card per site (Naukri, LinkedIn, the four boards, Google) to open a sign-in window, check it, switch account or disconnect, without ever typing a password | dashboard **Connections** |
 | | Every bot's screen while it runs, with the option to type into it; a stop button; every run's log kept | **Activity dock** |
 | **Alerts** | A Telegram message when a scheduled run fails or a LinkedIn draft is ready for approval | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` |
-| **Accounts** (optional) | Sign-in, email verification, Free / Plus / Pro plans with Razorpay or Stripe, an admin screen with an audit log, workspace import and export | `scripts/morrow start accounts`, `morrow-api/` |
+| **Accounts** (optional) | Sign-in, email verification, Free / Plus / Pro plans with Razorpay or Stripe, an admin screen with an audit log, workspace import and export | [Manual developer setup](froned-dashbord/README.md#optional-accounts-mode), `morrow-api/` |
 | **Audit** | HOUND, an adversarial security audit harness: SAST, secrets, supply chain, container and test instruments with pinned databases, writing a gated verdict to `QUARRY.md` | `uv run --project hunt hound run` |
 
 ---
@@ -96,8 +96,9 @@ the browsers you sign in to and the AI CLI you already use.
 
 | | Needed for |
 |---|---|
-| **macOS** | Everything is tested on macOS. Linux works for the bots and Docker; the launchd schedules and `scripts/morrow` are macOS only. |
+| **macOS** | Everything is tested on macOS. Linux works for the bots and Docker; the launchd schedules are macOS only. |
 | **Python 3.11+** (3.12 tested) | all bots |
+| **zsh** | the `morrow` launcher |
 | **Google Chrome** | all bots (ChromeDriver is fetched by `webdriver-manager`; Edge also works) |
 | **Node 22.19+** | the dashboard (`npm start`) and the browser agent (`npx @playwright/mcp`) |
 | **`claude` CLI** signed in | the default LLM backend (no API key needed); briefings, profile agent, browser agent, LinkedIn writer. `kiro-cli` is optional and used alongside it. |
@@ -122,7 +123,8 @@ python3 -m pipeline onboard               # 2. your resume (PDF, .tex or .txt) +
                                           #    -> user/inputs/profile.yaml, persona.yaml, answers.txt, resume/base.tex, .env
 
 python3 -m naukri_bot --dry-run           # 3. rank the jobs it would apply to; clicks nothing, spends no quota
-scripts/morrow start                      # 4. the dashboard at http://127.0.0.1:8100
+scripts/morrow install                    # 4. install the command in ~/.local/bin
+morrow start                              # 5. start the dashboard at http://127.0.0.1:8100
 ```
 
 The first real run of each bot opens a visible Chrome window so you can finish the site's OTP or
@@ -135,21 +137,38 @@ time to continue where it stopped.
 
 ## The dashboard
 
-`scripts/morrow start` builds and serves the dashboard (the `froned-dashbord/` submodule, built on the
-`web/` bot engine in this repo) on **http://127.0.0.1:8100**, bound to localhost only. It launches the
-same `python3 -m ...` commands documented below, shows a command preview before each run, streams
-every run's log live and keeps run history.
+Run `scripts/morrow install` once from the repo root to create `~/.local/bin/morrow`, a symlink to this
+checkout's launcher. With `~/.local/bin` on your `PATH`, run `morrow start` from any directory.
+If the command is not found, add `export PATH="$HOME/.local/bin:$PATH"` to your shell configuration.
+You can also use `scripts/morrow start` directly from the repo root without installing the command.
+
+`morrow start` builds the frontend and starts the Python backend together in the background on
+**http://127.0.0.1:8100**, bound to localhost only. It waits for `/api/session` to confirm the free beta
+is ready before reporting success. You can close the terminal afterward. The launcher always uses
+beta mode, even when `MORROW_MODE=accounts` or old account settings are present in the environment.
+
+The dashboard (`froned-dashbord/`, built on the `web/` bot engine) launches the same `python3 -m ...`
+commands documented below, shows a command preview before each run, streams every run's log live
+and keeps run history.
 
 | Command | Does |
 |---|---|
-| `scripts/morrow start` | free beta: dashboard on :8100, nothing else |
-| `scripts/morrow start accounts` | also starts Docker Desktop, PostgreSQL and the account API (`morrow-api/`) on :8200 |
-| `scripts/morrow stop` | stops the dashboard and the API containers (Postgres data is kept) |
-| `scripts/morrow status` | which of :8100 and :8200 are up |
-| `scripts/morrow logs` | follows `reports/morrow/dashboard.log` |
+| `scripts/morrow install` | create the `~/.local/bin/morrow` symlink |
+| `morrow start` | build and start the free beta on :8100; reuse this launcher's running dashboard |
+| `morrow start --port 8116` | start the free beta on a different local port |
+| `morrow stop` | stop only the dashboard process group owned by this launcher |
+| `morrow restart` | stop the owned dashboard, rebuild the frontend and start again |
+| `morrow status` | check this launcher's dashboard and whether it is ready |
+| `morrow logs` | follow `reports/morrow/dashboard.log` in this checkout |
 
-Or by hand: `cd froned-dashbord && npm install && npm start -- --mode beta --port 8100` (it runs
-`venv/bin/python server.py`; set `DASHBOARD_PYTHON` to use another interpreter).
+All commands also work as `scripts/morrow <command>` from the repo root. An unrelated process on
+port 8100 is reported as a conflict; the launcher does not take it over or stop it. It does not start
+or stop Docker, PostgreSQL, or the account API. `morrow start accounts` is rejected; accounts mode
+uses the [manual developer setup](froned-dashbord/README.md#optional-accounts-mode).
+
+For a foreground development server: `cd froned-dashbord && npm install && npm start -- --mode beta --port 8100`
+(it runs `venv/bin/python server.py`; set `DASHBOARD_PYTHON` to use another interpreter). Stop this
+manually started server with Ctrl+C in its terminal; the launcher manages only its own process group.
 
 ### Pages
 
@@ -180,8 +199,9 @@ answer the arrow keys, Home and End. Launchpad and Insights export the daily ser
 sidebar state and the 32 workspace avatars live in your browser's local storage, nowhere else.
 
 **Free beta vs accounts mode.** The beta has no login and every page is open; account, plan and admin
-links are disabled. `scripts/morrow start accounts` turns on the `morrow-api/` backend (FastAPI,
-PostgreSQL): local accounts with Argon2 passwords, email verification, Stripe and Razorpay plans (Free,
+links are disabled. Accounts mode is a separate [manual developer setup](froned-dashbord/README.md#optional-accounts-mode):
+start the `morrow-api/` backend (FastAPI, PostgreSQL), then use `npm start -- --mode accounts` inside
+`froned-dashbord/`. It provides local accounts with Argon2 passwords, email verification, Stripe and Razorpay plans (Free,
 Plus ₹499, Pro ₹999), an admin **People & access** screen with an audit log, and a setup wizard whose
 **Finish setup** copies the profile and resume from the account into `user/`. Only the account named in
 `MORROW_WORKSPACE_OWNER_EMAIL` can run the bots; other accounts get read-only, plan-gated views.
@@ -1121,8 +1141,11 @@ alert is a no-op and the real error is still logged. Every command writes its fu
 
 ### Accounts mode and the account API
 
-The free beta needs no account. `scripts/morrow start accounts` (or `MORROW_MODE=accounts`) adds
-`morrow-api/`, a FastAPI service on :8200 over PostgreSQL, and the dashboard proxies `/api/v1/*` to it.
+The free beta needs no account, and `morrow start` always opens that beta. For accounts development,
+start PostgreSQL and the FastAPI service on :8200 using the Docker instructions in
+[morrow-api/README.md](morrow-api/README.md), then run `npm start -- --mode accounts` inside
+`froned-dashbord/`. The dashboard proxies `/api/v1/*` to the account API. See the full
+[manual setup](froned-dashbord/README.md#optional-accounts-mode) for configuration.
 `MORROW_API_URL` and `MORROW_WORKSPACE_OWNER_EMAIL` must be set; only that owner's account gets the bots
 and the runner, every other account gets read-only, plan-gated pages backed by the API.
 
@@ -1334,7 +1357,7 @@ values in `.env.example`; where the code's own default differs it is noted.
 
 | Key | Default | Meaning |
 |---|---|---|
-| `MORROW_MODE` | beta | `beta` or `accounts` |
+| `MORROW_MODE` | beta | mode for manual `npm start`: `beta` or `accounts`; the `morrow` launcher always uses beta |
 | `MORROW_API_URL` | `http://127.0.0.1:8200` | the account API (accounts mode) |
 | `MORROW_WORKSPACE_OWNER_EMAIL` | empty | the one account allowed to run the bots (accounts mode) |
 | `DASHBOARD_PYTHON` | `venv/bin/python` | interpreter for `npm start` |
@@ -1429,7 +1452,7 @@ python3 -m naukri_bot --help                 # every module prints its flags
 python3 -m pipeline status                   # today's checkpoint (read-only)
 python3 -m pipeline check                    # the study material for today
 python3 -m common.profile_record             # the profile index (read-only)
-scripts/morrow status                        # which services are up
+scripts/morrow status                        # launcher-owned dashboard readiness
 uv run --project hunt hound run              # the full security audit (optional, slow)
 ```
 
@@ -1457,7 +1480,7 @@ inside `morrow-api/`. The security audit harness in `hunt/` wrote its last dispo
 | Tailoring fails | needs a `.tex` resume and a LaTeX compiler on `PATH` (`brew install tectonic`) |
 | Browser agent or briefings fail at once | `claude` (and optionally `kiro-cli`) must be on `PATH` and signed in; Node for `npx` |
 | A profile section is reported "not on page" | read `python3 -m common.profile_record --board <name>`; fill the named field in `profile.yaml` |
-| Dashboard port busy | `scripts/morrow stop`, or `npm start -- --port 8101` |
+| Dashboard port busy | `morrow start` reports the occupied port. Use `morrow start --port 8116` for another port, stop this launcher's dashboard with `morrow stop`, or stop an unrelated server through its own terminal or service manager. |
 | Docker containers cannot sign in | a macOS Chrome profile does not open in Linux; `docker/login.sh` once per site |
 
 ---
@@ -1466,7 +1489,7 @@ inside `morrow-api/`. The security audit harness in `hunt/` wrote its last dispo
 
 - **One person per machine.** The dashboard's accounts mode stores profiles per account, but only the
   workspace owner can run the bots. There is no hosted or per-user runner.
-- **macOS first.** Schedules (launchd), `scripts/morrow`, `google_login.sh` and the code sandbox for
+- **macOS first.** Schedules (launchd), `google_login.sh` and the code sandbox for
   DSA practice (`sandbox-exec`) are macOS; the Linux sandbox (`bubblewrap`) is untested.
 - **Sites change.** Naukri, LinkedIn and the boards change their markup; selectors live at the top of
   each bot's module and in `board.py` files so a breakage is a one-line fix.

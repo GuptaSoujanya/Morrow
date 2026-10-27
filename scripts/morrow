@@ -1,75 +1,10 @@
 #!/bin/zsh
-# morrow: start, stop or check every local Morrow service with one command.
-#   ~/Desktop/apply/scripts/morrow start    free beta dashboard :8100 (no account API)
-#   ~/Desktop/apply/scripts/morrow start accounts    opt in to accounts and billing
-#   ~/Desktop/apply/scripts/morrow stop     stop them all (the Postgres data is kept)
-#   ~/Desktop/apply/scripts/morrow status   show which ones are up
-#   ~/Desktop/apply/scripts/morrow logs     follow the dashboard log
-cd "${0:A:h}/.." || exit 1
-ROOT=$PWD
-LOGS=$ROOT/reports/morrow
-MODE=${2:-${MORROW_MODE:-beta}}
-case "$MODE" in beta|accounts) ;; *) echo "Mode must be beta or accounts."; exit 1 ;; esac
-mkdir -p "$LOGS"
-
-up() { lsof -nP -iTCP:$1 -sTCP:LISTEN >/dev/null 2>&1; }
-
-wait_port() {  # port, seconds
-  for _ in {1..$2}; do up $1 && return 0; sleep 1; done
-  return 1
-}
-
-# Docker opens :8200 before uvicorn is ready, so wait for the API to say it is ready.
-wait_api() {  # seconds
-  for _ in {1..$1}; do curl -sf -m 2 http://127.0.0.1:8200/health/ready >/dev/null && return 0; sleep 1; done
-  return 1
-}
-
-start_bg() {  # name, port, dir, command...
-  local name=$1 port=$2 dir=$3; shift 3
-  if up $port; then echo "  $name already on :$port"; return; fi
-  (cd "$dir" && nohup "$@" > "$LOGS/$name.log" 2>&1 &)
-  if wait_port $port 60; then echo "  $name up on :$port"
-  else echo "  $name did not start, see $LOGS/$name.log"; fi
-}
-
-status() {
-  for pair in "account API:8200" "dashboard:8100"; do
-    up ${pair##*:} && echo "  up    ${pair%%:*} :${pair##*:}" || echo "  down  ${pair%%:*} :${pair##*:}"
-  done
-}
-
-case ${1:-start} in
-  start)
-    if [ "$MODE" = accounts ]; then
-      if ! docker info >/dev/null 2>&1; then
-        echo "Starting Docker Desktop…"
-        open -a Docker
-        for _ in {1..90}; do docker info >/dev/null 2>&1 && break; sleep 2; done
-        docker info >/dev/null 2>&1 || { echo "Docker did not start."; exit 1; }
-      fi
-      echo "Account API and Postgres…"
-      (cd "$ROOT/morrow-api" && docker compose -f compose.yaml -f compose.firebase.yaml up -d --build) >"$LOGS/morrow-api.log" 2>&1 \
-        || { echo "  docker compose failed, see $LOGS/morrow-api.log"; exit 1; }
-      wait_api 90 && echo "  account API ready on :8200" || echo "  account API not up yet, run: cd morrow-api && docker compose logs api"
-    else
-      echo "Free beta · all local tools, no account or payment required."
-    fi
-    start_bg dashboard 8100 "$ROOT/froned-dashbord" npm start -- --mode "$MODE"
-    echo
-    echo "Dashboard     http://127.0.0.1:8100"
-    echo "Stop all:     scripts/morrow stop"
-    ;;
-  stop)
-    for port in 8100; do
-      pids=$(lsof -tiTCP:$port -sTCP:LISTEN 2>/dev/null)
-      [ -n "$pids" ] && kill ${=pids} && echo "  stopped :$port"
-    done
-    if docker info >/dev/null 2>&1; then
-      (cd "$ROOT/morrow-api" && docker compose -f compose.yaml -f compose.firebase.yaml down) >/dev/null 2>&1 && echo "  stopped account API"
-    fi
-    ;;
-  status) status ;;
-  logs) tail -f "$LOGS/dashboard.log" ;;
-  *) echo "usage: scripts/morrow [start|stop|status|logs] [beta|accounts]"; exit 1 ;;
-esac
+# One command for the local beta. :A follows the installed command's symlink.
+set -eu
+morrow_root=${0:A:h:h}
+if [[ -x "$morrow_root/venv/bin/python" ]]; then
+  morrow_python="$morrow_root/venv/bin/python"
+else
+  morrow_python=$(command -v python3) || { print -u2 'Python 3 is required to run Morrow.'; exit 1; }
+fi
+exec "$morrow_python" "$morrow_root/scripts/morrow_launcher.py" "$@"
