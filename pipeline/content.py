@@ -1,4 +1,4 @@
-"""Checks on the reading material in .research/ and the course site in course/.
+"""Checks on the reading material in user/research/ and the course site in database/course/.
 
 `python3 -m pipeline check [--date D]` prints every problem found; the pipeline
 runs the same check for the day at the end of a run, so a day whose study notes
@@ -55,7 +55,7 @@ def week_problems(week: int, root: Path = learning.LEARNING) -> List[str]:
 def resume_problems(root: Path = learning.RESUME_LEARNING) -> List[str]:
     problems = []
     have = {path.name[:2]: path for path in root.glob("[0-9][0-9]-*.md")}
-    for number, slug, _ in learning.RESUME_AREAS:
+    for number, slug, _ in learning.resume_areas():
         path = have.get(number)
         if not path:
             problems.append("%s: no %s-%s.md" % (root, number, slug))

@@ -20,7 +20,7 @@ def test_selected_pdf_drives_resume_learning_and_contacts_stay_out_of_prompt(tmp
     legacy.write_text("Unrelated LegacySkill experience\n")
     monkeypatch.setattr(learning, "RESUME_TEX", legacy)
     monkeypatch.setenv("RESUME_PATH", str(selected))
-    monkeypatch.setattr(learning, "RESUME_AREAS", (("01", "python", "Python"),))
+    monkeypatch.setattr(learning, "resume_areas", lambda resume_path=None: [("01", "python", "Python")])
     prompts = []
     written = learning.fill_resume_learning(lambda prompt: prompts.append(prompt) or "# Python\n\n## Interview questions and answers\nSynthetic answer", tmp_path / "study")
     assert len(written) == 1 and len(prompts) == 1

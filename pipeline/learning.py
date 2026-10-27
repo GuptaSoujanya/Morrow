@@ -1,9 +1,9 @@
-"""The day's study material in .research/, written with the claude or kiro CLI.
+"""The day's study material in user/research/, written with the claude or kiro CLI.
 
 - learning/weeks/week-NN.md: the 90-day plan, one file per week. A week file that
   is missing (or short of days) is written by the CLI when that week comes up.
 - learning/today.md and learning/daily/<date>.md: today's day, cut from its week.
-- .memory/learning.json: shared durable progress (imports learning/progress.json once).
+- user/memory/learning.json: shared durable progress (imports learning/progress.json once).
 - resume-learning/NN-*.md: one study file per area of the resume; missing ones are written.
 - daily/<date>/: the day's briefing, written by the agents in pipeline/briefing.py.
 """
@@ -17,36 +17,50 @@ from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
 
 from common import ai_cli
+from common import persona as persona_module
 from common.profile import ProfileError, extract_resume_text
 
 from . import course, links
+from common import paths
 
 logger = logging.getLogger(__name__)
 
-RESEARCH = Path(".research")
+RESEARCH = paths.research_dir()
 LEARNING = RESEARCH / "learning"
 RESUME_LEARNING = RESEARCH / "resume-learning"
-RESUME_TEX = Path("data/resume/base.tex")
+RESUME_TEX = paths.user_dir() / "resume" / "base.tex"
 LAST_DAY = 90
 _DAY = re.compile(r"^## Day (\d+)\b", re.M)
+#: What the plan is for when the persona does not say.
+DEFAULT_GOAL = "senior interview level in High-Level System Design and in ML / Generative AI"
 
 Ask = Callable[[str], str]
 
-#: One study file per area of the resume, by number; the file name is free after "NN-".
-RESUME_AREAS = (
-    ("01", "agent-evaluation-harnesses", "Agent evaluation harnesses (WildClawBench on OpenClaw, drift injection over 101 FastAPI mock services, bounded multi-agent, persona task packs)"),
-    ("02", "llm-as-judge", "LLM-as-judge and the three-judge council, pytest grading"),
-    ("03", "inference-gateways-litellm", "Inference gateways: the LiteLLM sidecar, Bedrock extended thinking, OpenRouter, prompt caching, cost tracking"),
-    ("04", "langchain-and-rag", "LangChain benchmarking pipelines, RAG, EvalAgentFlow's 8-agent LangChain design"),
-    ("05", "metrics-and-dataset-quality", "Evaluation metrics and dataset quality: taxonomy, entropy, inter-rater reliability"),
-    ("06", "fine-tuning-and-prompting-llama", "Prompting and rubrics for LLaMA 4 Maverick, fine-tuning basics"),
-    ("07", "python-fastapi-pytest", "Python, FastAPI and pytest"),
-    ("08", "docker-ci-ec2-gitlfs", "Docker sandboxes, offline vendoring, CI, EC2 and Git LFS"),
-    ("09", "react-nextjs-frontend", "React, Next.js, Tailwind, shadcn/ui, Redux Toolkit, TanStack Query"),
-    ("10", "node-express-websockets-redis-mongo", "Node, Express, WebSockets, Redis, MongoDB and geospatial queries (RideMate)"),
-    ("11", "sql-javascript-typescript-cpp", "SQL (MySQL, SQLite), JavaScript, TypeScript and C++"),
-    ("12", "whisper-and-aws", "Whisper audio transcription, multimodal trajectories and the AWS services and certifications"),
-)
+#: A "{\bfseries Category:} items" line of the resume's Skills section: the fallback study areas.
+_SKILL_LINE = re.compile(r"^\{\\bfseries (?P<category>[^}]+?):\}[ \t]*(?P<items>.*?)(?:\\par\\vspace\{\d+pt\})?[ \t]*$", re.M)
+
+
+def resume_areas(resume_path: Optional[Path] = None) -> List[Tuple[str, str, str]]:
+    """One study file per area of the resume: (number, slug, title).
+
+    The areas come from user/inputs/persona.yaml (study_areas, written by the first
+    run from the resume). Without them, each category line of the resume's Skills
+    section is one area, so the stage still writes something for a person who
+    skipped onboarding; the file name is free after "NN-".
+    """
+    areas = [(area.slug, area.title) for area in persona_module.load_persona().study_areas]
+    if not areas:
+        for match in _SKILL_LINE.finditer(resume_text(resume_path)):
+            category, items = match.group("category").strip(), " ".join(match.group("items").split())
+            if category and items:
+                areas.append((persona_module.slugify(category), "%s: %s" % (category, _plain_tex(items))))
+    return [("%02d" % number, slug, title) for number, (slug, title) in enumerate(areas[:99], start=1)]
+
+
+def _plain_tex(text: str) -> str:
+    text = re.sub(r"\\[A-Za-z@]+\*?(?:\[[^\]]*\])?\{([^{}]*)\}", r"\1", text)
+    text = re.sub(r"\\[A-Za-z@]+", " ", text).replace("{", "").replace("}", "")
+    return " ".join(text.replace("$", "").replace("\\", "").split())
 
 
 def ask_cli(cli: Optional[str] = None) -> Ask:
@@ -97,11 +111,25 @@ def syllabus_row(week: int, root: Path = LEARNING) -> str:
     return found.group(0) if found else ""
 
 
+def _shared(root: Path) -> bool:
+    """True for the user's own learning folder, whose progress lives in user/memory/learning.json."""
+    resolved = root.resolve()
+    if resolved == LEARNING.resolve():
+        return True
+    parts = resolved.parts[-3:]
+    return len(parts) == 3 and parts == (paths.user_dir().name, "research", "learning")
+
+
+def _repo(root: Path) -> Path:
+    """The folder learning_memory resolves user/ against: three above user/research/learning."""
+    return root.resolve().parent.parent.parent
+
+
 def load_progress(root: Path = LEARNING) -> Dict:
     """The saved progress, {} before the first day; a damaged file is an error, not a fresh start."""
-    if root.resolve().name == "learning" and root.resolve().parent.name == ".research":
+    if _shared(root):
         from common import learning_memory
-        return learning_memory.transact(root.resolve().parent.parent)["plan"]
+        return learning_memory.transact(_repo(root))["plan"]
     path = root / "progress.json"
     try:
         text = path.read_text(encoding="utf-8")
@@ -117,7 +145,7 @@ def load_progress(root: Path = LEARNING) -> Dict:
 
 
 def save_progress(progress: Dict, root: Path = LEARNING) -> None:
-    if root.resolve().name == "learning" and root.resolve().parent.name == ".research":
+    if _shared(root):
         from common import learning_memory
         # Generation only establishes the start date. Completion belongs to locked
         # transactions, so a slow generator cannot overwrite a newer dashboard save.
@@ -125,7 +153,7 @@ def save_progress(progress: Dict, root: Path = LEARNING) -> None:
             for key, value in progress.items():
                 if key not in ("done", "marked"):
                     data["plan"].setdefault(key, value)
-        learning_memory.transact(root.resolve().parent.parent, update)
+        learning_memory.transact(_repo(root), update)
         return
     root.mkdir(parents=True, exist_ok=True)
     (root / "progress.json").write_text(json.dumps(progress, indent=1), encoding="utf-8")
@@ -141,9 +169,9 @@ def current_day(progress: Dict) -> int:
 
 
 def mark_done(root: Path = LEARNING, today: Optional[date] = None) -> int:
-    if root.resolve().name == "learning" and root.resolve().parent.name == ".research":
+    if _shared(root):
         from common import learning_memory
-        return learning_memory.finish_plan_day(root.resolve().parent.parent, (today or date.today()).isoformat())
+        return learning_memory.finish_plan_day(_repo(root), (today or date.today()).isoformat())
     progress = load_progress(root)
     stamp = (today or date.today()).isoformat()
     progress.setdefault("start", stamp)
@@ -160,10 +188,10 @@ def mark_done(root: Path = LEARNING, today: Optional[date] = None) -> int:
 
 def week_prompt(week: int, root: Path = LEARNING) -> str:
     days = days_of(week)
+    who = persona_module.load_persona()
     return "\n\n".join([
-        "Write week %d of a 90-day study plan for a software engineer (about 2 years of experience, "
-        "working on LLM evaluation) who studies 2 hours a day to reach senior interview level in "
-        "High-Level System Design and in ML / Generative AI." % week,
+        "Write week %d of a 90-day study plan for %s who studies 2 hours a day to reach %s."
+        % (week, who.learner_line(), who.goal or DEFAULT_GOAL),
         "This week's syllabus row (| week | days | system design | ML / GenAI |):\n" + syllabus_row(week, root),
         "Search the web for current, accurate material and link real pages (official docs, papers, "
         "well-known engineering blogs). Prefer sources from the last two years for GenAI topics.",
@@ -216,8 +244,8 @@ def write_today(ask: Ask, root: Path = LEARNING, today: Optional[date] = None) -
         "When finished: `python3 -m pipeline learn --done`.",
         "",
     ])
-    tail = ("Also today: the briefing in `.research/daily/%s/` and one file from "
-            "`.research/resume-learning/`.\n" % today.isoformat())
+    tail = ("Also today: the briefing in `user/research/daily/%s/` and one file from "
+            "`user/research/resume-learning/`.\n" % today.isoformat())
     daily = root / "daily" / ("%s.md" % today.isoformat())
     daily.parent.mkdir(parents=True, exist_ok=True)
     for path in (daily, root / "today.md"):
@@ -260,9 +288,9 @@ def resume_text(path: Optional[Path] = None) -> str:
     return "\n".join(line for line in text.splitlines() if not _CONTACT_LINE.search(line))
 
 
-def missing_resume_areas(root: Path = RESUME_LEARNING) -> List[Tuple[str, str, str]]:
+def missing_resume_areas(root: Path = RESUME_LEARNING, resume_path: Optional[Path] = None) -> List[Tuple[str, str, str]]:
     have = {path.name[:2] for path in root.glob("[0-9][0-9]-*.md")}
-    return [area for area in RESUME_AREAS if area[0] not in have]
+    return [area for area in resume_areas(resume_path) if area[0] not in have]
 
 
 def resume_prompt(area: str, resume: str) -> str:
@@ -286,7 +314,7 @@ def fill_resume_learning(ask: Ask, root: Path = RESUME_LEARNING, resume_path: Op
         # Without the resume the model would invent "how you used it".
         raise ai_cli.AIError("could not read the resume at %s" % resume_path)
     written = []
-    for number, slug, area in missing_resume_areas(root):
+    for number, slug, area in missing_resume_areas(root, resume_path):
         logger.info("Writing resume study file %s-%s with the AI CLI.", number, slug)
         text = links.linkify(ai_cli.markdown_from(ask(resume_prompt(area, resume)), "# "))
         if "## Interview questions" not in text:

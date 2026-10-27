@@ -6,15 +6,12 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from common import config as naukri_config
+from common import persona as persona_module
 from common.models import Settings
 
-DEFAULT_TOPICS = [
-    "AI agent evaluation",
-    "LLM benchmarks",
-    "multi-agent systems",
-    "LangChain",
-    "Next.js",
-]
+#: Topics come from user/inputs/persona.yaml (written by the first run); LINKEDIN_TOPICS
+#: in .env overrides them. There is no built-in list: it would be one person's.
+DEFAULT_TOPICS: List[str] = []
 
 HN_SEARCH_URL = (
     "https://hn.algolia.com/api/v1/search_by_date"
@@ -47,12 +44,12 @@ class LinkedInSettings:
     auto_post: bool = False
     carousel: bool = True
     max_age_days: int = 3
-    state_path: str = "data/linkedin/state.json"
-    draft_dir: str = "data/linkedin/drafts"
+    state_path: str = "user/linkedin/state.json"
+    draft_dir: str = "user/linkedin/drafts"
     #: Every prepared post gets its own folder here: <topic>/<date>/ with the
     #: image card, the post text, the carousel and the article it reacts to.
-    post_dir: str = "data/linkedin_post"
-    browser_profile_dir: str = "data/browser/linkedin"
+    post_dir: str = "user/linkedin_post"
+    browser_profile_dir: str = "user/browser/linkedin"
     headless: bool = False
     #: Who writes, who reviews, who reads the full article, who designs the card:
     #: "claude" or "kiro" ("backend" writes with LLM_BACKEND; "none" skips a step;
@@ -77,7 +74,8 @@ class LinkedInSettings:
         if self.max_age_days < 1:
             problems.append("LINKEDIN_MAX_AGE_DAYS must be at least 1")
         if not self.topics:
-            problems.append("LINKEDIN_TOPICS is empty")
+            problems.append("no LinkedIn topics: set them in user/inputs/persona.yaml (python3 -m pipeline onboard) "
+                            "or LINKEDIN_TOPICS in .env")
         for key, value, allowed in (
             ("LINKEDIN_WRITER", self.writer, ("claude", "kiro", "backend")),
             ("LINKEDIN_CRITIC", self.critic, ("claude", "kiro", "none")),
@@ -116,7 +114,7 @@ def load_settings(
     repo_root = Path(__file__).resolve().parent.parent
     defaults = LinkedInSettings()
 
-    topics = naukri_config._env_list("LINKEDIN_TOPICS", defaults.topics)
+    topics = naukri_config._env_list("LINKEDIN_TOPICS", defaults.topics) or list(persona_module.load_persona().topics)
     feeds = naukri_config._env_list("LINKEDIN_FEEDS", [])
     if not feeds:
         feeds = hn_feeds(topics) + list(DEFAULT_FEEDS)

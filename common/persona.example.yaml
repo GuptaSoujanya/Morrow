@@ -1,0 +1,54 @@
+# Template for user/inputs/persona.yaml: who you are, in the words the bots write
+# with. The first run (python3 -m pipeline onboard) writes this file from your
+# resume and a few questions; edit it whenever it stops sounding like you.
+#
+# profile.yaml holds the facts a screening form asks for (salary, notice,
+# phone). This file holds what the WRITING stages need: the LinkedIn poster's
+# voice and topics, the study plan's picture of you, and the pronouns the
+# browser and email agents are told to use. Nothing in here is sent to an
+# employer directly; posts and study files are written from it.
+
+name: "Your Full Name"
+# they/them, she/her or he/him: how the agent prompts refer to you.
+pronouns: "they/them"
+# One line, no "I am": what you do, where, on what.
+headline: "software engineer at Your Employer in Your City, working on backend services"
+experience_years: 3
+employer: "Your Employer"
+location: "Your City"
+# Personal site or portfolio, shown on LinkedIn cards. Empty hides it.
+site: ""
+# What your work is about, in a few words; prompts say "why it matters for you,
+# an engineer working on <focus>".
+focus: "distributed systems and developer tooling"
+
+# The facts a LinkedIn post may draw on. Each one a sentence your resume
+# supports; the writer claims nothing about you that is not here.
+facts:
+  - "Builds and runs the payments service at Your Employer."
+  - "Maintains an open-source CLI with a few hundred users."
+
+# How you write, as instructions to the model.
+voice: "first person, plain words, short paragraphs, concrete, a little dry, never salesy"
+# A short passage in your own words (your resume summary works), for register.
+voice_sample: ""
+
+# LinkedIn topics the poster looks for articles about. LINKEDIN_TOPICS in .env
+# overrides this list when set.
+topics:
+  - distributed systems
+  - Go
+  - observability
+
+# The areas of your resume the study stage writes one file each for
+# (user/research/resume-learning/NN-<slug>.md). Order is the file number.
+study_areas:
+  - slug: payments-and-idempotency
+    title: "Payments services: idempotency, retries, reconciliation"
+  - slug: go-concurrency
+    title: "Go: goroutines, channels, the race detector"
+  - slug: postgres-and-indexing
+    title: "PostgreSQL schema design and indexing"
+
+# What the 90-day plan is for.
+goal: "senior interview level in High-Level System Design and ML / Generative AI"

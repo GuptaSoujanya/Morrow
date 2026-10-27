@@ -1,0 +1,97 @@
+% Morrow resume skeleton. The first run (python3 -m pipeline onboard) fills it
+% from your PDF; edit user/resume/base.tex freely afterwards. The tailoring code
+% (common/resume.py) finds three things by their shape, so keep them:
+%   - the subtitle line  {\normalsize\color{muted} ...}\\[5pt]  in the header,
+%   - \section{Summary} followed by ONE paragraph and then a blank line,
+%   - \section{Skills} followed by {\bfseries Category:} lines and then a blank line.
+\documentclass[a4paper,9pt]{extarticle}
+
+% ---------- Fonts & encoding ----------
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{charter}
+
+% ---------- Layout ----------
+\usepackage[top=1.1cm,bottom=1.1cm,left=1.5cm,right=1.5cm]{geometry}
+\usepackage{enumitem}
+\usepackage{titlesec}
+\usepackage{xcolor}
+\usepackage{hyperref}
+
+% ---------- Colors ----------
+\definecolor{ink}{HTML}{1a1a1a}
+\definecolor{accent}{HTML}{1f4e79}
+\definecolor{muted}{HTML}{555555}
+\definecolor{rulecol}{HTML}{c9c9c9}
+
+\hypersetup{colorlinks=true, urlcolor=accent, linkcolor=accent}
+
+% ---------- Global spacing ----------
+\pagestyle{empty}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{0pt}
+\linespread{0.95}
+
+% ---------- Section headings ----------
+\titleformat{\section}
+  {\color{accent}\bfseries\normalsize\scshape}
+  {}{0em}{}[\vspace{1.5pt}{\color{rulecol}\titlerule[0.8pt]}]
+\titlespacing*{\section}{0pt}{4pt}{2pt}
+
+% ---------- Lists ----------
+\setlist[itemize]{leftmargin=1.15em, itemsep=1pt, topsep=1pt, parsep=0pt, label=\textcolor{accent}{\small$\bullet$}}
+
+% ---------- Role macro: #1 title  #2 dates  #3 company/location ----------
+\newcommand{\role}[3]{%
+  \vspace{1pt}
+  {\bfseries #1}\hfill{\color{muted}\small #2}\\[1pt]
+  {\color{muted}\itshape #3}\par\vspace{2pt}%
+}
+\newcommand{\subrole}[1]{\vspace{2pt}{\itshape\color{ink} #1}\par\vspace{2pt}}
+\newcommand{\tech}[1]{{\footnotesize\itshape\color{muted}#1}}
+
+\begin{document}
+
+% ================= HEADER =================
+\begin{center}
+  {\LARGE\bfseries\color{ink} FIRST LAST}\\[3pt]
+  {\normalsize\color{muted} Job Title \;$\cdot$\; What you work on}\\[5pt]
+  {\small
+   City, Country \;$\cdot$\; \href{mailto:you@example.com}{you@example.com} \;$\cdot$\; +91 00000 00000\\[2pt]
+   \href{https://github.com/your-handle}{github.com/your-handle} \;$\cdot$\; \href{https://linkedin.com/in/your-handle}{linkedin.com/in/your-handle}}
+\end{center}
+
+% ================= SUMMARY =================
+\section{Summary}
+One paragraph, first person, in your own words: what you work on and the proof.
+
+% ================= EXPERIENCE =================
+\section{Professional Experience}
+
+\role{Job Title}{Mon YYYY -- Present}{Employer $\cdot$ City, Country}
+\begin{itemize}
+  \item What you built or ran, with the numbers the resume states.
+  \item Another concrete result.
+\end{itemize}
+
+% ================= PROJECTS =================
+\section{Projects}
+
+{\bfseries Project Name}\; \tech{Language \; $\cdot$ \; Framework}\par\vspace{2pt}
+\begin{itemize}
+  \item What it does and what you did.
+\end{itemize}
+
+% ================= SKILLS =================
+\section{Skills}
+{\bfseries Languages:} Python, SQL\par\vspace{2pt}
+{\bfseries Frameworks:} FastAPI, React\par\vspace{2pt}
+{\bfseries Infrastructure:} Docker, AWS, PostgreSQL
+
+% ================= EDUCATION =================
+\section{Education \& Certifications}
+{\bfseries Degree, Field}\hfill{\color{muted}\small YYYY -- YYYY}\\[1pt]
+{\color{muted}\itshape University, City}\par\vspace{2pt}
+{\bfseries Certifications:} Certification One $\cdot$ Certification Two
+
+\end{document}

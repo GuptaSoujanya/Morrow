@@ -16,6 +16,8 @@ from typing import Dict, List, Optional, Sequence, Tuple, Union
 
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
+from common import persona as persona_module
+
 WIDTH, HEIGHT = 1200, 627
 SLIDE_W, SLIDE_H = 1080, 1350
 
@@ -320,12 +322,18 @@ def render_card(
     card_line: str,
     source_name: str,
     out_path: Union[str, Path],
-    author: str = "Soujanya Gupta",
-    site: str = "soujanyalab.in",
+    author: str = "",
+    site: str = "",
     accent: str = ACCENT,
-    tag: str = "NOTES ON AI ENGINEERING",
+    tag: str = "",
 ) -> Path:
-    """Draw the card and return its path; parent directories are created."""
+    """Draw the card and return its path; parent directories are created.
+
+    author, site and tag default to the persona (user/inputs/persona.yaml)."""
+    who = persona_module.load_persona()
+    author = author or who.name or "Notes"
+    site = site or who.site
+    tag = tag or ("NOTES ON %s" % who.focus.upper() if who.focus else "NOTES")
     out = Path(out_path)
     out.parent.mkdir(parents=True, exist_ok=True)
 
@@ -478,10 +486,15 @@ def render_carousel(
     question: str,
     out_path: Union[str, Path],
     subtitle: str = "",
-    author: str = "Soujanya Gupta",
-    site: str = "soujanyalab.in",
+    author: str = "",
+    site: str = "",
 ) -> Path:
-    """A cover, one page per slide, and a closing question, saved as one PDF."""
+    """A cover, one page per slide, and a closing question, saved as one PDF.
+
+    author and site default to the persona (user/inputs/persona.yaml)."""
+    who = persona_module.load_persona()
+    author = author or who.name or "Notes"
+    site = site or who.site
     out = Path(out_path)
     out.parent.mkdir(parents=True, exist_ok=True)
     total = len(slides) + 2

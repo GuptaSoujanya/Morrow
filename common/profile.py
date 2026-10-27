@@ -40,24 +40,31 @@ _PROFILE_KEYS = {
     "extra_facts",
 }
 
+# Fallbacks for a profile.yaml without `skills` or `titles`: the ones of these
+# the resume mentions. Broad on purpose; the first run (common.onboard) writes
+# the person's own lists, which are always better than this.
 _SKILL_KEYWORDS = [
-    "Python", "C++", "SQL", "LLM evaluation", "LLM benchmarking",
-    "agentic AI", "multi-agent orchestration", "prompt engineering", "RAG",
-    "hybrid retrieval", "embeddings", "vector search", "RLHF", "fine-tuning",
-    "OpenAI API", "Anthropic API", "LangChain", "LiteLLM", "OpenHands",
-    "Hugging Face Transformers", "PyTorch", "FastAPI", "pytest", "spaCy",
-    "Pandas", "NumPy", "Scikit-learn", "PySpark", "AWS Bedrock", "AWS EC2",
-    "AWS S3", "Docker", "Git", "Git LFS", "CI/CD", "PostgreSQL", "FAISS",
-    "pgvector", "Linux",
+    "Python", "Java", "JavaScript", "TypeScript", "Go", "Rust", "C++", "C#", "Kotlin", "Swift",
+    "Scala", "Ruby", "PHP", "SQL", "React", "Next.js", "Angular", "Vue", "Node.js", "Express",
+    "Django", "Flask", "FastAPI", "Spring Boot", ".NET", "Rails", "GraphQL", "REST APIs",
+    "PostgreSQL", "MySQL", "MongoDB", "Redis", "Elasticsearch", "Kafka", "RabbitMQ", "Spark",
+    "Airflow", "Pandas", "NumPy", "Scikit-learn", "PyTorch", "TensorFlow", "machine learning",
+    "deep learning", "NLP", "computer vision", "LLM", "RAG", "LangChain", "prompt engineering",
+    "fine-tuning", "embeddings", "vector search", "Docker", "Kubernetes", "Terraform", "AWS",
+    "GCP", "Azure", "CI/CD", "Linux", "Git", "pytest", "microservices", "system design",
 ]
 
 _TITLE_KEYWORDS = [
-    "AI Engineer",
-    "AI Research Engineer",
+    "Software Engineer",
+    "Backend Engineer",
+    "Frontend Engineer",
+    "Full Stack Developer",
+    "Data Engineer",
+    "Data Scientist",
     "Machine Learning Engineer",
-    "LLM Engineer",
-    "Applied Scientist",
-    "Software Engineer - AI",
+    "AI Engineer",
+    "DevOps Engineer",
+    "Site Reliability Engineer",
 ]
 
 _LATEX_WRAPPER = re.compile(

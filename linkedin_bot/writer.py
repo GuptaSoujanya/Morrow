@@ -5,27 +5,17 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
+from common import persona as persona_module
+
 from .news import Article
 
 logger = logging.getLogger(__name__)
 
-VOICE = """Facts about the author (the only facts a post may use):
-- Soujanya Gupta, software engineer at Ethara AI in Gurugram.
-- Works on evaluating AI agents and large language models.
-- Grew the open-source WildClawBench benchmark on the OpenClaw harness into a
-  multi-provider evaluation platform: three-judge council grading, drift
-  injection across 100+ mock services, bounded multi-agent orchestration, and
-  cost tracking for Claude on AWS Bedrock, GPT-5.5 and OpenRouter.
-- Builds Next.js front-ends and LangChain pipelines.
-- Wrote prompts and rubrics for a LLaMA 4 Maverick fine-tuning program.
-- Site: soujanyalab.in
 
-How she writes: first person, plain words, short paragraphs, concrete, a little
-dry, never salesy. For register, the opening of her resume summary: "I'm a
-software engineer who works on evaluating AI agents and large language models.
-Most of my time goes into growing the open-source WildClawBench benchmark on
-the OpenClaw harness into a full multi-provider evaluation platform."
-"""
+def default_voice() -> str:
+    """The VOICE block the writer is given: the author's facts and register from
+    user/inputs/persona.yaml (common/persona.py), written by the first run."""
+    return persona_module.load_persona().voice_block()
 
 MIN_CHARS = 450
 MAX_CHARS = 1300
@@ -361,8 +351,9 @@ SLIDES
 %s"""
 
 
-def review(critic: Any, article: Article, draft: Draft, notes: str = "", voice: str = VOICE) -> List[str]:
+def review(critic: Any, article: Article, draft: Draft, notes: str = "", voice: Optional[str] = None) -> List[str]:
     """A second model's fixes for a draft that already passes the checks; [] means publish."""
+    voice = voice or default_voice()
     slides = "\n".join("%s: %s" % (s["title"], s["body"]) for s in draft.slides) or "(none)"
     prompt = _REVIEW_PROMPT % (
         REVIEW_MAX_PROBLEMS, voice.strip(), article.title, article.url, article.text[:3000],
@@ -379,13 +370,14 @@ def review(critic: Any, article: Article, draft: Draft, notes: str = "", voice: 
 
 
 def write_post(
-    client: Any, article: Article, voice: str = VOICE, notes: str = "", critic: Any = None
+    client: Any, article: Article, voice: Optional[str] = None, notes: str = "", critic: Any = None
 ) -> Optional[Draft]:
     """Up to three attempts; lint findings go back to the model between them.
 
     With a critic, the first draft that passes the checks goes to it once; its fixes
     become the next attempt's feedback, and that draft is kept if the rewrite fails.
     """
+    voice = voice or default_voice()
     feedback = None  # type: Optional[List[str]]
     text_only = None  # type: Optional[Draft]
     reviewed = None  # type: Optional[Draft]

@@ -3,7 +3,7 @@
 Every agent asks claude and kiro (the team, see ai_cli.team) the same brief at
 once, each with web search; each draft is checked and the first CLI merges the
 good drafts into one file with the best papers, news and companies of both. Each
-agent writes its file into .research/daily/<date>/ the moment it finishes, and the folder's
+agent writes its file into user/research/daily/<date>/ the moment it finishes, and the folder's
 README.md (the index, with charts) is rewritten after every agent, so the briefing
 fills in while the rest of the pipeline runs.
 
@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Dict, List, NamedTuple, Optional, Union
 
 from common import ai_cli
+from common import persona as persona_module
 
 from . import learning, links
 
@@ -74,7 +75,7 @@ AGENTS = (
           "page. For each: ## <paper title> (<year>) with the authors, the link, then **Problem**, "
           "**Idea**, **How it works**, **Results** (only numbers the paper states), **In industry** (who "
           "uses or builds on it: a company, product or open-source project, with a link), **Why it "
-          "matters for you** (an engineer working on LLM evaluation and agents), and **Read** (which "
+          "matters for you** (an engineer working on {focus}), and **Read** (which "
           "sections, in what order, about how long). Then ## Industry map, a mermaid mindmap of the "
           "papers grouped by area with the companies and projects using them, and ## Reading order, a "
           "mermaid flowchart of the order to read them in and how they depend on each other.",
@@ -86,11 +87,11 @@ AGENTS = (
           "matters, the link. Then ## At a glance, a mermaid pie chart of the items per section, and "
           "## Try this week, one hands-on thing to try from the news."),
     Agent("companies", "05-companies.md", "# Companies to look at", 1, 5,
-          "Find 6 to 8 companies currently hiring for GenAI, ML, LLM-evaluation or backend roles in India "
-          "or remote that fit this resume. For each: ## <company>, what they build, the stack, the kind of "
+          "Find 6 to 8 companies currently hiring for roles that fit this resume ({focus}) in {location} "
+          "or remote. For each: ## <company>, what they build, the stack, the kind of "
           "role that fits, a recent news item or engineering post, and the careers link. Then ## Where "
-          "they sit, a mermaid mindmap grouping them (labs, AI infra, product companies, services), and "
-          "## Talking points, how the resume's evaluation and agent work maps to each group."),
+          "they sit, a mermaid mindmap grouping them (labs, infrastructure, product companies, services), and "
+          "## Talking points, how the resume's work maps to each group."),
 )
 
 
@@ -110,10 +111,11 @@ def context(day: date, learning_root: Path = learning.LEARNING) -> str:
     except OSError:
         today = ""
     skills = re.findall(r"\\textbf\{([^}]*)\}", learning.resume_text())[:40]
+    who = persona_module.load_persona()
     return "\n\n".join(part for part in [
-        "Today is %s. The learner is a software engineer in India (about 2 years, LLM evaluation and "
-        "agent harnesses) on day %d of a 90-day plan to reach senior interview level in High-Level "
-        "System Design and ML / GenAI, studying 2 hours a day." % (day.isoformat(), learning.current_day(progress)),
+        "Today is %s. The learner is %s%s on day %d of a 90-day plan to reach %s, studying 2 hours a day."
+        % (day.isoformat(), who.learner_line(), " in " + who.location if who.location else "",
+           learning.current_day(progress), who.goal or learning.DEFAULT_GOAL),
         "Today's topics: %s." % (learning.today_topics(learning_root) or "system design and LLMs"),
         "Today's study notes (for reference):\n" + today[:6000] if today else "",
         "Resume highlights: " + ", ".join(skills) if skills else "",
@@ -124,13 +126,20 @@ def first_year(agent: Agent, day: date) -> int:
     return day.year - agent.recent
 
 
+def brief_for(agent: Agent) -> str:
+    """The agent's brief with {focus} and {location} filled from the persona."""
+    who = persona_module.load_persona()
+    return (agent.brief.replace("{focus}", who.focus or "the areas this resume covers")
+            .replace("{location}", who.location or "their country"))
+
+
 def prompt_for(agent: Agent, ctx: str, day: Optional[date] = None) -> str:
     start = agent.heading + " <topic>" if agent.heading.endswith(":") else agent.heading
     years = ""
     if agent.recent and day:
         years = ("Only papers published from %d to %d; nothing older, not even classics. Put the year in "
                  "each paper's heading." % (first_year(agent, day), day.year))
-    return "\n\n".join(part for part in [ctx, agent.brief, years, "Start with '%s'." % start, _RULES] if part)
+    return "\n\n".join(part for part in [ctx, brief_for(agent), years, "Start with '%s'." % start, _RULES] if part)
 
 
 _YEAR = re.compile(r"\b(19|20)\d\d\b")
@@ -278,7 +287,7 @@ def _publish_text(path: Path, text: str) -> None:
 
 def write_index(day: date, stages: Dict[str, Dict], history: List[tuple], applied: List[Dict],
                 root: Path = DAILY, learning_root: Path = learning.LEARNING) -> Path:
-    """.research/daily/<date>/README.md: every agent's file and status, and the day in charts."""
+    """user/research/daily/<date>/README.md: every agent's file and status, and the day in charts."""
     folder = folder_for(day, root)
     progress = learning.load_progress(learning_root)
     lines = ["# Briefing %s" % day.isoformat(), "",

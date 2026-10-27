@@ -4,8 +4,12 @@
     python3 -m pipeline continue     # the same thing
     python3 -m pipeline status       # today's checkpoint
     python3 -m pipeline learn [--done]
+    python3 -m pipeline onboard      # the first run: your resume and facts into user/ (common/onboard.py)
 
-Stages, in order. Each is recorded in .memory/ the moment it ends; a second run
+A run that finds no user/inputs/profile.yaml starts with onboarding when a person
+is at the terminal, and stops with a pointer to it otherwise.
+
+Stages, in order. Each is recorded in user/memory/ the moment it ends; a second run
 the same day skips the done ones and retries the rest.
 
 1. profile:naukri       the Naukri headline toggle, then the Playwright agent reviews the whole
@@ -15,7 +19,7 @@ the same day skips the done ones and retries the rest.
                         creates the account and profile first when the board has none
 4. apply:naukri         the Naukri apply run (naukri_bot.cli)
 5. apply:<board>        each board's apply run via its own bot (<board>_bot.cli)
-6. research:resume      any missing .research/resume-learning file, written by the AI CLI
+6. research:resume      any missing user/research/resume-learning file, written by the AI CLI
 7. brief:<agent>        the briefing agents (goal, system-design, papers, tech-news, companies)
 
 Every site runs at the same time, each site's profile then apply stage in its own
@@ -24,16 +28,16 @@ that at N sites at once; --bots 1 runs the browser stages one after another in t
 process. A site never runs twice at once: its stages share one account and one login.
 With --containers (or PIPELINE_CONTAINERS=1) every site runs in its own Docker
 container (docker-compose.yml), and a page showing all their screens opens
-(data/docker/watch.html).
+(user/docker/watch.html).
 
 The browser stages start right away. `learn` (today's study day from the 90-day
 plan) runs next to them, and the briefing agents wait for it because they are told
 today's topics. The agents then run in parallel with each other and with the browser
 stages (--agents N at a time, default one worker per agent), each writing its file to
-.research/daily/<date>/ as soon as it is done; see pipeline/briefing.py.
+user/research/daily/<date>/ as soon as it is done; see pipeline/briefing.py.
 
 A stage counts as done only when its tool exits 0 and the files it wrote are still
-there. When every stage is done the day is marked done in .memory/ and another run
+there. When every stage is done the day is marked done in user/memory/ and another run
 that day only prints the checkpoint (--fresh starts over). Boards come from PLATFORMS
 in .env. The briefing agents ask claude and kiro-cli together and merge their answers;
 the other writing stages use claude (--cli claude|kiro or PIPELINE_AI_CLI picks one).
@@ -57,11 +61,12 @@ from common.pipeline_diagnostics import StageDiagnostics, sanitize_detail
 from common.run import EXIT_CONFIG, EXIT_FAILED, EXIT_OK, configure_logging
 
 from . import briefing, content, lanes as lanes_module, learning
+from common import paths
 
 logger = logging.getLogger(__name__)
 
 MEMORY_DIR = memory_module.MEMORY_DIR
-WATCH_PAGE = Path("data/docker/watch.html")
+WATCH_PAGE = paths.user_dir() / "docker" / "watch.html"
 AGENTS_AT_ONCE = 6  # research:resume and the five briefing agents, all in one wave
 
 
@@ -378,7 +383,8 @@ def check_day(mem: "memory_module.Memory", ran: List[str]) -> None:
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(prog="python3 -m pipeline",
                                      description="Profiles, applications and the day's study material, resumable.")
-    parser.add_argument("command", nargs="?", default="run", choices=("run", "continue", "status", "learn", "check"))
+    parser.add_argument("command", nargs="?", default="run",
+                        choices=("run", "continue", "status", "learn", "check", "onboard"))
     parser.add_argument("--fresh", action="store_true", help="start today over instead of continuing")
     parser.add_argument("--only", action="append", default=[], metavar="STAGE",
                         help="run only this stage or group (profile, apply, research, learn, apply:naukri...)")
@@ -425,6 +431,20 @@ def main(argv: Optional[List[str]] = None, today: Optional[date] = None) -> int:
             print("Day %d marked done." % learning.mark_done(today=today))
             return EXIT_OK
         args.only = ["learn"]
+    onboard_args = ["--env", args.env] if args.env else []
+    if args.command == "onboard":
+        from common import onboard
+        return onboard.main(onboard_args)
+    if not args.only:
+        from common import onboard
+        if onboard.needs_onboarding():
+            if not sys.stdin.isatty():
+                logger.error("No profile at %s yet: run `python3 -m pipeline onboard` first.",
+                             paths.inputs_dir() / "profile.yaml")
+                return EXIT_CONFIG
+            logger.info("No profile yet: setting up first.")
+            if onboard.main(onboard_args) != 0:
+                return EXIT_CONFIG
     try:
         boards = board_names(args.env)
     except Exception as exc:

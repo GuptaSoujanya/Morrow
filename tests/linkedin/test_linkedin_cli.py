@@ -51,7 +51,7 @@ def test_draft_file_round_trips(tmp_path):
 
 def _settings(tmp_path, **overrides):
     values = dict(state_path=str(tmp_path / "state.json"), draft_dir=str(tmp_path / "drafts"),
-                  post_time="00:00")
+                  post_time="00:00", topics=["AI agents", "LLM evals"])
     values.update(overrides)
     return LinkedInSettings(**values)
 

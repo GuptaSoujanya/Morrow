@@ -231,7 +231,7 @@ def test_every_site_has_its_container_on_its_watch_port():
 def test_lanes_group_by_site_and_run_the_bot_as_a_child(capsys):
     assert lanes.group(["profile:naukri", "profile:hirist", "apply:naukri", "apply:hirist"]) == [
         ["profile:naukri", "apply:naukri"], ["profile:hirist", "apply:hirist"]]
-    assert "BROWSER_PROFILE_DIR" not in lanes.prepare("linkedin", "data/browser/naukri")
+    assert "BROWSER_PROFILE_DIR" not in lanes.prepare("linkedin", "user/browser/naukri")
     assert lanes.run_isolated("hirist", ("calendar", "2026", "1"), {"BROWSER_PROFILE_DIR": "x"}) == 0
     assert "[hirist]" in capsys.readouterr().err
     assert all(s.command for s in run.build_stages(_args(), ["hirist"]) if s.name.split(":")[0] in ("profile", "apply"))
@@ -306,19 +306,20 @@ def test_missing_week_is_written_and_checked(tmp_path):
     assert not learning.week_path(12, tmp_path).exists()
 
 
-def test_resume_learning_fills_only_missing_and_hides_contacts(tmp_path):
+def test_resume_learning_fills_only_missing_and_hides_contacts(tmp_path, monkeypatch):
     resume = tmp_path / "base.tex"
     resume.write_text("Soujanya\nmail@example.com\nPython, FastAPI\n")
     root = tmp_path / "rl"
     root.mkdir()
-    for number, slug, _ in learning.RESUME_AREAS[:-1]:
-        (root / ("%s-%s.md" % (number, slug))).write_text("# Area %s\n" % number)
+    monkeypatch.setattr(learning, "resume_areas", lambda resume_path=None: [
+        ("01", "python", "Python"), ("02", "whisper-and-aws", "Whisper and AWS")])
+    (root / "01-python.md").write_text("# Area 01\n")
     prompts = []
     written = learning.fill_resume_learning(
         lambda p: prompts.append(p) or "# Whisper\n\n## Interview questions and answers\n", root, resume)
-    assert [p.name for p in written] == ["12-whisper-and-aws.md"]
+    assert [p.name for p in written] == ["02-whisper-and-aws.md"]
     assert "example.com" not in prompts[0] and "FastAPI" in prompts[0]
-    assert "[Whisper](12-whisper-and-aws.md)" in (root / "README.md").read_text()
+    assert "[Whisper](02-whisper-and-aws.md)" in (root / "README.md").read_text()
 
 
 def test_briefing_agent_needs_graphs_and_links_then_indexes(tmp_path):
@@ -469,8 +470,8 @@ def _fake_cli(prompt):
     """A stand-in for claude/kiro: a valid answer for whichever writer asked."""
     if prompt.startswith("Write week "):
         week = int(prompt.split()[2])
-        return _week(week).replace("- [a](http://a)", "- [course](../../../course/x.md) and https://a.dev/%d" % week)
-    agent = next(a for a in briefing.AGENTS if a.brief in prompt)
+        return _week(week).replace("- [a](http://a)", "- [course](../../../../database/course/x.md) and https://a.dev/%d" % week)
+    agent = next(a for a in briefing.AGENTS if briefing.brief_for(a) in prompt)
     heading = agent.heading + (" caching" if agent.heading.endswith(":") else "")
     return heading + "\n\n" + "".join("```mermaid\npie\n```\n" for _ in range(agent.graphs)) + "".join(
         "- source https://example.org/%s/%d\n" % (agent.key, n) for n in range(agent.links))
@@ -479,8 +480,8 @@ def _fake_cli(prompt):
 def test_the_pipeline_writes_and_checks_the_material_for_the_date_it_runs(tmp_path, monkeypatch):
     from pipeline import content
 
-    (tmp_path / "course").mkdir()
-    (tmp_path / "course" / "x.md").write_text("# x")
+    (tmp_path / "database" / "course").mkdir(parents=True)
+    (tmp_path / "database" / "course" / "x.md").write_text("# x")
     monkeypatch.setattr(learning, "ask_cli", lambda cli=None: _fake_cli)
     monkeypatch.setattr(run, "board_names", lambda env: [])
     for day in ("2026-10-23", "2026-10-24"):
@@ -491,7 +492,7 @@ def test_the_pipeline_writes_and_checks_the_material_for_the_date_it_runs(tmp_pa
         assert day in (learning.RESEARCH / "TODAY.md").read_text()
         assert Memory(run.MEMORY_DIR, date.fromisoformat(day)).is_done("brief:papers")
     assert (briefing.DAILY / "2026-10-23" / "01-goal.md").exists()  # the day before is kept
-    assert "[course](../../course/x.md)" in (learning.LEARNING / "today.md").read_text()
+    assert "[course](../../../database/course/x.md)" in (learning.LEARNING / "today.md").read_text()
     assert run.main(["check", "--date", "2026-10-25"]) == 3
 
 

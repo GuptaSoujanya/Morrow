@@ -17,6 +17,7 @@ from typing import Any, List, Optional
 from PIL import Image, ImageStat
 
 from common import ai_cli
+from common import persona as persona_module
 
 from .news import Article
 from .writer import Draft
@@ -36,8 +37,8 @@ _CHROME_PATHS = (
 
 _PROMPT = """Design a LinkedIn image card as ONE self-contained HTML document.
 
-The card goes with the post below by Soujanya Gupta (software engineer, AI agent
-evaluation; site soujanyalab.in). Readers see it at phone size in a busy feed.
+The card goes with the post below by %(author)s (%(about)s). Readers see it at
+phone size in a busy feed.
 
 Hard rules:
 - The page is exactly %(w)dpx wide and %(h)dpx tall: set html and body to that
@@ -52,7 +53,7 @@ Hard rules:
 - Headline at least 54px and bold; at most 30 words of text on the whole card.
 - Add one supporting visual built from a concrete detail in the post (a number,
   a before/after, a small flow of steps). Use only facts from the post.
-- Small footer: "Soujanya Gupta" and "soujanyalab.in", plus "via %(source)s".
+- Small footer: "%(author)s"%(footer_site)s, plus "via %(source)s".
 - Palette: ink #0B1220, body #334155, muted #64748B, page #F7F7F5, accent #4F46E5,
   soft accent #E0E7FF. A dark variant (#0B1220 page, #A5B4FC accent) is fine.
   Strong contrast, generous whitespace, one clear focal point.
@@ -159,13 +160,17 @@ def design_card(
     if out_path.exists():
         out_path.unlink()
     feedback = []  # type: List[str]
+    who = persona_module.load_persona()
+    author = who.name or "the author"
+    about = "; ".join(part for part in [who.headline, "site " + who.site if who.site else ""] if part) or "the author"
     for attempt in range(1, MAX_DESIGNS + 1):
         note = ""
         if feedback:
             note = "- The last version had these problems; fix them:\n  " + "\n  ".join(feedback) + "\n"
         prompt = _PROMPT % {
             "w": CARD_W, "h": CARD_H, "card_line": draft.card_line, "source": article.source,
-            "feedback": note, "post": draft.text,
+            "feedback": note, "post": draft.text, "author": author, "about": about,
+            "footer_site": ' and "%s"' % who.site if who.site else "",
         }
         logger.info("Asking %s to design the card (attempt %d)...", cli, attempt)
         try:

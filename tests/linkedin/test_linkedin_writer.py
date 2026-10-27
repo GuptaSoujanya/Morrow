@@ -9,6 +9,14 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 
 from linkedin_bot import writer
 from linkedin_bot.news import Article
+from common import persona
+
+#: The voice the writer is given: the persona's facts and register (user/inputs/persona.yaml).
+VOICE = persona.Persona(
+    name="Asha Rao", headline="software engineer at Example AI", site="asha.example",
+    facts=["Grew the open-source WildClawBench benchmark into an evaluation platform"],
+    voice="first person, plain words, short paragraphs, concrete, never salesy",
+).voice_block()
 
 ARTICLE = Article(
     title="Judges disagree more as agent tasks get longer",
@@ -128,7 +136,7 @@ def test_a_missing_url_line_is_added_and_hashtags_are_normalised():
 
 
 def test_the_prompt_lists_the_rules_and_the_article():
-    prompt = writer.build_prompt(ARTICLE, writer.VOICE)
+    prompt = writer.build_prompt(ARTICLE, VOICE)
     for needle in ("Never use", "em dashes", "game-changer", "card_line", ARTICLE.url, "WildClawBench"):
         assert needle in prompt
 
@@ -167,9 +175,9 @@ FULL = {"post": FULL_CLEAN, "card_line": "Three judges beat one.", "hashtags": [
 
 
 def test_research_notes_reach_the_prompt():
-    prompt = writer.build_prompt(ARTICLE, writer.VOICE, notes="The study covered 1,200 runs.")
+    prompt = writer.build_prompt(ARTICLE, VOICE, notes="The study covered 1,200 runs.")
     assert "RESEARCH NOTES" in prompt and "1,200 runs" in prompt
-    assert "RESEARCH NOTES" not in writer.build_prompt(ARTICLE, writer.VOICE)
+    assert "RESEARCH NOTES" not in writer.build_prompt(ARTICLE, VOICE)
 
 
 def test_the_reviewers_fixes_drive_one_rewrite():
