@@ -14,7 +14,9 @@
 
 <br/>
 
-<img src=".github/assets/launchpad.jpg" alt="The Morrow Launchpad: applications sent, jobs discovered, and the bot crew" width="760"/>
+<img src=".github/assets/tour.gif" alt="A tour of the Morrow dashboard: Launchpad, Insights, Bot Crew, Applications, Learning and Action inbox" width="900"/>
+
+<sub>A quick tour of the dashboard (example data)</sub>
 
 </div>
 
@@ -112,18 +114,100 @@ scripts/morrow install && morrow start
 
 ## 📸 A look inside
 
+> Every screenshot below comes from the real dashboard running on **example data** (Example Candidate, made-up companies).
+
+### 🏠 Launchpad: everything at a glance
+
+<p align="center"><img src=".github/assets/launchpad.jpg" alt="Launchpad: applications sent this period, jobs discovered, jobs above the match threshold, the bot crew and what needs your attention" width="900"/></p>
+
+Applications sent across Naukri, job boards and company sites, the jobs found and how many scored above your match threshold, and a short list of what needs you, all for the date range you pick.
+
+### 🤖 Bot Crew: 18 specialists, one click each
+
+<p align="center"><img src=".github/assets/crew.jpg" alt="The eighteen Morrow specialists in three rows: apply, profile and assist" width="900"/></p>
+
 <table>
 <tr>
-<td width="50%"><img src=".github/assets/onboarding-resume.png" alt="Onboarding step 1: upload your resume"/><p align="center"><b>1 · Upload your resume</b></p></td>
-<td width="50%"><img src=".github/assets/onboarding-profile.png" alt="Onboarding step 2: review the details read from your resume"/><p align="center"><b>2 · Review what Morrow found</b></p></td>
-</tr>
-<tr>
-<td width="50%"><img src=".github/assets/onboarding-preferences.png" alt="Onboarding step 3: choose target roles and locations"/><p align="center"><b>3 · Pick the jobs you want</b></p></td>
-<td width="50%"><img src=".github/assets/learning.jpg" alt="Research Studio: the daily learning plan"/><p align="center"><b>Learn every day in Research Studio</b></p></td>
+<td width="50%"><img src=".github/assets/bot-crew-cards.jpg" alt="Bot Crew cards for Naukri, Hirist, Instahyre, Cutshort, Wellfound and Company sites with Run now and Configure"/></td>
+<td width="50%" valign="top">
+
+**Six apply, six keep your profiles current, six help you research and study.**
+
+- **Run now** or **Configure** on each card
+- Run up to **8 agents at once**, each in its own browser
+- Turn on **Run in background** to hide the Chrome windows
+- Each card shows how many jobs that bot found and how many applications it sent
+
+</td>
 </tr>
 </table>
 
-<sub>The screenshots use example data.</sub>
+### 📊 Insights: see what's working
+
+<table>
+<tr>
+<td width="50%"><img src=".github/assets/insights.jpg" alt="Insights summary cards: applications sent, Naukri applications, opportunities found, needs your attention"/></td>
+<td width="50%"><img src=".github/assets/insights-charts.jpg" alt="Insights charts: daily application bars by channel, the job funnel and the outcome ring"/></td>
+</tr>
+<tr>
+<td align="center"><b>Totals for the period you choose</b></td>
+<td align="center"><b>Daily activity, the job funnel and the outcome of each attempt</b></td>
+</tr>
+</table>
+
+### 📋 Applications and the Action inbox
+
+<table>
+<tr>
+<td width="50%"><img src=".github/assets/applications.jpg" alt="Applications ledger with role, platform, outcome, match score and time"/></td>
+<td width="50%"><img src=".github/assets/action-inbox.jpg" alt="Action inbox listing employer questions waiting for an answer"/></td>
+</tr>
+<tr>
+<td align="center"><b>Every attempt with its match score and outcome; search and filter it</b></td>
+<td align="center"><b>Questions Morrow wouldn't guess at. Answer once and it reuses the answer</b></td>
+</tr>
+</table>
+
+### 📚 Learning: study while you apply
+
+<table>
+<tr>
+<td width="50%"><img src=".github/assets/learning.jpg" alt="Today's learning: the next step and today's progress"/></td>
+<td width="50%"><img src=".github/assets/dsa.jpg" alt="DSA practice lesson: learn, worked example, practice"/></td>
+</tr>
+<tr>
+<td align="center"><b>Today's plan, built around your target role</b></td>
+<td align="center"><b>DSA lessons: learn, worked example, practice (+XP)</b></td>
+</tr>
+</table>
+
+### 🔁 Flows and Connections
+
+<table>
+<tr>
+<td width="50%"><img src=".github/assets/flows.jpg" alt="Flows: run the whole morning workflow and resume from saved progress"/></td>
+<td width="50%"><img src=".github/assets/connections.jpg" alt="Connections: saved sign-ins for Google, Naukri and the job boards"/></td>
+</tr>
+<tr>
+<td align="center"><b>Run the whole morning; pick up where it stopped</b></td>
+<td align="center"><b>Sign in once per site; Morrow never sees your password</b></td>
+</tr>
+</table>
+
+### 🪄 Onboarding: from resume to ready in three steps
+
+<table>
+<tr>
+<td width="33%"><img src=".github/assets/onboarding-resume.png" alt="Onboarding step 1: upload your resume"/></td>
+<td width="33%"><img src=".github/assets/onboarding-profile.png" alt="Onboarding step 2: review the details read from your resume"/></td>
+<td width="33%"><img src=".github/assets/onboarding-preferences.png" alt="Onboarding step 3: choose target roles and locations"/></td>
+</tr>
+<tr>
+<td align="center"><b>1 · Upload your resume</b></td>
+<td align="center"><b>2 · Check what it found</b></td>
+<td align="center"><b>3 · Pick the jobs you want</b></td>
+</tr>
+</table>
 
 ---
 
