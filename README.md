@@ -1,4 +1,24 @@
+<div align="center">
+
 # Morrow
+
+### **Autonomous Learning-First Career Workspace & Multi-Platform Application Engine**
+**Local-First Architecture · Playwright Multi-Board Automation · LaTeX Resume Tailoring · Interview Prep**
+
+[Features](#what-morrow-does) &nbsp;•&nbsp; [Quick Start](#quick-start) &nbsp;•&nbsp; [Dashboard](#the-dashboard) &nbsp;•&nbsp; [Architecture](#how-each-feature-works) &nbsp;•&nbsp; [SoujanyaLab](https://www.soujanyalab.in/)
+
+<br/>
+
+[![Version](https://img.shields.io/badge/Release-v1.0.0-00F2FE?style=flat-square&logo=github)](https://github.com/GuptaSoujanya/Morrow/releases/tag/v1.0.0)
+[![Python](https://img.shields.io/badge/Python-3.11%20%7C%203.12-3776AB?style=flat-square&logo=python&logoColor=white)](https://python.org)
+[![Platform](https://img.shields.io/badge/Platform-macOS%20%7C%20Linux-blueviolet?style=flat-square&logo=apple)](https://github.com/GuptaSoujanya/Morrow)
+[![Tests](https://img.shields.io/badge/Tests-1641%20passing-39D353?style=flat-square&logo=pytest)](https://github.com/GuptaSoujanya/Morrow)
+[![Local-First](https://img.shields.io/badge/Architecture-Local--First%20%26%20Private-FFD700?style=flat-square)](https://github.com/GuptaSoujanya/Morrow)
+[![Supported Boards](https://img.shields.io/badge/Boards-Naukri%20%7C%20Wellfound%20%7C%20Instahyre%20%7C%20Cutshort-orange?style=flat-square)](https://github.com/GuptaSoujanya/Morrow)
+
+</div>
+
+<br/>
 
 **A learning-first career workspace that runs on your own computer.** Morrow studies with you every
 morning, keeps your job-board profiles the way a recruiter should see them, tailors your resume per
