@@ -1,6 +1,7 @@
 """Verified application submission on Naukri job pages."""
 
 import logging
+import re
 import time
 from typing import List, Optional, Tuple
 
@@ -190,6 +191,63 @@ def classify_apply_button(driver: WebDriver) -> Tuple[Optional[WebElement], str]
         if element_id == "apply-button" or "apply-button" in classes or text_is_apply:
             return candidate, "native"
     return None, ""
+
+
+# Naukri's page shows one toast, "There was an error while processing your request",
+# whatever went wrong, while its own apply call says exactly what it refused:
+# 403 {"message": "Daily quota of jobs exceeded", ... "customErrorCode": 403009}.
+_WATCH_APPLY_SCRIPT = r"""
+if (!window.__morrowApplyWatch) {
+  window.__morrowApplyWatch = true;
+  window.__morrowApply = null;
+  const mine = (url) => /apply-workflow|\/v1\/apply/.test(String(url || ''));
+  const keep = (url, status, body) => {
+    if (!mine(url)) return;
+    let message = '';
+    try { const data = JSON.parse(body); message = data.message || ((data.validationErrors || [{}])[0] || {}).message || ''; } catch (e) {}
+    window.__morrowApply = {status: status, message: message, body: String(body || '').slice(0, 300)};
+  };
+  const fetched = window.fetch;
+  window.fetch = function (...args) {
+    const url = (args[0] && args[0].url) || args[0];
+    return fetched.apply(this, args).then((response) => {
+      if (mine(url)) { response.clone().text().then((body) => keep(url, response.status, body)).catch(() => {}); }
+      return response;
+    });
+  };
+  const opened = XMLHttpRequest.prototype.open;
+  XMLHttpRequest.prototype.open = function (method, url) {
+    this.addEventListener('loadend', () => { try { keep(url, this.status, this.responseText); } catch (e) {} });
+    return opened.apply(this, arguments);
+  };
+}
+return true;
+"""
+_QUOTA_MESSAGE = re.compile(r"quota", re.I)
+
+
+def _watch_apply_calls(driver: WebDriver) -> None:
+    try:
+        driver.execute_script(_WATCH_APPLY_SCRIPT)
+    except WebDriverException as exc:
+        logger.debug("Could not watch Naukri's apply call (%s)", type(exc).__name__)
+
+
+def _server_refusal(driver: WebDriver) -> Tuple[str, str]:
+    """(status, Naukri's own words) for a refused apply call; ("", "") while none has failed."""
+    try:
+        recorded = driver.execute_script("return window.__morrowApply")
+    except WebDriverException:
+        return "", ""
+    if not isinstance(recorded, dict) or not recorded.get("status"):
+        return "", ""
+    code = int(recorded["status"])
+    if code < 400:
+        return "", ""
+    message = str(recorded.get("message") or "").strip() or str(recorded.get("body") or "").strip()
+    if _QUOTA_MESSAGE.search(message):
+        return ApplyStatus.QUOTA_EXPIRED, "Naukri says: %s (its own daily limit for this account, %d)" % (message, code)
+    return ApplyStatus.NAUKRI_REFUSED, "Naukri says: %s (%d)" % (message or "no reason given", code)
 
 
 def _visible_message(driver: WebDriver, xpath: str) -> str:
@@ -396,6 +454,7 @@ def apply_to_job(
             )
             return _result(job, ApplyStatus.EXTERNAL_SKIPPED, "external button: %s" % text)
 
+        _watch_apply_calls(driver)
         try:
             button.click()
         except ElementClickInterceptedException as exc:
@@ -404,6 +463,9 @@ def apply_to_job(
 
         deadline = time.monotonic() + 20.0
         while time.monotonic() < deadline:
+            refused, said = _server_refusal(driver)
+            if refused:
+                return _result(job, refused, said)
             quota_message = _visible_message(driver, _QUOTA_XPATH)
             if quota_message:
                 return _result(job, ApplyStatus.QUOTA_EXPIRED, quota_message)

@@ -347,15 +347,32 @@ def test_the_summary_says_where_every_collected_job_went(fake_naukri, tmp_path):
     assert sorted(attempted) == ["fine", "good"]
 
 
-def test_two_refusals_in_a_row_end_the_run(fake_naukri, tmp_path):
+def test_three_refusals_in_a_row_end_the_run_after_one_cool_off(fake_naukri, tmp_path, monkeypatch):
     install, attempted = fake_naukri
+    waited = []
+    monkeypatch.setattr(cli, "REFUSAL_COOLOFF_S", 7)
+    monkeypatch.setattr(cli.time, "sleep", lambda seconds: waited.append(seconds))
     queue = [_scored(80.0, 1, "j%03d" % i) for i in range(10)]
-    install(queue, {"j002": ApplyStatus.NAUKRI_REFUSED, "j003": ApplyStatus.NAUKRI_REFUSED})
+    install(queue, {"j002": ApplyStatus.NAUKRI_REFUSED, "j003": ApplyStatus.NAUKRI_REFUSED,
+                    "j004": ApplyStatus.NAUKRI_REFUSED})
 
     summary = _run(tmp_path, _settings(target_applications=10))
 
-    assert attempted == ["j000", "j001", "j002", "j003"]
+    assert attempted == ["j000", "j001", "j002", "j003", "j004"]
     assert summary.applied == 2
+    assert 7 in waited, "the bot cooled off after the second refusal before the last try"
+
+
+def test_two_refusals_followed_by_an_application_keep_the_run_going(fake_naukri, tmp_path, monkeypatch):
+    install, attempted = fake_naukri
+    monkeypatch.setattr(cli, "REFUSAL_COOLOFF_S", 0)
+    queue = [_scored(80.0, 1, "j%03d" % i) for i in range(6)]
+    install(queue, {"j001": ApplyStatus.NAUKRI_REFUSED, "j002": ApplyStatus.NAUKRI_REFUSED})
+
+    summary = _run(tmp_path, _settings(target_applications=10))
+
+    assert len(attempted) == 6
+    assert summary.applied == 4
 
 
 def test_one_refusal_between_applications_does_not_end_the_run(fake_naukri, tmp_path):

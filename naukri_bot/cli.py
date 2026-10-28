@@ -47,8 +47,10 @@ _EXTERNAL_JOBS_FILE = "user/worklists/external_jobs.md"
 # How long a run waits at the start for a person to finish a Google sign-in
 # (passkey, phone prompt) before going on without it.
 GOOGLE_LOGIN_WAIT_S = 120.0
-# One refusal can be a hiccup; two in a row and Naukri has closed for the day.
-REFUSALS_BEFORE_STOP = 2
+# One refusal can be a hiccup; after the second in a row the bot waits REFUSAL_COOLOFF_S
+# and tries once more, and only a third refusal means Naukri has closed for the day.
+REFUSALS_BEFORE_STOP = 3
+REFUSAL_COOLOFF_S = 90
 
 # Generic resume words that make terrible job-search keywords on their own.
 _WEAK_KEYWORDS = {
@@ -961,6 +963,12 @@ def run(
                 if result.status == ApplyStatus.NAUKRI_REFUSED
                 else 0
             )
+            if naukri_open and refused_in_a_row == REFUSALS_BEFORE_STOP - 1:
+                logger.warning(
+                    "Naukri refused %d applications in a row (%r); waiting %ds before one more try.",
+                    refused_in_a_row, result.detail, REFUSAL_COOLOFF_S,
+                )
+                time.sleep(REFUSAL_COOLOFF_S)
             if naukri_open and refused_in_a_row >= REFUSALS_BEFORE_STOP:
                 naukri_open = False
                 logger.warning(
