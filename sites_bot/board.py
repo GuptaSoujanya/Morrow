@@ -24,6 +24,8 @@ class Board:
     applied: str
     # Second and later search pages: "{page}" is the page number, with "{slug}"/"{query}" as in search; "" = one page.
     search_page: str = ""
+    search_in_city: str = ""
+    next_script: str = ""
     # JavaScript returning extra [{href, heading, lines}] cards for a page whose cards carry no job link.
     cards_script: str = ""
     external: str = r"company (?:site|website)|apply on company|external"

@@ -1613,6 +1613,30 @@ def test_a_job_search_box_is_not_an_application_form():
     assert ext.application_fields(form) == form
 
 
+def test_the_sites_own_header_search_is_not_part_of_the_application():
+    """Wellfound: typing in the header search closed the modal, and the bot clicked the page's Apply again."""
+    header = ext.Field(element=None, kind="text", label="Search everything", required=False, scope="furniture")
+    question = ext.Field(element=None, kind="textarea", label="What interests you about this company?", required=False)
+
+    assert ext.application_fields([header, question]) == [question]
+    assert ext.application_fields([header]) == []
+
+
+def test_while_a_modal_is_open_only_its_own_fields_are_filled():
+    behind = ext.Field(element=None, kind="text", label="Current location", required=False)
+    place = ext.Field(element=None, kind="text", label="I can relocate to…", required=False, scope="dialog")
+    note = ext.Field(element=None, kind="textarea", label="Why this company?", required=False, scope="dialog")
+
+    assert ext.application_fields([behind, place, note]) == [place, note]
+
+
+def test_without_a_modal_the_pages_own_fields_are_still_filled():
+    form = [ext.Field(element=None, kind="text", label="Full name", required=True),
+            ext.Field(element=None, kind="email", label="Email", required=True)]
+
+    assert ext.application_fields(form) == form
+
+
 def test_a_removed_posting_is_named_without_asking_the_brain(tmp_path):
     brain = _PageBrain()
     page = _Page(GREENHOUSE, fields=SEARCH_BOX, buttons=[_Button("Search")], body=GONE_TEXT)
@@ -1836,6 +1860,8 @@ def _used_quota(tmp_path, count):
 
 def test_after_two_refusals_the_run_goes_on_with_company_sites_only(morning, monkeypatch):
     run, on_naukri, _, calls = morning
+    monkeypatch.setattr(cli, "REFUSALS_BEFORE_STOP", 2)
+    monkeypatch.setattr(cli, "REFUSAL_COOLOFF_S", 0)
     on_naukri.update(a=ApplyStatus.NAUKRI_REFUSED, b=ApplyStatus.NAUKRI_REFUSED)
     opened = []
     _buttons(monkeypatch, {"c": "external"}, opened)
@@ -1938,6 +1964,8 @@ def test_a_box_the_site_redraws_after_typing_still_counts_as_filled(tmp_path):
 
 def test_one_account_wall_per_company_is_enough_in_a_run(morning, monkeypatch):
     run, on_naukri, _, calls = morning
+    monkeypatch.setattr(cli, "REFUSALS_BEFORE_STOP", 2)
+    monkeypatch.setattr(cli, "REFUSAL_COOLOFF_S", 0)
     on_naukri.update(a=ApplyStatus.NAUKRI_REFUSED, b=ApplyStatus.NAUKRI_REFUSED)
     queue = [_queued(jid) for jid in ("a", "b", "c", "d", "e")]
     for scored in queue[2:]:
@@ -2136,3 +2164,164 @@ def test_return_to_never_closes_the_last_tab_when_the_first_one_is_gone():
     tabs = _Tabs(["popup", "form"], "form")
     ext.return_to(tabs, "home", ["home"])
     assert tabs.window_handles == ["popup"] and tabs.current == "popup"
+
+
+def test_return_to_reports_a_browser_with_no_window_left_as_gone():
+    from selenium.common.exceptions import NoSuchWindowException
+
+    tabs = _Tabs([], "home")
+    with pytest.raises(NoSuchWindowException, match="no window left"):
+        ext.return_to(tabs, "home", ["home"])
+
+
+class _Tick:
+    """A styled Yes/No: the input itself is hidden and only its label is on the page."""
+
+    def __init__(self, displayed=False):
+        self.displayed = displayed
+        self.selected = False
+        self.clicks = []
+
+    def is_displayed(self):
+        return self.displayed
+
+    def is_selected(self):
+        return self.selected
+
+    def click(self):
+        self.clicks.append("element")
+        self.selected = True
+
+
+class _TickDriver:
+    def __init__(self, element):
+        self.element = element
+        self.scripts = []
+
+    def execute_script(self, script, *args):
+        self.scripts.append(script)
+        if script is ext._CLICK_TICK_SCRIPT:
+            self.element.clicks.append("label")
+            self.element.selected = True
+        return None
+
+
+def test_a_hidden_radio_is_ticked_through_its_visible_label():
+    element = _Tick(displayed=False)
+    driver = _TickDriver(element)
+
+    assert ext._set_checked(driver, element, True) is True
+    assert element.clicks == ["label"], "clicking the hidden box itself would fail"
+    assert ext._CLICK_TICK_SCRIPT in driver.scripts
+
+
+def test_a_visible_tick_box_is_still_clicked_directly():
+    element = _Tick(displayed=True)
+    driver = _TickDriver(element)
+
+    assert ext._set_checked(driver, element, True) is True
+    assert element.clicks == ["element"]
+    assert ext._CLICK_TICK_SCRIPT not in driver.scripts
+
+
+def test_a_box_already_in_the_wanted_state_is_left_alone():
+    element = _Tick(displayed=True)
+    element.selected = True
+    driver = _TickDriver(element)
+
+    assert ext._set_checked(driver, element, True) is True
+    assert element.clicks == []
+
+
+@pytest.mark.parametrize("answer, written", [
+    ("3 years", "3"), ("2.9", "2.9"), ("16 LPA", "16"), ("15 days or less", "15"),
+    ("Rs 16,00,000", "1600000"), ("", ""), ("no", ""),
+])
+def test_a_number_box_is_given_the_number_alone(answer, written):
+    assert ext.number_only(answer) == written
+
+
+def test_years_of_experience_in_a_number_box_is_written_as_digits(monkeypatch):
+    """Hirist asks 'Years of experience in NODE.JS?' in a number box, which keeps nothing but digits."""
+    wrote = []
+    monkeypatch.setattr(ext, "set_text", lambda driver, element, value: wrote.append(value) or True)
+    item = ext.Field(element=None, kind="number", label="Years of experience in NODE.JS?", required=False)
+    outcome = ext.FormOutcome()
+
+    ext._fill_text(None, item, "3 years", outcome)
+
+    assert wrote == ["3"]
+    assert outcome.filled == ["Years of experience in NODE.JS?"]
+
+
+def test_a_text_box_still_gets_the_whole_answer(monkeypatch):
+    wrote = []
+    monkeypatch.setattr(ext, "set_text", lambda driver, element, value: wrote.append(value) or True)
+    item = ext.Field(element=None, kind="text", label="Notice period", required=False)
+
+    ext._fill_text(None, item, "15 Days or less", ext.FormOutcome())
+
+    assert wrote == ["15 Days or less"]
+
+
+@pytest.mark.parametrize("question", [
+    "Are you currently living in Delhi/ NCR ?",
+    "Do you reside in Pune?",
+    "Are you based in Bangalore?",
+    "What is your current annual salary? (in LPA, e.g., 45)",
+    "How many years of experience do you have in Python?",
+])
+def test_a_long_box_asking_for_a_fact_goes_to_the_facts_first(question):
+    """Hirist asks 'Are you currently living in Delhi/NCR?' in a long text box; prose is not the answer."""
+    assert ext._FACT_QUESTION.search(question), question
+
+
+@pytest.mark.parametrize("question", [
+    "Briefly describe one product you built.",
+    "Why are you planning for a job change?",
+    "Why do you want to work here?",
+])
+def test_a_long_box_asking_for_your_own_words_is_left_to_the_writer(question):
+    assert not ext._FACT_QUESTION.search(question), question
+
+
+class _FactEngine:
+    """Answers facts, and records anything it was asked."""
+
+    def __init__(self):
+        self.asked = []
+
+    def resolve(self, question, options=None, field_type="text"):
+        self.asked.append(question)
+        from common.models import Answer
+        text = "16" if "salary" in question.lower() else ""
+        return SimpleNamespace(abstained=not text, answer=Answer(text=text, grounded_in="current_ctc_lpa") if text else None)
+
+    def own_answer(self, question, options=None):
+        return None
+
+
+def _one_field_page(kind, label, required=False):
+    page = _Page(GREENHOUSE, fields=[_Control(kind=kind, label=label, required=required)], buttons=[_Button("Submit")])
+    return _browser(page)
+
+
+def test_an_optional_box_asking_a_fact_is_answered_from_your_facts():
+    """Hirist's screening questions are all optional, yet Next stays disabled until each is answered."""
+    engine = _FactEngine()
+    driver = _one_field_page("number", "What is your current annual salary? (in LPA, e.g., 45)")
+
+    outcome = ext.fill_form(driver, ext.discover_fields(driver), PROFILE, engine, None)
+
+    assert engine.asked == ["What is your current annual salary? (in LPA, e.g., 45)"]
+    assert outcome.filled == ["What is your current annual salary? (in LPA, e.g., 45)"]
+
+
+def test_an_optional_box_that_is_not_a_fact_is_left_to_your_own_answers():
+    engine = _FactEngine()
+    driver = _one_field_page("text", "Street address")
+
+    outcome = ext.fill_form(driver, ext.discover_fields(driver), PROFILE, engine, None)
+
+    assert engine.asked == [], "the model is not asked to invent an address"
+    assert outcome.skipped == ["Street address"]

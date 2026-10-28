@@ -7,6 +7,7 @@ from datetime import date
 from urllib.parse import urlparse
 
 import pytest
+from dataclasses import replace
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
@@ -14,7 +15,7 @@ from sites_bot import browser_agent
 from sites_bot import external as ext
 from sites_bot import platforms as pf
 from common.ledger import Ledger
-from common.models import ApplyStatus, JobPosting, Profile, ScoredJob, Settings
+from common.models import ApplyStatus, JobPosting, Profile, RunSummary, ScoredJob, Settings
 
 HIRIST = pf.BOARDS["hirist"]
 INSTAHYRE = pf.BOARDS["instahyre"]
@@ -189,7 +190,7 @@ def test_a_board_run_applies_up_to_the_limit_without_touching_naukri_quota(board
     from common import report
 
     jobs = [_job(str(n)) for n in range(1, 5)]
-    monkeypatch.setattr(pf, "collect", lambda driver, board, keywords, limit, pages=1: jobs)
+    monkeypatch.setattr(pf, "collect", lambda driver, board, keywords, limit, pages=1, locations=(): jobs)
     monkeypatch.setattr(ranking, "rank", lambda profile, found, client, settings: [
         ScoredJob(job=job, score=80.0 - i, reasons=[]) for i, job in enumerate(found)])
     monkeypatch.setattr("naukri_bot.cli._pause_between_applications", lambda settings: None)
@@ -257,7 +258,7 @@ def test_a_browser_that_closed_mid_run_is_reopened_and_the_run_goes_on(board_pag
     from naukri_bot import ranking
 
     jobs = [_job(str(n)) for n in range(1, 4)]
-    monkeypatch.setattr(pf, "collect", lambda driver, board, keywords, limit, pages=1: jobs)
+    monkeypatch.setattr(pf, "collect", lambda driver, board, keywords, limit, pages=1, locations=(): jobs)
     monkeypatch.setattr(ranking, "rank", lambda profile, found, client, settings: [
         ScoredJob(job=job, score=80.0 - i, reasons=[]) for i, job in enumerate(found)])
     monkeypatch.setattr("naukri_bot.cli._pause_between_applications", lambda settings: None)
@@ -278,7 +279,7 @@ def test_a_browser_that_closed_mid_run_is_reopened_and_the_run_goes_on(board_pag
 def test_without_a_way_to_reopen_the_browser_the_board_stops(board_page, tmp_path, monkeypatch):
     from naukri_bot import ranking
 
-    monkeypatch.setattr(pf, "collect", lambda driver, board, keywords, limit, pages=1: [_job("1")])
+    monkeypatch.setattr(pf, "collect", lambda driver, board, keywords, limit, pages=1, locations=(): [_job("1")])
     monkeypatch.setattr(ranking, "rank", lambda profile, found, client, settings: [
         ScoredJob(job=job, score=80.0, reasons=[]) for job in found])
     monkeypatch.setattr(pf, "apply_to", lambda *a: pytest.fail("applied without a browser"))
@@ -318,7 +319,7 @@ def test_two_applications_the_board_never_confirmed_stop_the_board(board_page, t
     from naukri_bot import ranking
 
     jobs = [_job(str(n)) for n in range(1, 5)]
-    monkeypatch.setattr(pf, "collect", lambda driver, board, keywords, limit, pages=1: jobs)
+    monkeypatch.setattr(pf, "collect", lambda driver, board, keywords, limit, pages=1, locations=(): jobs)
     monkeypatch.setattr(ranking, "rank", lambda profile, found, client, settings: [
         ScoredJob(job=job, score=80.0 - i, reasons=[]) for i, job in enumerate(found)])
     board_page["landed"], board_page["verified"] = "applied", False
@@ -555,7 +556,7 @@ def test_a_board_without_numbered_pages_reads_one_search_page(monkeypatch):
     monkeypatch.setattr(pf, "_scroll", lambda driver: None)
     monkeypatch.setattr(pf, "read_cards", lambda driver, board: [_job(str(len(opened)))])
 
-    pf.collect(_Driver(), INSTAHYRE, ["AI Engineer"], 50, pages=5)
+    pf.collect(_Driver(), replace(INSTAHYRE, next_script=""), ["AI Engineer"], 50, pages=5)
 
     assert opened == ["https://www.instahyre.com/candidate/opportunities/?matching=true",
                       "https://www.instahyre.com/ai-engineer-jobs/"]
@@ -568,7 +569,7 @@ def test_a_form_whose_last_next_sent_the_application_counts_as_submitted(monkeyp
     urls = iter(["https://www.hirist.tech/job/1680685/screening?", "https://www.hirist.tech/job/applied?jobId=1680685"])
     monkeypatch.setattr(ext, "_current_url", lambda driver: next(urls))
     monkeypatch.setattr(ext, "long_answer_writer", lambda *a: None)
-    monkeypatch.setattr(ext, "discover_fields", lambda driver: [])
+    monkeypatch.setattr(ext, "settled_fields", lambda driver, settle_s=None: [])
     monkeypatch.setattr(ext, "application_fields", lambda fields: [])
     monkeypatch.setattr(ext, "fill_form", lambda *a: SimpleNamespace(filled=["Current CTC?"], missing=[]))
     monkeypatch.setattr(ext, "challenge_shown", lambda driver: False)
@@ -588,7 +589,7 @@ def test_a_form_still_on_its_page_with_no_submit_needs_a_person(monkeypatch):
 
     monkeypatch.setattr(ext, "_current_url", lambda driver: "https://www.hirist.tech/job/1680685/screening?")
     monkeypatch.setattr(ext, "long_answer_writer", lambda *a: None)
-    monkeypatch.setattr(ext, "discover_fields", lambda driver: [])
+    monkeypatch.setattr(ext, "settled_fields", lambda driver, settle_s=None: [])
     monkeypatch.setattr(ext, "application_fields", lambda fields: [])
     monkeypatch.setattr(ext, "fill_form", lambda *a: SimpleNamespace(filled=[], missing=[]))
     monkeypatch.setattr(ext, "challenge_shown", lambda driver: False)
@@ -625,3 +626,247 @@ def test_a_card_seen_both_as_a_link_and_through_the_script_is_read_once():
             return [{"href": "https://www.instahyre.com/job-1-x/", "heading": "Acme - AI Engineer", "lines": []}]
 
     assert [job.job_id for job in pf.read_cards(_Both(), INSTAHYRE)] == ["instahyre:1"]
+
+
+def test_a_board_whose_browser_stopped_answering_is_tried_once_more_after_a_reopen():
+    from urllib3.exceptions import MaxRetryError
+
+    calls = []
+    reopened = []
+
+    def run():
+        calls.append(1)
+        if len(calls) == 1:
+            raise MaxRetryError(None, "/session/x", "connection refused")
+        return RunSummary(applied=1)
+
+    summary = pf.attempt_board(HIRIST, run, lambda: reopened.append(1) or object())
+
+    assert summary is not None and summary.applied == 1
+    assert len(calls) == 2 and reopened == [1]
+
+
+def test_a_board_is_given_up_when_no_browser_can_be_reopened():
+    from urllib3.exceptions import ReadTimeoutError
+
+    def run():
+        raise ReadTimeoutError(None, "/session/x", "read timed out")
+
+    assert pf.attempt_board(HIRIST, run, lambda: None) is None
+
+
+def test_a_board_that_fails_twice_is_given_up_after_one_reopen():
+    from selenium.common.exceptions import WebDriverException
+
+    calls = []
+
+    def run():
+        calls.append(1)
+        raise WebDriverException("chrome not reachable")
+
+    assert pf.attempt_board(HIRIST, run, lambda: object()) is None
+    assert len(calls) == 2
+
+
+class _PagedDriver(_Driver):
+    def __init__(self, pages):
+        self.pages = list(pages)
+        self.shown = 0
+        self.clicks = 0
+
+    def execute_script(self, script, *args):
+        if script == INSTAHYRE.next_script:
+            self.clicks += 1
+            if self.shown + 1 >= len(self.pages):
+                return False
+            self.shown += 1
+            return True
+        return []
+
+
+def test_a_board_that_turns_pages_by_clicking_reads_until_next_is_gone(monkeypatch):
+    opened = []
+    driver = _PagedDriver([["a1", "a2"], ["a3"], ["a4"]])
+    monkeypatch.setattr(pf, "safe_get", lambda d, url: opened.append(url) or True)
+    monkeypatch.setattr(pf, "PAGE_WAIT_S", 0)
+    monkeypatch.setattr(pf, "_scroll", lambda d: None)
+    monkeypatch.setattr(pf, "read_cards", lambda d, board: [_job(n) for n in d.pages[d.shown]])
+    board = replace(INSTAHYRE, feeds=(), search_in_city="")
+
+    jobs = pf.collect(driver, board, ["LLM Engineer"], 50, pages=5)
+
+    assert opened == ["https://www.instahyre.com/llm-engineer-jobs/"]
+    assert sorted(job.job_id for job in jobs) == ["hirist:a1", "hirist:a2", "hirist:a3", "hirist:a4"]
+    assert {job.source for job in jobs} == {"instahyre:search:LLM Engineer"}
+    assert driver.clicks == 3, "the third click found no Next control"
+
+
+def test_clicking_stops_at_the_page_limit_and_at_a_page_that_adds_nothing(monkeypatch):
+    driver = _PagedDriver([["a1"], ["a2"], ["a2"], ["a9"]])
+    monkeypatch.setattr(pf, "safe_get", lambda d, url: True)
+    monkeypatch.setattr(pf, "PAGE_WAIT_S", 0)
+    monkeypatch.setattr(pf, "_scroll", lambda d: None)
+    monkeypatch.setattr(pf, "read_cards", lambda d, board: [_job(n) for n in d.pages[d.shown]])
+    board = replace(INSTAHYRE, feeds=(), search_in_city="")
+
+    jobs = pf.collect(driver, board, ["LLM Engineer"], 50, pages=10)
+    assert sorted(job.job_id for job in jobs) == ["hirist:a1", "hirist:a2"], "page 3 repeated page 2"
+
+    driver = _PagedDriver([["b1"], ["b2"], ["b3"], ["b4"]])
+    jobs = pf.collect(driver, board, ["LLM Engineer"], 50, pages=2)
+    assert sorted(job.job_id for job in jobs) == ["hirist:b1", "hirist:b2"] and driver.clicks == 1
+
+
+def test_boards_with_a_city_in_the_search_address_are_searched_per_preferred_location(monkeypatch):
+    opened = []
+    monkeypatch.setattr(pf, "safe_get", lambda d, url: opened.append(url) or True)
+    monkeypatch.setattr(pf, "PAGE_WAIT_S", 0)
+    monkeypatch.setattr(pf, "_scroll", lambda d: None)
+    monkeypatch.setattr(pf, "read_cards", lambda d, board: [_job(str(len(opened)))])
+    board = replace(INSTAHYRE, feeds=(), next_script="")
+
+    jobs = pf.collect(_Driver(), board, ["Software Engineer"], 50, pages=3, locations=["Pune", "Delhi (NCR)", "Gurugram", "Remote"])
+
+    assert opened == [
+        "https://www.instahyre.com/software-engineer-jobs/",
+        "https://www.instahyre.com/software-engineer-jobs-in-pune/",
+        "https://www.instahyre.com/software-engineer-jobs-in-delhi/",
+        "https://www.instahyre.com/software-engineer-jobs-in-gurgaon/",
+        "https://www.instahyre.com/software-engineer-jobs-in-remote/",
+    ]
+    assert {job.source for job in jobs} == {"instahyre:search:Software Engineer", "instahyre:search:Software Engineer in Pune",
+                                            "instahyre:search:Software Engineer in Delhi (NCR)",
+                                            "instahyre:search:Software Engineer in Gurugram",
+                                            "instahyre:search:Software Engineer in Remote"}
+
+
+def test_a_board_without_city_addresses_ignores_the_locations(monkeypatch):
+    opened = []
+    monkeypatch.setattr(pf, "safe_get", lambda d, url: opened.append(url) or True)
+    monkeypatch.setattr(pf, "PAGE_WAIT_S", 0)
+    monkeypatch.setattr(pf, "_scroll", lambda d: None)
+    monkeypatch.setattr(pf, "read_cards", lambda d, board: [])
+    pf.collect(_Driver(), HIRIST, ["AI Engineer"], 50, pages=1, locations=["Pune"])
+    assert opened == ["https://www.hirist.tech/jobfeed", "https://www.hirist.tech/search/ai-engineer"]
+
+
+@pytest.mark.parametrize("city, slug", [("Pune", "pune"), ("Delhi (NCR)", "delhi"), ("Gurugram", "gurgaon"),
+                                        ("Bengaluru", "bangalore"), ("Navi Mumbai", "navi-mumbai"), ("Remote", "remote")])
+def test_city_slugs(city, slug):
+    assert pf.city_slug(city) == slug
+
+
+def test_a_board_whose_pages_come_up_empty_pauses_once_then_stops(board_page, tmp_path, monkeypatch):
+    from naukri_bot import ranking
+
+    jobs = [_job(str(n)) for n in range(1, 13)]
+    monkeypatch.setattr(pf, "collect", lambda driver, board, keywords, limit, pages=1, locations=(): jobs)
+    monkeypatch.setattr(ranking, "rank", lambda profile, found, client, settings: [
+        ScoredJob(job=job, score=80.0, reasons=[]) for job in found])
+    monkeypatch.setattr("naukri_bot.cli._pause_between_applications", lambda settings: None)
+    monkeypatch.setattr(pf, "apply_to", lambda driver, board, job, *a: pf._result(
+        job, ApplyStatus.NO_APPLY_BUTTON, "no Apply button (controls: )"))
+    waited = []
+    monkeypatch.setattr(pf.time, "sleep", lambda seconds: waited.append(seconds))
+    settings = _settings(tmp_path, db_path=str(tmp_path / "t.db"), min_score=50.0)
+    ledger = Ledger(settings.db_path)
+
+    summary = pf.run_board(_Driver(), HIRIST, settings, Profile(full_name="Jane"), ledger, None, None, 100, False, None)
+
+    assert summary.attempted == pf.BLANK_PAGES_BEFORE_STOP, "the board was given up after a run of empty pages"
+    assert waited.count(pf.BLANK_PAGE_COOLOFF_S) == 1, "one pause in case the board was throttling"
+    ledger.close()
+
+
+def test_a_page_with_no_apply_button_but_other_controls_is_just_skipped(board_page, tmp_path, monkeypatch):
+    from naukri_bot import ranking
+
+    jobs = [_job(str(n)) for n in range(1, 13)]
+    monkeypatch.setattr(pf, "collect", lambda driver, board, keywords, limit, pages=1, locations=(): jobs)
+    monkeypatch.setattr(ranking, "rank", lambda profile, found, client, settings: [
+        ScoredJob(job=job, score=80.0, reasons=[]) for job in found])
+    monkeypatch.setattr("naukri_bot.cli._pause_between_applications", lambda settings: None)
+    monkeypatch.setattr(pf, "apply_to", lambda driver, board, job, *a: pf._result(
+        job, ApplyStatus.NO_APPLY_BUTTON, "no Apply button (controls: Save, Share)"))
+    monkeypatch.setattr(pf.time, "sleep", lambda seconds: None)
+    settings = _settings(tmp_path, db_path=str(tmp_path / "t.db"), min_score=50.0)
+    ledger = Ledger(settings.db_path)
+
+    summary = pf.run_board(_Driver(), HIRIST, settings, Profile(full_name="Jane"), ledger, None, None, 100, False, None)
+
+    assert summary.attempted == 12
+    ledger.close()
+
+
+def test_a_disabled_send_button_is_reported_instead_of_clicking_the_page_top_apply(monkeypatch):
+    """Wellfound: 'Send application' stays disabled behind a location question while a page-top Apply exists."""
+    from types import SimpleNamespace
+
+    clicked = []
+    monkeypatch.setattr(ext, "_current_url", lambda driver: "https://wellfound.com/jobs/4853811-software-engineer")
+    monkeypatch.setattr(ext, "long_answer_writer", lambda *a: None)
+    monkeypatch.setattr(ext, "settled_fields", lambda driver, settle_s=None: [])
+    monkeypatch.setattr(ext, "application_fields", lambda fields: [SimpleNamespace(question="I am currently in…", name="", value="")])
+    monkeypatch.setattr(ext, "fill_form", lambda *a: SimpleNamespace(filled=[], missing=[]))
+    monkeypatch.setattr(ext, "challenge_shown", lambda driver: False)
+    monkeypatch.setattr(ext, "find_next", lambda driver: None)
+    monkeypatch.setattr(ext, "find_submit", lambda driver: "page-top Apply")
+    monkeypatch.setattr(ext, "_click", lambda driver, control: clicked.append(control))
+    monkeypatch.setattr(ext, "disabled_step", lambda driver: "Send application")
+    monkeypatch.setattr(pf, "shows_applied", lambda driver, board: False)
+
+    sent, _, missing = pf.answer_form(_Driver(), pf.BOARDS["wellfound"], _job(), Profile(full_name="Jane"), None,
+                                      Settings(email="t@example.com", password="secret"), None)
+
+    assert sent is False and clicked == []
+    assert missing == ["the 'Send application' button stays disabled until every question is answered; still blank: I am currently in…"]
+
+
+def test_job_pages_that_will_not_open_count_as_a_stall_too(board_page, tmp_path, monkeypatch):
+    """Instahyre served 38 unopenable pages in a row once the bot had applied about a hundred times."""
+    from naukri_bot import ranking
+
+    jobs = [_job(str(n)) for n in range(1, 13)]
+    monkeypatch.setattr(pf, "collect", lambda driver, board, keywords, limit, pages=1, locations=(): jobs)
+    monkeypatch.setattr(ranking, "rank", lambda profile, found, client, settings: [
+        ScoredJob(job=job, score=80.0, reasons=[]) for job in found])
+    monkeypatch.setattr("naukri_bot.cli._pause_between_applications", lambda settings: None)
+    monkeypatch.setattr(pf, "apply_to", lambda driver, board, job, *a: pf._result(
+        job, ApplyStatus.ERROR, "could not open the job page"))
+    waited = []
+    monkeypatch.setattr(pf.time, "sleep", lambda seconds: waited.append(seconds))
+    settings = _settings(tmp_path, db_path=str(tmp_path / "t.db"), min_score=50.0)
+    ledger = Ledger(settings.db_path)
+
+    summary = pf.run_board(_Driver(), HIRIST, settings, Profile(full_name="Jane"), ledger, None, None, 100, False, None)
+
+    assert summary.attempted == pf.BLANK_PAGES_BEFORE_STOP
+    assert waited.count(pf.BLANK_PAGE_COOLOFF_S) == 1
+    ledger.close()
+
+
+def test_a_board_form_is_read_once_it_has_finished_drawing(monkeypatch):
+    """Hirist draws its screening tick boxes after the text boxes; one early look missed the question."""
+    from types import SimpleNamespace
+
+    looked = []
+    monkeypatch.setattr(ext, "_current_url", lambda driver: "https://www.hirist.tech/job/1680509/screening?")
+    monkeypatch.setattr(ext, "long_answer_writer", lambda *a: None)
+    monkeypatch.setattr(ext, "settled_fields", lambda driver, settle_s=None: looked.append(1) or [
+        SimpleNamespace(question="Years of experience in NODE.JS?", name="", value=""),
+        SimpleNamespace(question="Are you currently living in Gurgaon/Gurugram?", name="", value="")])
+    monkeypatch.setattr(ext, "application_fields", lambda fields: fields)
+    monkeypatch.setattr(ext, "fill_form", lambda *a: SimpleNamespace(filled=["Years of experience in NODE.JS?"], missing=[]))
+    monkeypatch.setattr(ext, "challenge_shown", lambda driver: False)
+    monkeypatch.setattr(ext, "find_next", lambda driver: None)
+    monkeypatch.setattr(ext, "find_submit", lambda driver: None)
+    monkeypatch.setattr(ext, "disabled_step", lambda driver: "Next")
+    monkeypatch.setattr(pf, "shows_applied", lambda driver, board: False)
+
+    sent, filled, missing = pf.answer_form(_Driver(), HIRIST, _job(), Profile(full_name="Jane"), None,
+                                           Settings(email="t@example.com", password="secret"), None)
+
+    assert looked, "the form is read through settled_fields, which waits for it to stop growing"
+    assert sent is False and filled == ["Years of experience in NODE.JS?"]
+    assert missing == ["the 'Next' button stays disabled until every question is answered; "
+                       "still blank: Are you currently living in Gurgaon/Gurugram?"]

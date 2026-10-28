@@ -9,6 +9,14 @@ BOARD = Board(
     profile_url="https://www.instahyre.com/candidate/profile/",
     feeds=("https://www.instahyre.com/candidate/opportunities/?matching=true",),
     search="https://www.instahyre.com/{slug}-jobs/",
+    search_in_city="https://www.instahyre.com/{slug}-jobs-in-{city}/",
+    # Search results and the feed turn pages only through an Angular "Next »" control.
+    next_script=r"""
+const next = Array.from(document.querySelectorAll('li, a, button')).find(e => /^next\s*»?$/i.test((e.innerText || '').trim()));
+if (!next || /disabled/.test(next.className)) return false;
+next.click();
+return true;
+""",
     job_link=r"^https://www\.instahyre\.com/job-\d+-",
     job_id=r"/job-(\d+)-",
     apply=r"^(?:apply|apply now|i'?m interested|interested)$",

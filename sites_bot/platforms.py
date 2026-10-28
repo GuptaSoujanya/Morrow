@@ -25,16 +25,17 @@ import time
 from dataclasses import replace
 from datetime import date, datetime
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 from urllib.parse import quote_plus, urlparse
 
 from selenium.common.exceptions import WebDriverException
+from urllib3.exceptions import HTTPError as TransportError
 
 from . import browser_agent, profile_agent
 from . import external as ext
 from .board import Board
 from common import memory, profile_plan
-from common.browser import human_pause, safe_get
+from common.browser import BrowserError, human_pause, safe_get
 from common.models import ApplyResult, ApplyStatus, JobPosting, Profile, RunSummary, Settings
 from cutshort_bot.board import BOARD as CUTSHORT
 from hirist_bot.board import BOARD as HIRIST
@@ -54,6 +55,42 @@ MAX_BROWSER_RESTARTS = 2
 #: Applications that went through without the board showing Applied, before the
 #: board is left alone: the bot can no longer tell what its clicks are doing.
 UNCONFIRMED_BEFORE_STOP = 2
+#: Job pages that show no controls at all, in a row: a board throttling the bot
+#: serves empty pages. After the first few the bot pauses; after more it stops.
+BLANK_PAGES_BEFORE_PAUSE = 3
+BLANK_PAGE_COOLOFF_S = 60
+BLANK_PAGES_BEFORE_STOP = 8
+#: The browser stopped answering: Chrome closed, chromedriver died, or a new one
+#: could not start. urllib3's errors reach us untranslated once chromedriver is gone.
+BROWSER_GONE = (WebDriverException, BrowserError, TransportError, ConnectionError, TimeoutError)
+
+
+def _page_stalled(result: ApplyResult) -> bool:
+    """The board served nothing usable for this job: an empty page, or none at all."""
+    detail = result.detail.casefold()
+    if result.status == ApplyStatus.NO_APPLY_BUTTON:
+        return detail.endswith("(controls: )")
+    return result.status == ApplyStatus.ERROR and "could not open the job page" in detail
+
+
+def _reason(exc: BaseException) -> str:
+    return str(exc).strip().split("\n")[0] or type(exc).__name__
+
+
+def attempt_board(board: Board, run: Callable[[], RunSummary],
+                  restart: Callable[[], Optional[Any]]) -> Optional[RunSummary]:
+    """Run one board; when the browser stops answering, reopen it and try the board once more."""
+    for attempt in (1, 2):
+        try:
+            return run()
+        except BROWSER_GONE as exc:
+            if attempt == 1 and restart() is not None:
+                logger.warning("%s: the browser stopped answering (%s). It was reopened and %s is tried once more; "
+                               "applications already sent are in the ledger and are not repeated.",
+                               board.label, _reason(exc), board.label)
+                continue
+            logger.error("%s: the browser stopped answering (%s); moving on.", board.label, _reason(exc))
+    return None
 
 
 # Each board lives in its own package (<name>_bot/board.py); this is the list the loop knows.
@@ -65,8 +102,20 @@ def board_job_id(board: Board, url: str) -> str:
     return "%s:%s" % (board.name, found.group(1) if found else url)
 
 
-def search_url(board: Board, keyword: str, page: int = 1) -> str:
+_CITY_ALIASES = {"gurugram": "gurgaon", "bengaluru": "bangalore", "delhi ncr": "delhi", "new delhi": "delhi",
+                 "ncr": "delhi", "bombay": "mumbai"}
+
+
+def city_slug(city: str) -> str:
+    plain = re.sub(r"\(.*?\)", " ", city).strip().lower()
+    plain = _CITY_ALIASES.get(re.sub(r"\s+", " ", plain), plain)
+    return re.sub(r"[^a-z0-9]+", "-", plain).strip("-")
+
+
+def search_url(board: Board, keyword: str, page: int = 1, city: str = "") -> str:
     slug = re.sub(r"[^a-z0-9]+", "-", keyword.lower()).strip("-")
+    if city and board.search_in_city:
+        return board.search_in_city.format(slug=slug, query=quote_plus(keyword), city=city_slug(city), page=page)
     template = board.search_page if page > 1 and board.search_page else board.search
     return template.format(slug=slug, query=quote_plus(keyword), page=page)
 
@@ -194,36 +243,66 @@ def read_cards(driver: Any, board: Board) -> List[JobPosting]:
     return jobs
 
 
-def collect(driver: Any, board: Board, keywords: List[str], limit: int, pages: int = 1) -> List[JobPosting]:
+def collect(driver: Any, board: Board, keywords: List[str], limit: int, pages: int = 1,
+            locations: Sequence[str] = ()) -> List[JobPosting]:
     """Job cards from the board's own feed, then up to `pages` search pages per keyword; first sighting wins.
 
     A keyword stops early at a page that adds nothing new: the board ran out of results.
+    Pages come from numbered addresses (search_page) or from clicking the board's Next
+    control (next_script); boards with a city in the search address are also searched
+    once per preferred location.
     """
     found: Dict[str, JobPosting] = {}
     sources = [((url,), "feed") for url in board.feeds]
     if board.search:
         depth = max(pages, 1) if board.search_page else 1
-        sources += [(tuple(search_url(board, kw, n) for n in range(1, depth + 1)), "search:%s" % kw) for kw in keywords]
+        for keyword in keywords:
+            sources.append((tuple(search_url(board, keyword, n) for n in range(1, depth + 1)), "search:%s" % keyword))
+            if board.search_in_city:
+                sources += [(tuple(search_url(board, keyword, n, city) for n in range(1, depth + 1)),
+                             "search:%s in %s" % (keyword, city)) for city in locations]
     for urls, source in sources:
+        number = 0
         for number, url in enumerate(urls, 1):
             if len(found) >= limit:
                 return list(found.values())[:limit]
             if not safe_get(driver, url):
                 logger.info("%s: could not open %s", board.label, url)
+                number = 0
                 break
             time.sleep(PAGE_WAIT_S)
-            _scroll(driver)
-            jobs = read_cards(driver, board)
-            fresh = 0
-            for job in jobs:
-                if job.job_id not in found:
-                    found[job.job_id] = replace(job, source="%s:%s" % (board.name, source))
-                    fresh += 1
-            shown = source if number == 1 else "%s page %d" % (source, number)
-            logger.info("%s: %s gave %d jobs (%d new)", board.label, shown, len(jobs), fresh)
-            if not fresh:
+            if not _take(driver, board, found, source, number):
+                number = 0
+                break
+        while number and board.next_script and number < max(pages, 1) and len(found) < limit:
+            if not _click_next(driver, board):
+                break
+            number += 1
+            time.sleep(PAGE_WAIT_S)
+            if not _take(driver, board, found, source, number):
                 break
     return list(found.values())[:limit]
+
+
+def _take(driver: Any, board: Board, found: Dict[str, JobPosting], source: str, number: int) -> int:
+    _scroll(driver)
+    jobs = read_cards(driver, board)
+    fresh = 0
+    for job in jobs:
+        if job.job_id not in found:
+            found[job.job_id] = replace(job, source="%s:%s" % (board.name, source))
+            fresh += 1
+    shown = source if number == 1 else "%s page %d" % (source, number)
+    logger.info("%s: %s gave %d jobs (%d new)", board.label, shown, len(jobs), fresh)
+    return fresh
+
+
+def _click_next(driver: Any, board: Board) -> bool:
+    try:
+        return bool(driver.execute_script(board.next_script))
+    except WebDriverException as exc:
+        logger.warning("%s: could not turn the page: %s", board.label, str(exc).split("\n")[0])
+        return False
 
 
 def _scroll(driver: Any, rounds: int = 6) -> None:
@@ -367,7 +446,7 @@ def answer_form(
     for _ in range(MAX_FORM_PAGES):
         if application_landed(driver, board):
             return True, filled, []
-        fields = ext.application_fields(ext.discover_fields(driver))
+        fields = ext.application_fields(ext.settled_fields(driver))
         outcome = ext.fill_form(driver, fields, profile, engine, resume_pdf, writer)
         filled += outcome.filled
         missing = list(outcome.missing)
@@ -381,15 +460,15 @@ def answer_form(
         moved, problem = ext.next_page(driver, step)
         if not moved:
             return False, filled, ["the form did not move on (%s)" % problem]
+    held = ext.disabled_step(driver)
+    if held:
+        blank = [item.question or item.name for item in fields if (item.question or item.name) not in filled and not item.value]
+        return False, filled, ["the '%s' button stays disabled until every question is answered; still blank: %s"
+                               % (held, ", ".join(blank) or "none the bot can see")]
     submit = ext.find_submit(driver)
     if submit is None:
         if application_landed(driver, board):
             return True, filled, []
-        held = ext.disabled_step(driver)
-        if held:
-            blank = [item.question or item.name for item in fields if (item.question or item.name) not in filled and not item.value]
-            return False, filled, ["the '%s' button stays disabled until every question is answered; still blank: %s"
-                                   % (held, ", ".join(blank) or "none the bot can see")]
         return False, filled, ["no Submit button on the form"]
     ext._click(driver, submit)
     return True, filled, []
@@ -442,7 +521,7 @@ def apply_to(
         gone = dead_reason(ext._page_text(driver))
         if gone:
             return _result(job, ApplyStatus.NO_APPLY_BUTTON, "the posting is gone: %s" % gone)
-        buttons = _controls(driver, board.apply) + _controls(driver, board.external)
+        buttons = _wait_for_controls(driver, board.apply, AFTER_CLICK_WAIT_S) + _controls(driver, board.external)
         if not buttons:
             return _result(job, ApplyStatus.NO_APPLY_BUTTON, "no Apply button (controls: %s)" % ", ".join(
                 [ext._control_text(c) for c in ext._visible_controls(driver)][:8]))
@@ -545,7 +624,7 @@ def run_board(
                 board.label, board.home)
             return summary
         jobs = collect(driver, board, derive_keywords(profile, settings), settings.max_candidates,
-                       settings.pages_per_keyword)
+                       settings.pages_per_keyword, profile.preferred_locations)
         summary.collected = len(jobs)
         for job in jobs:
             ledger.record_seen(job)
@@ -562,7 +641,7 @@ def run_board(
         summary.eligible = len(selected)
         logger.info("%s: %d collected, %d ranked, %d eligible, target %d", board.label, summary.collected,
                     summary.ranked, summary.eligible, limit)
-        sent = unconfirmed = 0
+        sent = unconfirmed = blank = 0
         for scored in selected:
             if sent >= limit:
                 break
@@ -582,8 +661,18 @@ def run_board(
                 continue
             ledger.record_attempt(result, title=job.title, company=job.company, facts=facts)
             _count(summary, result)
+            blank = blank + 1 if _page_stalled(result) else 0
+            if blank == BLANK_PAGES_BEFORE_PAUSE:
+                logger.warning("%s: %d job pages in a row came up empty or would not open; waiting %ds in case the "
+                               "board is throttling.", board.label, blank, BLANK_PAGE_COOLOFF_S)
+                time.sleep(BLANK_PAGE_COOLOFF_S)
+            elif blank >= BLANK_PAGES_BEFORE_STOP:
+                logger.error("%s: %d job pages in a row came up empty or would not open even after a pause; stopping "
+                             "%s for now. Applications already sent are recorded.", board.label, blank, board.label)
+                break
             if result.status in (ApplyStatus.APPLIED_PLATFORM, ApplyStatus.APPLIED_EXTERNAL):
                 sent += 1
+                unconfirmed = 0
                 _pause_between_applications(settings)
             if result.status == ApplyStatus.SESSION_EXPIRED:
                 logger.error("%s signed out mid-run; stopping.", board.label)
@@ -821,7 +910,12 @@ def main(argv: Optional[List[str]] = None, only: Optional[Board] = None) -> int:
     except resume_module.ResumeError as exc:
         logger.warning("No resume PDF to attach (%s)", exc)
         resume_pdf = None
-    drivers = [browser.create_driver(settings)]
+    try:
+        drivers = [browser.create_driver(settings)]
+    except BROWSER_GONE as exc:
+        logger.error("The browser could not be started: %s", _reason(exc))
+        ledger.close()
+        return EXIT_FAILED
 
     def restart() -> Optional[Any]:
         if len(drivers) > MAX_BROWSER_RESTARTS:
@@ -829,17 +923,23 @@ def main(argv: Optional[List[str]] = None, only: Optional[Board] = None) -> int:
         logger.warning("The browser closed (quit by hand, or it went away); opening a new one and going on.")
         try:
             drivers[-1].quit()
-        except WebDriverException:
+        except BROWSER_GONE:
             pass
-        drivers.append(browser.create_driver(settings))
+        try:
+            drivers.append(browser.create_driver(settings))
+        except BROWSER_GONE as exc:
+            logger.error("A new browser could not be started: %s", _reason(exc))
+            return None
         return drivers[-1]
 
     totals: Dict[str, RunSummary] = {}
     profiles_failed: List[str] = []
+    boards_failed: List[str] = []
     try:
         for board in boards:
             if not browser_alive(drivers[-1]) and restart() is None:
                 logger.error("The browser keeps closing; stopping.")
+                boards_failed.append(board.label)
                 break
             if args.update_profile or args.profile_only or args.create_profile:
                 if not update_profile(drivers[-1], board, settings, profile, resume_pdf, args.dry_run,
@@ -847,8 +947,12 @@ def main(argv: Optional[List[str]] = None, only: Optional[Board] = None) -> int:
                     profiles_failed.append(board.label)
             if args.profile_only:
                 continue
-            totals[board.label] = run_board(drivers[-1], board, settings, profile, ledger, engine, client, limit,
-                                            args.dry_run, resume_pdf, restart)
+            summary = attempt_board(board, lambda: run_board(drivers[-1], board, settings, profile, ledger, engine,
+                                                             client, limit, args.dry_run, resume_pdf, restart), restart)
+            if summary is None:
+                boards_failed.append(board.label)
+            else:
+                totals[board.label] = summary
     finally:
         try:
             drivers[-1].quit()
@@ -863,6 +967,9 @@ def main(argv: Optional[List[str]] = None, only: Optional[Board] = None) -> int:
         report.update_quietly(settings)
     if profiles_failed:
         logger.error("Profiles not updated: %s", ", ".join(profiles_failed))
+        return EXIT_FAILED
+    if boards_failed:
+        logger.error("Boards not finished because the browser stopped answering: %s", ", ".join(boards_failed))
         return EXIT_FAILED
     return EXIT_OK
 

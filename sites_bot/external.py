@@ -22,6 +22,7 @@ from urllib.parse import urlparse
 
 from selenium.common.exceptions import (
     ElementClickInterceptedException,
+    NoSuchWindowException,
     StaleElementReferenceException,
     WebDriverException,
 )
@@ -135,8 +136,9 @@ _SUBMIT_TEXT = re.compile(
     re.I,
 )
 _FACT_QUESTION = re.compile(
-    r"\b(ctc|salary|compensation|notice|years?|yrs|experience|location|located|join|relocat\w*|passport|"
-    r"authori[sz]\w*|visa|shift|remote|hybrid|on-?site|how (many|soon|long))\b", re.I)
+    r"\b(ctc|salary|compensation|notice|years?|yrs|experience|location|located|living|live|reside\w*|residing|"
+    r"based|staying|join|relocat\w*|passport|authori[sz]\w*|visa|shift|remote|hybrid|on-?site|"
+    r"how (many|soon|long))\b", re.I)
 _NEXT_TEXT = re.compile(
     r"^(next|continue|save (and|&) continue|save and next|proceed|next step|continue to next step)$", re.I
 )
@@ -196,6 +198,14 @@ function visible(el) {
   return s.display !== 'none' && s.visibility !== 'hidden' && (r.width > 0 || r.height > 0);
 }
 function text(el) { return el ? (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim() : ''; }
+function tickLabel(el) {
+  // A styled Yes/No keeps its own box hidden and shows the label instead
+  // (Hirist's screening questions, Wellfound's location choice).
+  if (el.labels && el.labels[0]) return el.labels[0];
+  const own = el.closest('label');
+  if (own) return own;
+  try { return el.id ? document.querySelector('label[for="' + CSS.escape(el.id) + '"]') : null; } catch (e) { return null; }
+}
 const GENERIC = /^(attach|upload|browse|choose( a)? files?|select( a)? files?|enter manually|or|add|drop (your )?files? here.*|(type|enter|write) (your )?(response|answer)( here)?|type here|your (answer|response)|answer here|start typing.*|select\.*)$/i;
 function textBefore(el, levels) {
   // The nearest text before the element, a few containers up: where a label sits.
@@ -226,6 +236,14 @@ function labelFor(el) {
   if (!t) t = textBefore(el, 6);
   if (!t) t = (el.name || '').replace(/[\[\]_\-.]+/g, ' ').trim();
   return t;
+}
+function scopeOf(el) {
+  // Where the control sits. A page's own header search box is not a question, and
+  // typing in one closes an application modal, which left the bot clicking the
+  // page's Apply button again and believing it had sent the form (Wellfound).
+  if (el.closest('[role="dialog"], dialog, [aria-modal="true"]')) return 'dialog';
+  if (el.closest('header, nav, [role="banner"], [role="navigation"], footer, [role="contentinfo"]')) return 'furniture';
+  return 'page';
 }
 function pillOf(el) {
   // Workday shows a chosen item ("India (+91)") as a chip beside an empty search box.
@@ -270,8 +288,10 @@ return controls.filter(el => {
   const type = (el.type || '').toLowerCase();
   if (['hidden', 'submit', 'button', 'image', 'reset'].includes(type) || el.disabled) return false;
   if (type === 'file') return true;
+  if (el.getAttribute('aria-hidden') === 'true') return false;
+  if ((type === 'radio' || type === 'checkbox') && !visible(el)) return visible(tickLabel(el) || el);
   // Custom dropdowns keep an invisible required twin while empty; it is not a question.
-  return el.getAttribute('aria-hidden') !== 'true' && visible(el);
+  return visible(el);
 }).map(el => {
   const tag = el.tagName.toLowerCase();
   const listbox = tag === 'button';
@@ -284,7 +304,7 @@ return controls.filter(el => {
     value: listbox ? (PLACEHOLDER.test(shown) ? '' : shown) : tag === 'select' ? '' : (el.value || pillOf(el)),
     options: tag === 'select' ? Array.from(el.options).map(o => o.text.trim()) : [],
     role: listbox ? 'listbox' : (el.getAttribute('role') || ''), autocomplete: el.getAttribute('aria-autocomplete') || '',
-    checked: !!el.checked, accept: el.getAttribute('accept') || '', ident: el.id || ''
+    checked: !!el.checked, accept: el.getAttribute('accept') || '', ident: el.id || '', scope: scopeOf(el)
   };
 });
 """
@@ -313,6 +333,13 @@ _UNHIDE_SCRIPT = (
 _SCROLL_SCRIPT = "arguments[0].scrollIntoView({block: 'center'})"
 _CLICK_SCRIPT = "arguments[0].click()"
 _BLUR_SCRIPT = "arguments[0].blur()"
+# A hidden radio or checkbox is ticked the way a person does it: through its label.
+_CLICK_TICK_SCRIPT = (
+    "const el = arguments[0];"
+    "let box = (el.labels && el.labels[0]) || el.closest('label');"
+    "if (!box && el.id) { try { box = document.querySelector('label[for=\"' + CSS.escape(el.id) + '\"]'); } catch (e) {} }"
+    "(box || el).click();"
+)
 # The options of whichever dropdown menu is open, as [element, text] pairs.
 _OPTIONS_SCRIPT = r"""
 const out = [];
@@ -351,6 +378,7 @@ class Field:
     checked: bool = False
     accept: str = ""
     ident: str = ""
+    scope: str = "page"
 
     @property
     def question(self) -> str:
@@ -524,6 +552,7 @@ def discover_fields(driver: Any) -> List[Field]:
                 checked=bool(item.get("checked")),
                 accept=str(item.get("accept") or ""),
                 ident=str(item.get("ident") or ""),
+                scope=str(item.get("scope") or "page"),
             )
         )
     return fields
@@ -580,6 +609,15 @@ def _clear(element: Any) -> None:
             element.send_keys(Keys.DELETE)
         except WebDriverException:
             continue
+
+
+_NUMBER_IN_TEXT = re.compile(r"-?\d+(?:\.\d+)?")
+
+
+def number_only(value: str) -> str:
+    """'3 years' -> '3', '16 LPA' -> '16': a number box keeps nothing else, so it stayed empty."""
+    found = _NUMBER_IN_TEXT.search((value or "").replace(",", ""))
+    return found.group(0) if found else ""
 
 
 def set_text(driver: Any, element: Any, value: str) -> bool:
@@ -723,7 +761,10 @@ def attach_file(driver: Any, element: Any, path: Path) -> bool:
 def _set_checked(driver: Any, element: Any, checked: bool) -> bool:
     try:
         if bool(element.is_selected()) != checked:
-            _click(driver, element)
+            if element.is_displayed():
+                _click(driver, element)
+            else:
+                driver.execute_script(_CLICK_TICK_SCRIPT, element)
         return bool(element.is_selected()) == checked
     except WebDriverException:
         return False
@@ -759,6 +800,7 @@ def return_to(driver: Any, handle: str, keep: List[str]) -> None:
     Never the last tab: chromedriver quits Chrome with it. When a site or the
     browser agent had closed the tab we started in, the run lost its browser here.
     """
+    left: List[str] = []
     try:
         handles = list(driver.window_handles)
         extra = [other for other in handles if other not in keep]
@@ -768,12 +810,16 @@ def return_to(driver: Any, handle: str, keep: List[str]) -> None:
             driver.switch_to.window(other)
             driver.close()
         left = [other for other in handles if other not in extra]
-        driver.switch_to.window(handle if handle in left else left[0])
+        if left:
+            driver.switch_to.window(handle if handle in left else left[0])
     except WebDriverException as exc:
         logger.warning("Could not get back to the Naukri tab (%s): %s", type(exc).__name__, exc)
+        return
+    if not left:
+        raise NoSuchWindowException("The browser has no window left: it was closed or it crashed.")
 
 
-def _settled_fields(driver: Any, settle_s: Optional[float] = None) -> List[Field]:
+def settled_fields(driver: Any, settle_s: Optional[float] = None) -> List[Field]:
     """discover_fields, once the page has drawn something.
 
     Workday builds its page with script after the address changes. Looking the
@@ -801,7 +847,7 @@ def _settled_fields(driver: Any, settle_s: Optional[float] = None) -> List[Field
 
 def reveal_form(driver: Any, settle_s: Optional[float] = None) -> List[Field]:
     """The form's fields, clicking through an 'Apply' button or two when the page starts with the posting."""
-    fields = _settled_fields(driver, settle_s)
+    fields = settled_fields(driver, settle_s)
     if len(fields) >= 2:
         return fields
     for _ in range(2):
@@ -828,7 +874,14 @@ def reveal_form(driver: Any, settle_s: Optional[float] = None) -> List[Field]:
 
 
 def application_fields(fields: List[Field]) -> List[Field]:
-    """`fields`, or [] when they are only a job-search box: a keyword and a city are not an application."""
+    """The form's own fields, or [] when they are only a job-search box: a keyword and a city are not an application.
+
+    A control in the page's header or footer never belongs to the application, and
+    while a modal is open the page behind it does not either.
+    """
+    fields = [item for item in fields if item.scope != "furniture"]
+    inside = [item for item in fields if item.scope == "dialog"]
+    fields = inside or fields
     for item in fields:
         label = item.question or item.name or ""
         if item.kind in ("file", "textarea", "email", "tel") or _APPLICANT_FIELD.search(label):
@@ -1163,6 +1216,8 @@ def _recheck(driver: Any, fields: List[Field], outcome: FormOutcome) -> None:
 
 def _fill_text(driver: Any, item: Field, value: str, outcome: FormOutcome) -> None:
     label = item.question or item.name
+    if item.kind == "number":
+        value = number_only(value) or value
     done = (
         pick_from_combobox(driver, item.element, value, item.role != "listbox")
         if item.is_combobox
@@ -1313,10 +1368,12 @@ def fill_form(
             if _FACT_QUESTION.search(label):
                 value = _resolve(answer_engine, label, options or None) or ""
             value = value or _own_words(answer_engine, label, item.required, writer) or ""
-        elif not value and item.required:
+        elif not value and (item.required or _FACT_QUESTION.search(label)):
+            # Hirist marks every screening question optional and still keeps Next disabled
+            # until each one is answered, so a fact is worth looking up either way.
             value = _resolve(answer_engine, label, options or None) or ""
         elif not value:
-            # Optional boxes (social links, "Street", search widgets) take only your own
+            # Other optional boxes (social links, "Street", search widgets) take only your own
             # answers: asking the model filled answers.txt with "Loading" and "Facebook".
             own = getattr(answer_engine, "own_answer", None)
             value = (own(label, options or None) if callable(own) else None) or ""
