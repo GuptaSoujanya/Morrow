@@ -134,6 +134,9 @@ _SUBMIT_TEXT = re.compile(
     r"|send( application| my application)?|finish|complete application|review and submit)$",
     re.I,
 )
+_FACT_QUESTION = re.compile(
+    r"\b(ctc|salary|compensation|notice|years?|yrs|experience|location|located|join|relocat\w*|passport|"
+    r"authori[sz]\w*|visa|shift|remote|hybrid|on-?site|how (many|soon|long))\b", re.I)
 _NEXT_TEXT = re.compile(
     r"^(next|continue|save (and|&) continue|save and next|proceed|next step|continue to next step)$", re.I
 )
@@ -193,7 +196,7 @@ function visible(el) {
   return s.display !== 'none' && s.visibility !== 'hidden' && (r.width > 0 || r.height > 0);
 }
 function text(el) { return el ? (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim() : ''; }
-const GENERIC = /^(attach|upload|browse|choose( a)? files?|select( a)? files?|enter manually|or|add|drop (your )?files? here.*|type (your )?(response|answer)( here)?|type here|your (answer|response)|start typing.*|select\.*)$/i;
+const GENERIC = /^(attach|upload|browse|choose( a)? files?|select( a)? files?|enter manually|or|add|drop (your )?files? here.*|(type|enter|write) (your )?(response|answer)( here)?|type here|your (answer|response)|answer here|start typing.*|select\.*)$/i;
 function textBefore(el, levels) {
   // The nearest text before the element, a few containers up: where a label sits.
   let node = el;
@@ -1306,7 +1309,10 @@ def fill_form(
         key = classify_label(label)
         value = values.get(key or "", "")
         if not value and item.kind == "textarea":
-            value = _own_words(answer_engine, label, item.required, writer) or ""
+            # Hirist asks for CTC, notice and years in a textarea: a fact first, prose only when no fact answers.
+            if _FACT_QUESTION.search(label):
+                value = _resolve(answer_engine, label, options or None) or ""
+            value = value or _own_words(answer_engine, label, item.required, writer) or ""
         elif not value and item.required:
             value = _resolve(answer_engine, label, options or None) or ""
         elif not value:
@@ -1366,6 +1372,18 @@ def find_submit(driver: Any) -> Optional[Any]:
         if rank < best_rank:
             best, best_rank = control, rank
     return best
+
+
+def disabled_step(driver: Any) -> str:
+    """The text of a Next or Submit button the page shows but keeps disabled; "" when there is none."""
+    try:
+        for element in driver.find_elements(By.XPATH, _CLICKABLE_XPATH):
+            text = _control_text(element)
+            if (_NEXT_TEXT.match(text) or _SUBMIT_TEXT.match(text)) and element.is_displayed() and not element.is_enabled():
+                return text
+    except WebDriverException:
+        pass
+    return ""
 
 
 def find_next(driver: Any) -> Optional[Any]:

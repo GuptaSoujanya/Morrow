@@ -184,19 +184,22 @@ def test_no_apply_button_is_reported_with_what_was_there(board_page, tmp_path, m
 # ---------------------------------------------------------------------------
 
 
-def test_a_board_run_applies_up_to_the_limit_without_touching_naukri_quota(board_page, tmp_path, monkeypatch):
+def test_a_board_run_applies_up_to_the_limit_without_touching_naukri_quota(board_page, tmp_path, monkeypatch, caplog):
     from naukri_bot import ranking
     from common import report
 
     jobs = [_job(str(n)) for n in range(1, 5)]
-    monkeypatch.setattr(pf, "collect", lambda driver, board, keywords, limit: jobs)
+    monkeypatch.setattr(pf, "collect", lambda driver, board, keywords, limit, pages=1: jobs)
     monkeypatch.setattr(ranking, "rank", lambda profile, found, client, settings: [
         ScoredJob(job=job, score=80.0 - i, reasons=[]) for i, job in enumerate(found)])
     monkeypatch.setattr("naukri_bot.cli._pause_between_applications", lambda settings: None)
     settings = _settings(tmp_path, db_path=str(tmp_path / "t.db"), min_score=50.0)
     ledger = Ledger(settings.db_path)
 
-    summary = pf.run_board(_Driver(), HIRIST, settings, Profile(full_name="Jane"), ledger, None, None, 2, False, None)
+    with caplog.at_level('INFO'):
+        summary = pf.run_board(_Driver(), HIRIST, settings, Profile(full_name="Jane"), ledger, None, None, 2, False, None)
+    assert 'eligible for a target of 2' in caplog.text
+    assert 'short of the target of 50' not in caplog.text
 
     assert (summary.collected, summary.applied, summary.attempted) == (4, 2, 2)
     assert ledger.has_applied("hirist:1") and ledger.has_applied("hirist:2") and not ledger.has_applied("hirist:3")
@@ -254,7 +257,7 @@ def test_a_browser_that_closed_mid_run_is_reopened_and_the_run_goes_on(board_pag
     from naukri_bot import ranking
 
     jobs = [_job(str(n)) for n in range(1, 4)]
-    monkeypatch.setattr(pf, "collect", lambda driver, board, keywords, limit: jobs)
+    monkeypatch.setattr(pf, "collect", lambda driver, board, keywords, limit, pages=1: jobs)
     monkeypatch.setattr(ranking, "rank", lambda profile, found, client, settings: [
         ScoredJob(job=job, score=80.0 - i, reasons=[]) for i, job in enumerate(found)])
     monkeypatch.setattr("naukri_bot.cli._pause_between_applications", lambda settings: None)
@@ -275,7 +278,7 @@ def test_a_browser_that_closed_mid_run_is_reopened_and_the_run_goes_on(board_pag
 def test_without_a_way_to_reopen_the_browser_the_board_stops(board_page, tmp_path, monkeypatch):
     from naukri_bot import ranking
 
-    monkeypatch.setattr(pf, "collect", lambda driver, board, keywords, limit: [_job("1")])
+    monkeypatch.setattr(pf, "collect", lambda driver, board, keywords, limit, pages=1: [_job("1")])
     monkeypatch.setattr(ranking, "rank", lambda profile, found, client, settings: [
         ScoredJob(job=job, score=80.0, reasons=[]) for job in found])
     monkeypatch.setattr(pf, "apply_to", lambda *a: pytest.fail("applied without a browser"))
@@ -315,7 +318,7 @@ def test_two_applications_the_board_never_confirmed_stop_the_board(board_page, t
     from naukri_bot import ranking
 
     jobs = [_job(str(n)) for n in range(1, 5)]
-    monkeypatch.setattr(pf, "collect", lambda driver, board, keywords, limit: jobs)
+    monkeypatch.setattr(pf, "collect", lambda driver, board, keywords, limit, pages=1: jobs)
     monkeypatch.setattr(ranking, "rank", lambda profile, found, client, settings: [
         ScoredJob(job=job, score=80.0 - i, reasons=[]) for i, job in enumerate(found)])
     board_page["landed"], board_page["verified"] = "applied", False
@@ -498,3 +501,127 @@ def test_the_hirist_profile_is_also_read_on_its_registration_steps():
     preferences are only on the registration steps, which the verifier reads after it."""
     assert len(HIRIST.profile_pages) == 4
     assert all(url.startswith("https://www.hirist.tech/registration/add") for url in HIRIST.profile_pages)
+
+
+def test_hirist_salary_is_not_the_location():
+    job = pf.card_to_job(HIRIST, 'https://www.hirist.tech/j/acme-engineer-1234', 'Acme - AI Engineer',
+                         ['Acme - AI Engineer', '12-15 LPA', '3 - 5 yrs', 'Pune', 'Python'])
+    assert job.location == 'Pune'
+    assert '12-15 LPA' not in job.tags
+
+
+@pytest.mark.parametrize('heading', ['Data Scientist - AI/ML Solutions',
+    'Associate Lead AI/ML Engineer - NLP/Deep Learning', 'AI Backend Engineer - Node.js/Python'])
+def test_hirist_role_specialization_does_not_become_a_company(heading):
+    job = pf.card_to_job(HIRIST, 'https://www.hirist.tech/j/engineer-1234', heading,
+                         [heading, '2-4 yrs', 'Pune'])
+    assert job.title == heading
+    assert job.company == ''
+
+
+def test_a_tick_or_icon_around_applied_still_shows_the_job_applied():
+    """Wellfound renders "✓ Applied" (with a no-break space); two real applications were logged as errors."""
+    wellfound = pf.BOARDS["wellfound"]
+    assert pf.shows_applied(_MarkerPage(["✓\xa0 Applied"]), wellfound)
+    assert pf.shows_applied(_MarkerPage(["• Application sent"]), wellfound)
+    assert not pf.shows_applied(_MarkerPage(["Apply", "✓ Saved"]), wellfound)
+
+
+def test_search_pages_are_turned_until_one_adds_nothing(monkeypatch):
+    opened = []
+    on_page = {
+        "https://www.hirist.tech/jobfeed": ["f1"],
+        "https://www.hirist.tech/search/ai-engineer": ["a1", "a2"],
+        "https://www.hirist.tech/search/ai-engineer?page=2": ["a2", "a3"],
+        "https://www.hirist.tech/search/ai-engineer?page=3": ["a3"],
+        "https://www.hirist.tech/search/ai-engineer?page=4": ["a9"],
+    }
+    monkeypatch.setattr(pf, "safe_get", lambda driver, url: opened.append(url) or True)
+    monkeypatch.setattr(pf, "PAGE_WAIT_S", 0)
+    monkeypatch.setattr(pf, "_scroll", lambda driver: None)
+    monkeypatch.setattr(pf, "read_cards", lambda driver, board: [_job(n) for n in on_page.get(opened[-1], [])])
+
+    jobs = pf.collect(_Driver(), HIRIST, ["AI Engineer"], 50, pages=5)
+
+    assert opened == list(on_page)[:4], "page 3 added nothing, so page 4 is never opened"
+    assert sorted(job.job_id for job in jobs) == ["hirist:a1", "hirist:a2", "hirist:a3", "hirist:f1"]
+    assert {job.source for job in jobs} == {"hirist:feed", "hirist:search:AI Engineer"}
+
+
+def test_a_board_without_numbered_pages_reads_one_search_page(monkeypatch):
+    opened = []
+    monkeypatch.setattr(pf, "safe_get", lambda driver, url: opened.append(url) or True)
+    monkeypatch.setattr(pf, "PAGE_WAIT_S", 0)
+    monkeypatch.setattr(pf, "_scroll", lambda driver: None)
+    monkeypatch.setattr(pf, "read_cards", lambda driver, board: [_job(str(len(opened)))])
+
+    pf.collect(_Driver(), INSTAHYRE, ["AI Engineer"], 50, pages=5)
+
+    assert opened == ["https://www.instahyre.com/candidate/opportunities/?matching=true",
+                      "https://www.instahyre.com/ai-engineer-jobs/"]
+
+
+def test_a_form_whose_last_next_sent_the_application_counts_as_submitted(monkeypatch):
+    """Hirist's final Next lands on /job/applied with no Submit button anywhere."""
+    from types import SimpleNamespace
+
+    urls = iter(["https://www.hirist.tech/job/1680685/screening?", "https://www.hirist.tech/job/applied?jobId=1680685"])
+    monkeypatch.setattr(ext, "_current_url", lambda driver: next(urls))
+    monkeypatch.setattr(ext, "long_answer_writer", lambda *a: None)
+    monkeypatch.setattr(ext, "discover_fields", lambda driver: [])
+    monkeypatch.setattr(ext, "application_fields", lambda fields: [])
+    monkeypatch.setattr(ext, "fill_form", lambda *a: SimpleNamespace(filled=["Current CTC?"], missing=[]))
+    monkeypatch.setattr(ext, "challenge_shown", lambda driver: False)
+    monkeypatch.setattr(ext, "find_next", lambda driver: None)
+    monkeypatch.setattr(ext, "find_submit", lambda driver: None)
+    monkeypatch.setattr(ext, "disabled_step", lambda driver: None)
+    monkeypatch.setattr(pf, "shows_applied", lambda driver, board: False)
+
+    sent, filled, missing = pf.answer_form(_Driver(), HIRIST, _job(), Profile(full_name="Jane"), None,
+                                           Settings(email="t@example.com", password="secret"), None)
+
+    assert (sent, filled, missing) == (True, ["Current CTC?"], [])
+
+
+def test_a_form_still_on_its_page_with_no_submit_needs_a_person(monkeypatch):
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(ext, "_current_url", lambda driver: "https://www.hirist.tech/job/1680685/screening?")
+    monkeypatch.setattr(ext, "long_answer_writer", lambda *a: None)
+    monkeypatch.setattr(ext, "discover_fields", lambda driver: [])
+    monkeypatch.setattr(ext, "application_fields", lambda fields: [])
+    monkeypatch.setattr(ext, "fill_form", lambda *a: SimpleNamespace(filled=[], missing=[]))
+    monkeypatch.setattr(ext, "challenge_shown", lambda driver: False)
+    monkeypatch.setattr(ext, "find_next", lambda driver: None)
+    monkeypatch.setattr(ext, "find_submit", lambda driver: None)
+    monkeypatch.setattr(ext, "disabled_step", lambda driver: None)
+    monkeypatch.setattr(pf, "shows_applied", lambda driver, board: False)
+
+    sent, _, missing = pf.answer_form(_Driver(), HIRIST, _job(), Profile(full_name="Jane"), None,
+                                      Settings(email="t@example.com", password="secret"), None)
+
+    assert (sent, missing) == (False, ["no Submit button on the form"])
+
+
+def test_instahyre_feed_rows_without_links_are_read_through_the_boards_own_script():
+    class _Feed:
+        def execute_script(self, script, *args):
+            if script is pf._CARDS_SCRIPT:
+                return []
+            assert "angular" in script
+            return [{"href": "https://www.instahyre.com/job-431952-node-js-developer-at-convegenius-noida/",
+                     "heading": "ConveGenius - Node.js Developer",
+                     "lines": ["ConveGenius - Node.js Developer", "Noida", "JavaScript", "Node.js", "Express"]}]
+
+    jobs = pf.read_cards(_Feed(), INSTAHYRE)
+
+    assert [(job.job_id, job.company, job.title, job.location, job.tags) for job in jobs] == [
+        ("instahyre:431952", "ConveGenius", "Node.js Developer", "Noida", ["JavaScript", "Node.js", "Express"])]
+
+
+def test_a_card_seen_both_as_a_link_and_through_the_script_is_read_once():
+    class _Both:
+        def execute_script(self, script, *args):
+            return [{"href": "https://www.instahyre.com/job-1-x/", "heading": "Acme - AI Engineer", "lines": []}]
+
+    assert [job.job_id for job in pf.read_cards(_Both(), INSTAHYRE)] == ["instahyre:1"]

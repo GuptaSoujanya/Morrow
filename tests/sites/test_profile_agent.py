@@ -906,3 +906,142 @@ def test_the_page_the_verdict_rests_on_is_kept_in_the_run_folder(monkeypatch, tm
     page = "Resume headline AI Engineer | LLM Evaluation | LangChain | Python Key skills LangChain FastAPI AWS Bedrock"
     result = profile_agent.check(FakeDriver(page), BOARD, Settings(), _report(), None, tmp_path)
     assert result.saved and (tmp_path / "page-after.txt").read_text() == page
+
+
+def test_long_about_is_not_cut_to_a_1200_character_verification_window():
+    # Unique phrases: repeating the same sentence could also pass with only the
+    # first 1,200 characters present, hiding the original regression.
+    about = ' '.join('word%d' % number for number in range(420))
+    assert len(about) > 2200
+    page = 'About ' + about + ' Experience Example Company'
+    assert profile_agent.verify(about, page, 'About') == (True, [])
+    assert profile_agent.verify(about, page[:1200], 'About')[0] is False
+
+
+def test_naukri_edit_icons_do_not_break_correct_it_skill_rows():
+    expected = 'React - 2026 3 Years 0 Month | Docker - 2026 2 Years 6 Months | Python - 2026 1 Year 0 Month'
+    page = 'IT skills Skills Version Last used Experience ' + expected.replace(' | ', ' editOneTheme ') + ' editOneTheme Projects'
+    assert profile_agent.verify(expected, page, 'IT skills') == (True, [])
+    assert profile_agent.verify(expected.replace('3 Years', '7 Years'), page, 'IT skills')[0] is False
+
+
+def test_employment_and_experience_names_match_without_duplicate_tasks():
+    assert profile_agent._same_section('Employment: Example Co — job profile / description',
+                                       'Experience: Example Co - job profile / description')
+    assert profile_agent._locate('Experience: Example Co - job profile / description') == ('Example Co', profile_agent._LEAD_CHARS)
+    assert not profile_agent._same_section('Employment: Example Co — skills used', 'Experience: Example Co - dates')
+
+
+def test_unsupported_fields_and_missing_required_facts_are_not_repaired():
+    from sites_bot.platforms import HIRIST, INSTAHYRE
+    assert profile_agent.unsupported_section(INSTAHYRE, 'Basic info: Expected CTC')
+    assert profile_agent.unsupported_section(INSTAHYRE, 'Work experience: Engineer, Example Co (2024 - Present)')
+    assert profile_agent.unsupported_section(HIRIST, 'Employment: Example Co — Skills used')
+    assert not profile_agent.unsupported_section(INSTAHYRE, 'Basic info: Total experience')
+    assert not profile_agent.unsupported_section(HIRIST, 'Employment: Example Co')
+    result = profile_agent.ProfileCheck(False, '', sections=[
+        profile_agent.Section('Expected salary', 'unsupported', note='No editor exists'),
+        profile_agent.Section('Certification', 'needs_input', note='Course dates are missing'),
+        profile_agent.Section('About', 'updated', after='A saved summary', on_page=True),
+    ])
+    assert result.needs_repair == []
+    saved, why = profile_agent._verdict(result)
+    assert saved and 'needs your input' in why
+    assert 'Certification' in why
+
+
+def test_facts_the_board_wants_but_the_file_lacks_are_reported_not_failed():
+    """Naukri wanted a salary breakdown and project dates that profile.yaml does not hold; the agent
+    asked instead of inventing them. The profile is intact and a retry would ask the same, so the
+    pipeline must not mark the stage FAILED and retry it every day: the verdict names the facts."""
+    Section, ProfileCheck, verdict = profile_agent.Section, profile_agent.ProfileCheck, profile_agent._verdict
+    asked = [Section('Employment: Ethara AI', 'needs_input', note='needs salary breakdown'),
+             Section('Project: EvalAgentFlow', 'needs_input', note='needs client and start date')]
+    untouched = ProfileCheck(False, '', sections=asked + [Section('Key skills', 'already_ok')])
+    assert verdict(untouched) == (
+        True, 'nothing needed changing; needs your input: Employment: Ethara AI, Project: EvalAgentFlow')
+
+    confirmed = ProfileCheck(False, '', sections=asked[:1] + [
+        Section('About', 'updated', after='A saved summary', on_page=True)])
+    assert verdict(confirmed) == (True, 'confirmed on the reloaded page; needs your input: Employment: Ethara AI')
+
+    # A section the agent tried and could not save is still a failure, whatever else it asked for.
+    broken = ProfileCheck(False, '', sections=asked[:1] + [Section('About', 'failed')])
+    assert verdict(broken) == (False, 'not done: About')
+    unseen = ProfileCheck(False, '', sections=asked[:1] + [
+        Section('About', 'updated', after='A saved summary', on_page=False)])
+    assert verdict(unseen)[0] is False
+
+
+def test_linkedin_reads_only_own_profile_detail_links(monkeypatch):
+    from sites_bot.board import Board
+    board = Board('linkedin', 'LinkedIn', 'https://www.linkedin.com/in/me/', (), '', '', '', '', '',
+                  profile_url='https://www.linkedin.com/in/me/')
+    class Driver:
+        current_url = 'https://www.linkedin.com/in/example-person/'
+        def execute_script(self, script):
+            return ['https://www.linkedin.com/in/example-person/details/skills/',
+                    'https://www.linkedin.com/in/example-person/details/experience/',
+                    'https://www.linkedin.com:8443/in/example-person/details/skills/',
+                    'https://evil.example/in/example-person/details/skills/',
+                    'https://www.linkedin.com/in/someone-else/details/skills/',
+                    'https://www.linkedin.com/in/example-person/details/experience/edit/']
+    calls = []
+    def read(driver, url):
+        calls.append(url)
+        return 'Saved profile text'
+    monkeypatch.setattr(profile_agent, '_read_page', read)
+    profile_agent._read_profile(Driver(), board)
+    assert calls == [board.profile_url, 'https://www.linkedin.com/in/example-person/details/skills/',
+                     'https://www.linkedin.com/in/example-person/details/experience/', board.profile_url]
+
+
+def test_repair_matches_the_exact_employment_field_before_a_general_label():
+    first = profile_agent.ProfileCheck(False, '', sections=[
+        Section('Employment: Example Co - skills used', 'updated', after='Python'),
+    ])
+    repaired = profile_agent.ProfileCheck(False, '', sections=[
+        Section('Experience: Example Co', 'updated', after='General job details'),
+        Section('Experience: Example Co — skills used', 'already_ok', after='Python', on_page=True),
+    ])
+    merged = profile_agent._merge(first, repaired)
+    assert merged.sections[0].after == 'Python' and merged.sections[0].on_page is True
+
+
+def test_a_value_shown_under_the_boards_own_label_still_counts_when_it_is_specific_enough():
+    """Hirist names the section "Resume Attached" in its status card and shows the file under
+    "Attach Resume" on a form page; the window after the heading never has the file name."""
+    page = ("Profile Status 70% Personal Details Resume Attached Follow Keywords Profile Picture " + "x" * 1300
+            + " Attach Resume* soujanya-gupta.pdf (Uploaded On: 27-10-2026 17:02:12) Upload new resume")
+    assert profile_agent.verify("soujanya-gupta.pdf (Uploaded On: 27-10-2026 17:02:12)", page, "Resume Attached") \
+        == (True, [])
+    assert profile_agent.verify("other-file.pdf (Uploaded On: 01-01-2026 09:00:00)", page, "Resume Attached")[0] is False
+    # A lone short value keeps to its own section: "Python" in the headline is not a key skill.
+    skills = "Resume headline Python " + "x" * 1300 + " Key skills LangChain FastAPI Education"
+    assert profile_agent.verify("Python", skills, "Key skills")[0] is False
+
+
+def test_linkedin_detail_pages_are_read_even_when_the_overview_shows_no_link_to_them(monkeypatch):
+    """The overview drew no Experience card at all, so every changed position looked missing."""
+    from sites_bot.board import Board
+    board = Board('linkedin', 'LinkedIn', 'https://www.linkedin.com/in/me/', (), '', '', '', '', '',
+                  profile_url='https://www.linkedin.com/in/me/')
+
+    class Driver:
+        current_url = 'https://www.linkedin.com/in/example-person/'
+
+    calls = []
+
+    def read(driver, url):
+        calls.append(url)
+        return 'Saved profile text'
+    monkeypatch.setattr(profile_agent, '_read_page', read)
+    profile_agent._read_profile(Driver(), board)
+    assert calls == [board.profile_url, 'https://www.linkedin.com/in/example-person/details/skills/',
+                     'https://www.linkedin.com/in/example-person/details/experience/', board.profile_url]
+
+    class Elsewhere(Driver):
+        current_url = 'https://www.linkedin.com/feed/'
+    calls.clear()
+    profile_agent._read_profile(Elsewhere(), board)
+    assert calls == [board.profile_url], "no own profile, no detail pages to guess at"

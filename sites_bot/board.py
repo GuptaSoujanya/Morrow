@@ -22,6 +22,10 @@ class Board:
     job_id: str
     apply: str
     applied: str
+    # Second and later search pages: "{page}" is the page number, with "{slug}"/"{query}" as in search; "" = one page.
+    search_page: str = ""
+    # JavaScript returning extra [{href, heading, lines}] cards for a page whose cards carry no job link.
+    cards_script: str = ""
     external: str = r"company (?:site|website)|apply on company|external"
     signed_out: str = r"^(?:log ?in|sign ?in|login / register|candidate login)$"
     # Card heading is "Company - Title".

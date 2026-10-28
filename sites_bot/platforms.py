@@ -65,9 +65,10 @@ def board_job_id(board: Board, url: str) -> str:
     return "%s:%s" % (board.name, found.group(1) if found else url)
 
 
-def search_url(board: Board, keyword: str) -> str:
+def search_url(board: Board, keyword: str, page: int = 1) -> str:
     slug = re.sub(r"[^a-z0-9]+", "-", keyword.lower()).strip("-")
-    return board.search.format(slug=slug, query=quote_plus(keyword))
+    template = board.search_page if page > 1 and board.search_page else board.search
+    return template.format(slug=slug, query=quote_plus(keyword), page=page)
 
 
 # ---------------------------------------------------------------------------
@@ -98,6 +99,9 @@ return [...out.values()];
 _EXPERIENCE = re.compile(r"^\d+(?:\.\d+)?\s*(?:-|to)\s*\d+(?:\.\d+)?\s*(?:yrs?|years?)$|^\d+\+?\s*(?:yrs?|years?)$", re.I)
 _POSTED = re.compile(r"^(?:posted(?:\s+on)?:?\s*)(.+)$|^(\d+\+?\s*(?:days?|weeks?|months?|hours?)\s+ago|today|just now|yesterday)$", re.I)
 _COMPANY_LINE = re.compile(r"^at (.+)$", re.I)
+_SALARY = re.compile(r'(?:\b(?:lpa|lakhs?|lacs?|salary|not disclosed)\b|[₹$€£])', re.I)
+_ROLE_PREFIX = re.compile(r'\b(?:engineers?|developers?|scientists?|analysts?|architects?|consultants?|'
+                          r'managers?|specialists?|programmers?|lead|head|director|intern)\b', re.I)
 _NOISE = re.compile(
     r"^(?:\d+(?:\.\d+)?|\+\d+ more|\+\d+|[\d,]+\+?\s*reviews?|view job.*|apply(?: now| to this job)?|save|share"
     r"|founded in \d{4}|posted by .+|[₹$€£][\d.,]+[lk]?\s*-\s*[₹$€£][\d.,]+[lk]?(?:\s*/\s*yr)?"
@@ -130,7 +134,11 @@ def card_to_job(board: Board, href: str, heading: str, lines: List[str]) -> Opti
         return None
     company, title = "", heading
     if board.company_first and " - " in heading:
-        company, title = [part.strip() for part in heading.split(" - ", 1)]
+        prefix, remainder = [part.strip() for part in heading.split(" - ", 1)]
+        # Hirist also uses "Data Scientist - AI/ML Solutions" as a complete
+        # job title. It is not a company called Data Scientist.
+        if board.name != 'hirist' or not _ROLE_PREFIX.search(prefix):
+            company, title = prefix, remainder
     experience = posted = location = ""
     tags = []  # type: List[str]
     blurbs = []  # type: List[str]
@@ -146,7 +154,7 @@ def card_to_job(board: Board, href: str, heading: str, lines: List[str]) -> Opti
             experience = line
         elif not posted and posted_match:
             posted = (posted_match.group(1) or posted_match.group(2) or "").strip()
-        elif _NOISE.match(line):
+        elif _NOISE.match(line) or _SALARY.search(line):
             continue
         elif len(line) >= 60:
             blurbs.append(line)
@@ -172,6 +180,9 @@ def card_to_job(board: Board, href: str, heading: str, lines: List[str]) -> Opti
 def read_cards(driver: Any, board: Board) -> List[JobPosting]:
     try:
         raw = driver.execute_script(_CARDS_SCRIPT, board.job_link) or []
+        if board.cards_script:
+            seen = {item.get("href") for item in raw}
+            raw += [item for item in (driver.execute_script(board.cards_script) or []) if item.get("href") not in seen]
     except WebDriverException as exc:
         logger.warning("%s: could not read the job cards: %s", board.label, str(exc).split("\n")[0])
         return []
@@ -183,37 +194,50 @@ def read_cards(driver: Any, board: Board) -> List[JobPosting]:
     return jobs
 
 
-def collect(driver: Any, board: Board, keywords: List[str], limit: int) -> List[JobPosting]:
-    """Job cards from the board's own feed, then one search page per keyword; first sighting wins."""
+def collect(driver: Any, board: Board, keywords: List[str], limit: int, pages: int = 1) -> List[JobPosting]:
+    """Job cards from the board's own feed, then up to `pages` search pages per keyword; first sighting wins.
+
+    A keyword stops early at a page that adds nothing new: the board ran out of results.
+    """
     found: Dict[str, JobPosting] = {}
-    pages = [(url, "feed") for url in board.feeds]
+    sources = [((url,), "feed") for url in board.feeds]
     if board.search:
-        pages += [(search_url(board, kw), "search:%s" % kw) for kw in keywords]
-    for url, source in pages:
-        if len(found) >= limit:
-            break
-        if not safe_get(driver, url):
-            logger.info("%s: could not open %s", board.label, url)
-            continue
-        time.sleep(PAGE_WAIT_S)
-        _scroll(driver)
-        jobs = read_cards(driver, board)
-        fresh = 0
-        for job in jobs:
-            if job.job_id not in found:
-                found[job.job_id] = replace(job, source="%s:%s" % (board.name, source))
-                fresh += 1
-        logger.info("%s: %s gave %d jobs (%d new)", board.label, source, len(jobs), fresh)
+        depth = max(pages, 1) if board.search_page else 1
+        sources += [(tuple(search_url(board, kw, n) for n in range(1, depth + 1)), "search:%s" % kw) for kw in keywords]
+    for urls, source in sources:
+        for number, url in enumerate(urls, 1):
+            if len(found) >= limit:
+                return list(found.values())[:limit]
+            if not safe_get(driver, url):
+                logger.info("%s: could not open %s", board.label, url)
+                break
+            time.sleep(PAGE_WAIT_S)
+            _scroll(driver)
+            jobs = read_cards(driver, board)
+            fresh = 0
+            for job in jobs:
+                if job.job_id not in found:
+                    found[job.job_id] = replace(job, source="%s:%s" % (board.name, source))
+                    fresh += 1
+            shown = source if number == 1 else "%s page %d" % (source, number)
+            logger.info("%s: %s gave %d jobs (%d new)", board.label, shown, len(jobs), fresh)
+            if not fresh:
+                break
     return list(found.values())[:limit]
 
 
-def _scroll(driver: Any) -> None:
-    for _ in range(3):
+def _scroll(driver: Any, rounds: int = 6) -> None:
+    """Scroll to the bottom until the page stops growing, so a feed that loads on scroll is read whole."""
+    last = None
+    for _ in range(rounds):
         try:
-            driver.execute_script("window.scrollBy(0, document.body.scrollHeight)")
+            height = driver.execute_script("window.scrollBy(0, document.body.scrollHeight); return document.body.scrollHeight")
         except WebDriverException:
             return
         time.sleep(1.0)
+        if height == last:
+            return
+        last = height
 
 
 # ---------------------------------------------------------------------------
@@ -247,7 +271,8 @@ def shows_applied(driver: Any, board: Board) -> bool:
     except WebDriverException:
         return False
     wanted = re.compile(board.applied, re.I)
-    return any(wanted.search(" ".join(str(text).split())) for text in texts)
+    # Wellfound writes "✓ Applied": a tick, an icon or a bullet around the word is still the word.
+    return any(wanted.search(re.sub(r"^[^\w]+|[^\w.]+$", "", " ".join(str(text).split()))) for text in texts)
 
 
 def signed_out(driver: Any, board: Board) -> bool:
@@ -319,13 +344,29 @@ def _wait_after_click(driver: Any, board: Board, handles: List[str], timeout_s: 
     return ""
 
 
+def application_landed(driver: Any, board: Board) -> bool:
+    """The board already took the application: its Applied marker, applied page or a confirmation page is showing."""
+    url = ext._current_url(driver) or ""
+    if board.applied_url and re.search(board.applied_url, url):
+        return True
+    return shows_applied(driver, board) or ext._confirmation_url(url)
+
+
 def answer_form(
-    driver: Any, job: JobPosting, profile: Profile, engine: Any, settings: Settings, resume_pdf: Optional[Path]
+    driver: Any, board: Board, job: JobPosting, profile: Profile, engine: Any, settings: Settings,
+    resume_pdf: Optional[Path],
 ) -> Tuple[bool, List[str], List[str]]:
-    """Fill the board's own application form page by page; (submitted, filled, missing)."""
+    """Fill the board's own application form page by page; (submitted, filled, missing).
+
+    Hirist's last "Next" sends the application and lands on its applied page, so a form
+    with no Submit button is checked for that before it is reported as needing a person.
+    """
     writer = ext.long_answer_writer(settings, engine, job)
     filled = []  # type: List[str]
+    fields = []  # type: List[Any]
     for _ in range(MAX_FORM_PAGES):
+        if application_landed(driver, board):
+            return True, filled, []
         fields = ext.application_fields(ext.discover_fields(driver))
         outcome = ext.fill_form(driver, fields, profile, engine, resume_pdf, writer)
         filled += outcome.filled
@@ -342,6 +383,13 @@ def answer_form(
             return False, filled, ["the form did not move on (%s)" % problem]
     submit = ext.find_submit(driver)
     if submit is None:
+        if application_landed(driver, board):
+            return True, filled, []
+        held = ext.disabled_step(driver)
+        if held:
+            blank = [item.question or item.name for item in fields if (item.question or item.name) not in filled and not item.value]
+            return False, filled, ["the '%s' button stays disabled until every question is answered; still blank: %s"
+                                   % (held, ", ".join(blank) or "none the bot can see")]
         return False, filled, ["no Submit button on the form"]
     ext._click(driver, submit)
     return True, filled, []
@@ -421,7 +469,7 @@ def apply_to(
             return _result(job, ApplyStatus.ERROR, "Submit was clicked (Apply) but %s did not show Applied after a reload" % board.label)
         filled, missing = [], ["the Apply click opened nothing the bot recognised"]  # type: List[str], List[str]
         if landed == "form":
-            sent, filled, missing = answer_form(driver, job, profile, engine, settings, resume_pdf)
+            sent, filled, missing = answer_form(driver, board, job, profile, engine, settings, resume_pdf)
             if sent:
                 human_pause(2.0, 4.0)
                 if _verified(driver, board, checked):
@@ -496,7 +544,8 @@ def run_board(
                 "%s is signed out in the bot's browser. Sign in once with: scripts/google_login.sh %s",
                 board.label, board.home)
             return summary
-        jobs = collect(driver, board, derive_keywords(profile, settings), settings.max_candidates)
+        jobs = collect(driver, board, derive_keywords(profile, settings), settings.max_candidates,
+                       settings.pages_per_keyword)
         summary.collected = len(jobs)
         for job in jobs:
             ledger.record_seen(job)
@@ -505,7 +554,7 @@ def run_board(
         summary.ranked = len(ranked)
         for scored in ranked:
             ledger.record_seen(scored.job, scored.score)
-        selected = ranking.select_for_application(ranked, settings, ledger.has_applied)
+        selected = ranking.select_for_application(ranked, replace(settings, target_applications=limit), ledger.has_applied)
         facts = answers_module.facts_fingerprint(profile, settings)
         held = ledger.waiting_on_you(facts) | ledger.sent_unconfirmed()
         summary.held_back = sum(1 for scored in selected if scored.job.job_id in held)

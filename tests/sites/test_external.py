@@ -1874,6 +1874,15 @@ def test_with_the_quota_spent_and_company_sites_off_nothing_happens(morning, mon
     assert (opened, calls, summary.attempted) == ([], [], 0)
 
 
+def test_with_no_daily_ceiling_a_run_goes_for_its_own_limit_whatever_was_sent_today(morning, tmp_path):
+    run, _, _, _ = morning
+    _used_quota(tmp_path, 5)
+
+    summary = run(daily_quota=0, target_applications=3)
+
+    assert (summary.applied, summary.attempted, summary.quota_before) == (3, 3, 5)
+
+
 def test_when_the_quota_runs_out_mid_run_the_rest_are_company_sites_with_a_tailored_resume(morning, monkeypatch, tmp_path):
     run, _, _, calls = morning
     _used_quota(tmp_path, 1)

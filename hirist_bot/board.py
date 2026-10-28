@@ -17,6 +17,7 @@ BOARD = Board(
     ),
     feeds=("https://www.hirist.tech/jobfeed",),
     search="https://www.hirist.tech/search/{slug}",
+    search_page="https://www.hirist.tech/search/{slug}?page={page}",
     job_link=r"^https://www\.hirist\.tech/j/[a-z0-9-]+-\d+",
     job_id=r"-(\d+)/?$",
     apply=r"^(?:apply|apply now|quick apply)$",
