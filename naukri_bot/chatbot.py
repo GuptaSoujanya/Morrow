@@ -3,6 +3,7 @@
 # noqa: SIZE_OK - the requested drawer state machine must remain in this module.
 
 import logging
+import re
 import time
 from typing import Any, List, Optional, Protocol, Tuple
 
@@ -71,6 +72,25 @@ class AnswerEngine(Protocol):
 
 def _normalise(value: str) -> str:
     return " ".join(value.casefold().split())
+
+
+#: What Naukri's chatbot says when it has nothing more to ask; a sign-off, not a question.
+_CLOSING_RE = re.compile(
+    r"thank(?:s| you)(?: so much| very much)? for (?:your |the )?(?:respons|answer|time|applying|interest|patience)"
+    r"|we(?:'ll| will| shall) (?:get back|be in touch|contact|reach out)"
+    r"|all the (?:very )?best"
+    r"|(?:application|response)s? (?:has been|have been|is|are|was|were) (?:submitted|received|sent|recorded)"
+    r"|successfully (?:submitted|applied)",
+)
+
+
+def closing_message(question: str) -> bool:
+    """True when the chatbot's latest message is a sign-off ("Thank you for your responses.")
+    rather than something to answer. A message that still asks anything is never a sign-off."""
+    text = _normalise(question or "")
+    if not text or "?" in text:
+        return False
+    return _CLOSING_RE.search(text) is not None
 
 
 def _visible(elements: List[WebElement]) -> List[WebElement]:
@@ -607,6 +627,9 @@ def handle_chatbot(
                     handled = _handle_plain_text(driver, answer_engine)
             if handled is None:
                 question = _latest_question(driver)
+                if closing_message(question):
+                    logger.info("The chatbot signed off (%s); nothing left to answer.", question)
+                    return ChatbotOutcome(True, answered, 0, "closing_message")
                 logger.info("Abandoning application at unanswered question: %s", question)
                 return ChatbotOutcome(False, answered, 1, question)
             if handled:
