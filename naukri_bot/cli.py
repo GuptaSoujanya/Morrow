@@ -528,10 +528,10 @@ def _log_summary(summary: RunSummary, settings: Settings) -> None:
     logger.info("skipped, unanswerable: %d", summary.skipped_abstained)
     logger.info("errors               : %d", summary.errors)
     logger.info(
-        "quota                : %d used before, %d used after (of %d)",
+        "quota                : %d used before, %d used after (of %s)",
         summary.quota_before,
         summary.quota_after,
-        settings.daily_quota,
+        settings.daily_quota if settings.daily_quota > 0 else "no 24h ceiling",
     )
     if summary.skipped_abstained:
         logger.info(
@@ -602,13 +602,24 @@ def run(
 
     try:
         summary.quota_before = ledger.quota_used()
-        remaining = ledger.quota_remaining(settings.daily_quota)
-        logger.info(
-            "Quota: %d of %d used in the last 24h, %d remaining.",
-            summary.quota_before,
-            settings.daily_quota,
-            remaining,
-        )
+        if settings.daily_quota > 0:
+            remaining = ledger.quota_remaining(settings.daily_quota)
+            logger.info(
+                "Quota: %d of %d used in the last 24h, %d remaining.",
+                summary.quota_before,
+                settings.daily_quota,
+                remaining,
+            )
+        else:
+            # DAILY_QUOTA=0: no rolling 24h ceiling. Every run goes for its own
+            # limit; Naukri's own server-side cap still ends a run early.
+            remaining = settings.target_applications
+            logger.info(
+                "No 24h ceiling (DAILY_QUOTA=0): this run goes for %d applications "
+                "(%d sent in the last 24h).",
+                settings.target_applications,
+                summary.quota_before,
+            )
         if remaining <= 0 and not settings.dry_run:
             if not settings.external_apply or settings.external_apply_limit <= 0:
                 logger.warning("Daily quota already exhausted. Nothing to do today.")
@@ -826,7 +837,7 @@ def run(
                     if summary.applied >= wanted:
                         break
                     closed = "Naukri's daily quota is used up"
-                elif ledger.quota_remaining(settings.daily_quota) <= 0:
+                elif settings.daily_quota > 0 and ledger.quota_remaining(settings.daily_quota) <= 0:
                     closed = "Naukri's daily quota is used up"
                 if closed:
                     naukri_open = False

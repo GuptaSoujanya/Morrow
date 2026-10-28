@@ -299,6 +299,10 @@ class Settings:
     # in a technology the resume does not mention. 0 disables the rule and
     # those questions go back to abstaining.
     default_skill_experience_years: float = 0.0
+    # Narrower than the rule above: a "years in X" question is answered with
+    # total_experience_years only when X is a skill listed in the profile, so
+    # Python on a three-year resume gets 3 and Kubernetes still abstains.
+    skill_years_from_total: bool = False
     # Smallest share of ranked jobs that must carry a real LLM score before
     # any application is sent. A lexical score and a blended score are not
     # the same quantity, so min_score means something different once the LLM
@@ -459,11 +463,13 @@ class Settings:
     def validate(self) -> List[str]:
         """Return a list of human-readable problems; empty means usable."""
         problems: List[str] = []
-        if not self.email and not self.session_only:
-            problems.append("NAUKRI_EMAIL is not set")
-        if not self.password and not self.session_only:
-            problems.append("NAUKRI_PASSWORD is not set")
-        if self.target_applications > self.daily_quota:
+        if not self.session_only and not (self.email and self.password):
+            problems.append(
+                "no saved Naukri sign-in in this workspace: %s has no connected browser session. "
+                "Open the dashboard that belongs to this folder and connect Naukri under Connections, "
+                "or set NAUKRI_EMAIL and NAUKRI_PASSWORD in .env" % self.browser_profile_dir
+            )
+        if 0 < self.daily_quota < self.target_applications:
             problems.append(
                 "target_applications (%d) exceeds daily_quota (%d)"
                 % (self.target_applications, self.daily_quota)
