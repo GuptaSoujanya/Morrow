@@ -4,13 +4,16 @@ import logging
 import math
 import os
 import random
+import sys
 import time
+from pathlib import Path
 from typing import List, Optional
 
 from requests.exceptions import RequestException
 from selenium import webdriver
 from selenium.common.exceptions import TimeoutException, WebDriverException
 from selenium.webdriver.chrome.service import Service as ChromeService
+from selenium.webdriver.common.driver_finder import DriverFinder
 from selenium.webdriver.edge.service import Service as EdgeService
 from selenium.webdriver.remote.webdriver import WebDriver
 from selenium.webdriver.remote.webelement import WebElement
@@ -25,6 +28,35 @@ logger = logging.getLogger(__name__)
 
 class BrowserError(Exception):
     """Raised when no supported browser driver can be started."""
+
+
+# One /bin/bash hop in front of chromedriver. On macOS, Chrome started straight
+# from chromedriver inside a service tree (dashboard -> run -> chromedriver ->
+# Chrome) is refused access to a profile under Desktop, Documents or Downloads;
+# it then sits in a "cannot read and write to its data directory" dialog and the
+# driver times out. Started through the shell, Chrome gets the user's own file
+# access. The same code path from a terminal was never affected.
+CHROMEDRIVER_WRAPPER = Path(__file__).resolve().parents[1] / "scripts" / "chromedriver.sh"
+
+
+def chromedriver_service(
+    options: webdriver.ChromeOptions, executable_path: Optional[str] = None
+) -> ChromeService:
+    """chromedriver Service for `options`; path from the argument, CHROMEDRIVER, or selenium-manager."""
+    path = executable_path or os.environ.get("CHROMEDRIVER") or ""
+    log_output = os.environ.get("CHROMEDRIVER_LOG") or None
+    if sys.platform != "darwin" or os.environ.get("MORROW_CHROMEDRIVER_DIRECT"):
+        return ChromeService(path or None, log_output=log_output)
+    if not path:
+        path = DriverFinder(ChromeService(), options).get_driver_path()
+    wrapper = CHROMEDRIVER_WRAPPER
+    if not os.access(wrapper, os.X_OK):
+        try:
+            wrapper.chmod(0o755)
+        except OSError as exc:
+            logger.warning("Cannot make %s executable (%s); starting chromedriver directly.", wrapper, exc)
+            return ChromeService(path, log_output=log_output)
+    return ChromeService(str(wrapper), log_output=log_output, env={**os.environ, "MORROW_CHROMEDRIVER": path})
 
 
 _CHROME_USER_AGENT = (
@@ -205,12 +237,11 @@ def _try_create_driver(settings: Settings, use_profile: bool) -> webdriver.Remot
     failures: List[str] = []
     driver = None
     try:
+        options = _chrome_options(settings, profile_dir_for(settings, "chrome") if use_profile else None)
         driver = webdriver.Chrome(
             # CHROMEDRIVER (the Docker image) skips the download: there is no linux-arm64 build to fetch.
-            service=ChromeService(os.environ.get("CHROMEDRIVER") or ChromeDriverManager().install()),
-            options=_chrome_options(
-                settings, profile_dir_for(settings, "chrome") if use_profile else None
-            ),
+            service=chromedriver_service(options, os.environ.get("CHROMEDRIVER") or ChromeDriverManager().install()),
+            options=options,
         )
         configured = _configure_driver(driver)
         logger.info(

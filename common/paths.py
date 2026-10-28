@@ -21,10 +21,22 @@ to this code, and the paths stay relative so a test that moves into a scratch
 folder gets its own user/ there, as the bots always did with data/.
 """
 
+import hashlib
+import logging
 import os
+import shutil
+import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+
+logger = logging.getLogger(__name__)
+
+#: macOS lets each app into these folders (and iCloud Drive) only once a person
+#: has allowed it. A Chrome started by the dashboard never gets asked, so a
+#: profile kept there fails to open and Chrome sits in an error dialog;
+#: browser_home() keeps the profiles out of them.
+MAC_PROTECTED = ("Desktop", "Documents", "Downloads", "Library/Mobile Documents")
 
 USER_DIR_ENV = "MORROW_USER_DIR"
 DATABASE_DIR_ENV = "MORROW_DATABASE_DIR"
@@ -107,3 +119,59 @@ def resolve(value: str, root: Path = ROOT) -> Path:
         base = database_dir()
         path = base.joinpath(*parts[1:])
     return path if path.is_absolute() else root / path
+
+
+def browser_dir() -> Path:
+    return user_dir() / "browser"
+
+
+def mac_protected(path: Path) -> bool:
+    if sys.platform != "darwin":
+        return False
+    try:
+        relative = path.resolve().relative_to(Path.home())
+    except (OSError, ValueError):
+        return False
+    return any(relative.is_relative_to(folder) for folder in MAC_PROTECTED)
+
+
+def private_browser_home(root: Path = ROOT) -> Path:
+    key = hashlib.sha256(str(root.resolve()).encode()).hexdigest()[:16]
+    return Path.home() / "Library" / "Application Support" / "Morrow" / key / "browser"
+
+
+def _chrome_running_in(folder: Path) -> bool:
+    locks = list(folder.glob("*/chrome/SingletonLock")) + list(folder.glob("lanes/*/chrome/SingletonLock"))
+    for lock in locks:
+        try:
+            pid = int(os.readlink(lock).rsplit("-", 1)[1])
+            os.kill(pid, 0)
+        except (OSError, ValueError, IndexError):
+            continue
+        return True
+    return False
+
+
+def browser_home(root: Path = ROOT) -> Path:
+    """user/browser; on macOS a link to a folder under ~/Library when user/ sits in a protected folder."""
+    folder = browser_dir() if browser_dir().is_absolute() else root / browser_dir()
+    if not mac_protected(folder):
+        return folder
+    target = private_browser_home(root)
+    if folder.exists():
+        if _chrome_running_in(folder):
+            logger.warning("Browser sessions in %s cannot be moved while a browser is open there.", folder)
+            return folder
+        if target.exists():
+            logger.warning("Both %s and %s hold browser sessions; %s is used. Move or remove the other one by hand.",
+                           folder, target, folder)
+            return folder
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(folder), str(target))
+    else:
+        target.mkdir(parents=True, exist_ok=True)
+    folder.parent.mkdir(parents=True, exist_ok=True)
+    folder.symlink_to(target)
+    logger.info("Browser sessions are kept in %s; %s links to it, because macOS would stop a Chrome started by "
+                "Morrow from opening a profile there.", target, folder)
+    return folder

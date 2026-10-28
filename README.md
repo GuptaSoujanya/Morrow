@@ -119,6 +119,8 @@ scripts/morrow install && morrow start
 
 > [!TIP]
 > The first real run on each site opens a visible Chrome window so you can enter the OTP. After that the session is saved under `user/browser/` and later runs sign in on their own.
+>
+> On a Mac, when the checkout sits in Desktop, Documents or Downloads, the dashboard keeps the Chrome profiles in `~/Library/Application Support/Morrow/` and makes `user/browser` a link to that folder. macOS does not let a Chrome started by the dashboard open a profile inside those three folders: the browser would sit in a "cannot read and write to its data directory" dialog and every run would time out.
 
 ---
 

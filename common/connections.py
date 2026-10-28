@@ -179,7 +179,6 @@ def chrome_binary() -> str:
 def create_driver(settings):
     """Chrome only, one persistent profile, no fallback to an anonymous session."""
     from selenium import webdriver
-    from selenium.webdriver.chrome.service import Service
     from common import browser
 
     base = Path(settings.browser_profile_dir)
@@ -193,8 +192,7 @@ def create_driver(settings):
     binary = chrome_binary()
     if binary:
         options.binary_location = binary
-    service = Service(executable_path=os.environ["CHROMEDRIVER"]) if os.getenv("CHROMEDRIVER") else Service()
-    driver = webdriver.Chrome(service=service, options=options)
+    driver = webdriver.Chrome(service=browser.chromedriver_service(options), options=options)
     try:
         return browser._position_visible_window(browser._configure_driver(driver), settings)
     except Exception:
