@@ -102,3 +102,97 @@ def test_options_are_matched_exactly_or_deferred():
         "How many years of experience in Java?", options=["0-1", "5-10"]
     )
     assert deferred.abstained, "rule should defer, not force a mismatched option"
+
+
+def _resume_engine(**settings_overrides):
+    values = dict(email="t@example.com", password="secret", skill_years_from_total=True, total_experience_years=3)
+    values.update(settings_overrides)
+    settings = Settings(**{k: v for k, v in values.items() if k in Settings.__annotations__})
+    profile = Profile(full_name="T", total_experience_years=3, skills=["Python", "LangChain", "Generative AI", "C++"])
+    return AnswerEngine(Ledger(":memory:"), _NoLLM(), profile, settings)
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "How many years of experience do you have in Python?",
+        "How many years of hands-on experience do you have in Python backend development?",
+        "How many years of experience do you have in Generative Ai?",
+        # "language" is a filler word elsewhere; here it is part of a name the alias table knows.
+        "How many years of experience do you have in Large Language Model(s)?",
+        "How many years of experience do you have in LLMs?",
+        "Years of experience with C++",
+    ],
+)
+def test_a_listed_skill_answers_with_total_experience_when_chosen(question):
+    resolution = _resume_engine().resolve(question)
+    assert resolution.answer is not None
+    assert resolution.answer.text == "3"
+    assert resolution.answer.grounded_in.endswith("total_experience_years")
+
+
+@pytest.mark.parametrize("question", ["How many years of experience do you have in Kubernetes?",
+                                      "How many years of experience do you have in Frontend Development?"])
+def test_a_skill_not_on_the_resume_still_abstains(question):
+    assert _resume_engine().resolve(question).answer is None
+
+
+def test_the_narrow_rule_is_off_unless_chosen():
+    assert _resume_engine(skill_years_from_total=False).resolve(
+        "How many years of experience do you have in Python?").answer is None
+
+
+def _own_resume_engine():
+    """The skills list as the resume extraction writes it: long, specific lines."""
+    settings = Settings(**{k: v for k, v in dict(
+        email="t@example.com", password="secret", skill_years_from_total=True, total_experience_years=3,
+    ).items() if k in Settings.__annotations__})
+    profile = Profile(full_name="T", total_experience_years=3, skills=[
+        "Python", "ML model evaluation", "multi-agent orchestration",
+        "LLM evaluation (CodeBLEU, n-gram similarity, dataflow match, human-eval rubrics)",
+        "AWS Bedrock", "microservices (FastAPI)", "CI/CD pipelines", "NLP", "React.js", "C++",
+    ])
+    return AnswerEngine(Ledger(":memory:"), _NoLLM(), profile, settings)
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        # Each of these abandoned a Naukri or Hirist application on 2026-10-28: the skill is on the
+        # resume under another name, or wrapped in words no skills list repeats.
+        "How many years of experience do you have in Generative Ai?",
+        "How many years of experience do you have in LLM?",
+        "How many years of experience do you have in AWS?",
+        "How many years of experience do you have in Artificial Intelligence?",
+        "How many years of experience do you have in Aiml?",
+        "How many years of hands-on experience do you have in Microservices Architecture?",
+        "How many years of experience do you have in Agent to Agent?",
+        "How many years relevant experience in ML and orchestration frameworks?",
+        "How many years of experience do you have in CI/CD?",
+        "How many years of experience do you have in React?",
+        "Years of experience with C++",
+    ],
+)
+def test_the_resumes_own_skills_answer_under_the_names_recruiters_use(question):
+    resolution = _own_resume_engine().resolve(question)
+    assert resolution.answer is not None, "abstained on %r" % question
+    assert resolution.answer.text == "3"
+    assert resolution.answer.grounded_in.startswith("skills:")
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "how many years you have exp in health care domain",
+        "How many years of experience do you have in platform engineer?",
+        "How many years of experience do you have in Kubernetes?",
+        "How many years of experience do you have in Django?",
+        # One listed skill and one not: a single number would claim years in the missing one.
+        "How many years of experience do you have in Python and Kubernetes?",
+        "How many years of experience do you have in Machine Learning?",  # ML is not LLM work
+    ],
+)
+def test_names_the_resume_does_not_cover_still_abstain(question):
+    engine = _own_resume_engine()
+    engine.profile.skills = [s for s in engine.profile.skills if s != "ML model evaluation"]
+    assert engine.resolve(question).answer is None, "answered %r" % question

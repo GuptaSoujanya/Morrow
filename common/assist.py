@@ -311,6 +311,33 @@ def _number(text: str) -> Optional[float]:
     return float(match.group()) if match else None
 
 
+_NUMBER_RE = r"(\d+(?:\.\d+)?)"
+_RANGE = re.compile(_NUMBER_RE + r"\s*(?:-|–|to)\s*" + _NUMBER_RE, re.I)
+_CEILING = re.compile(r"(?:\bless than|\bunder|\bbelow|\bup ?to|<)\s*" + _NUMBER_RE, re.I)
+_FLOOR = re.compile(_NUMBER_RE + r"\s*\+|(?:\bmore than|\bover|\babove|\bat least|>)\s*" + _NUMBER_RE, re.I)
+
+
+def _number_disagrees(answer: str, value: float) -> bool:
+    """Whether a numeric answer excludes the profile's number.
+
+    A form offers ranges, and the bot picks the one the profile's number falls in: "2-4" for 3
+    years is the same fact as total_experience_years: 3, not a disagreement to warn about every
+    run. "Less than 2" and "10+" for 3 years are.
+    """
+    match = _RANGE.search(answer)
+    if match:
+        low, high = sorted((float(match.group(1)), float(match.group(2))))
+        return not low - 0.01 <= value <= high + 0.01
+    match = _CEILING.search(answer)
+    if match:
+        return value >= float(match.group(1))
+    match = _FLOOR.search(answer)
+    if match:
+        return value < float(match.group(1) or match.group(2))
+    said = _number(answer)
+    return said is not None and abs(said - value) > 0.01
+
+
 def _yes_no(text: str) -> Optional[bool]:
     first = (text.strip().split() or [""])[0].strip(".,!").casefold()
     return True if first == "yes" else False if first == "no" else None
@@ -361,8 +388,7 @@ def disagreements(profile: Profile, book: AnswerBook) -> List[Disagreement]:
             if value is None:
                 break
             if kind == "number":
-                said = _number(answer)
-                if said is not None and abs(said - float(value)) > 0.01:
+                if _number_disagrees(answer, float(value)):
                     found.append(Disagreement(name, question, answer, "%s: %g" % (attribute, float(value))))
             else:
                 said_bool = _yes_no(answer)

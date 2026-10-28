@@ -372,7 +372,9 @@ def _used_job_context(resolution: AnswerResolution) -> bool:
 
 
 def _profile_fingerprint(profile: Profile) -> str:
-    payload = json.dumps(profile.known_facts(), sort_keys=True, default=str)
+    # Invalidate machine-learned answers made under the old rule that could
+    # turn total experience into years in any listed skill. Manual answers stay.
+    payload = 'answer-evidence-v2\n' + json.dumps(profile.known_facts(), sort_keys=True, default=str)
     payload += profile.resume_text or ""
     return hashlib.sha1(payload.encode("utf-8")).hexdigest()[:16]
 
@@ -390,17 +392,107 @@ _NOT_FOR_JUDGEMENT = re.compile(
     r"\b(gender|sex|marital|religio\w*|caste|race|ethnic\w*|veteran|disabilit\w*"
     r"|criminal|convict\w*|visa|sponsor\w*|citizen\w*|permanent resident"
     r"|authori[sz]ed to work|work authori[sz]ation|right to work|pan|aadhaa?r"
-    r"|passport number|ssn|social security|bank|account number)\b",
+    r"|passport number|ssn|social security|bank|account number|rate|rating|self[- ]assessment)\b",
     re.I,
 )
 
 _PASSPORT_DETAIL = re.compile(r"\b(number|no|id|expir\w*|issu\w*|valid\w*|date)\b")
 _NAMED_SKILL = re.compile(r"\b(total|overall) experience (in|with|on|of) (?!years?\b)\w")
+#: "Are you currently living in Delhi/ NCR?", "are you based out of Pune", "are you from Bangalore?":
+#: a yes/no about where the candidate is now, answered from current_location.
+_LOCATED_IN_RE = re.compile(
+    r"\b(?:are|do) you\b(?: currently| presently| now)?"
+    r" (?:(?:living|based|located|residing|staying|reside|live|stay) (?:in|at|out of|from)|from)"
+    r" (?P<place>[a-z][a-z0-9 .,/&()-]*?)\s*(?:\?|$)"
+)
+_NCR_CITIES = ("delhi", "ncr", "noida", "gurugram", "gurgaon", "ghaziabad", "faridabad", "greater noida")
+_PLACE_ALIASES = {"gurgaon": "gurugram", "bengaluru": "bangalore", "bombay": "mumbai", "calcutta": "kolkata"}
+_PLACE_FILLER = {"india", "region", "area", "city", "the", "state", "metro"}
+
+
+def _place_words(text: str) -> List[str]:
+    words = [_PLACE_ALIASES.get(word, word) for word in re.split(r"[^a-z0-9]+", text) if word]
+    return [word for word in words if len(word) > 2 and word not in _PLACE_FILLER]
+
+
+def _same_place(place: str, home: str) -> bool:
+    """Whether the asked-about place is where the candidate lives; Delhi/NCR covers its cities."""
+    wanted, actual = _place_words(place), _place_words(home)
+    if any(word in actual for word in wanted):
+        return True
+    if any(word in ("ncr", "delhi") for word in wanted):
+        return any(word in actual for word in _place_words(" ".join(_NCR_CITIES)))
+    return False
 
 _SKILL_YEARS_RE = re.compile(
     r"(how many years|years of (experience|exp)\b|relevant experience"
     r"|experience in years|yrs of (experience|exp)\b)"
 )
+#: The technology a years-of-experience question asks about: "...experience in X?", "...with X".
+#: The lookbehind keeps "hands-on" from reading as the preposition "on".
+_SKILL_SUBJECT_RE = re.compile(r"(?<![\w-])(?:in|with|on|using)\s+(?P<subject>[^?]+?)\s*(?:\?|\.|$)")
+#: Words a question wraps a skill in that no skills list repeats ("Microservices Architecture",
+#: "hands-on experience in", "the health care domain").
+_SKILL_FILLER = frozenset((
+    "a", "an", "the", "any", "in", "of", "for", "with", "using", "hands-on", "hands", "on", "relevant",
+    "experience", "exp", "years", "year", "yrs", "skills", "skill", "architecture", "engineer", "engineering",
+    "development", "developer", "domain", "framework", "frameworks", "technology", "technologies", "tool",
+    "tools", "stack", "programming", "language", "languages",
+))
+#: Recruiters name a skill one way and a resume another: a question about "Generative AI" or "LLM"
+#: is answered by an "LLM evaluation" line, "AWS" by "AWS Bedrock", "Agent to Agent" by
+#: "multi-agent orchestration". Keys are the question's words; values are what to look for in the
+#: skills list. One-directional on purpose: "machine learning" does not reach LLM work.
+_GENERATIVE = ("generative ai", "gen ai", "genai", "llm", "llms", "large language model", "large language models")
+_AI = ("artificial intelligence", "ai", "aiml", "machine learning", "ml", "llm", "nlp")
+_AGENT = ("agent to agent", "a2a", "agentic ai", "ai agents", "agents", "agent", "multi-agent", "multi agent")
+_SKILL_EQUIVALENTS: Dict[str, Tuple[str, ...]] = {}
+for _keys, _equivalents in (
+    (("generative ai", "gen ai", "genai", "generative artificial intelligence"), _GENERATIVE),
+    (("llm", "llms", "large language model", "large language models"), _GENERATIVE),
+    (("artificial intelligence", "ai", "aiml", "ai ml", "ai/ml"), _AI),
+    (("machine learning", "ml"), ("machine learning", "ml")),
+    (("agent to agent", "a2a", "agentic ai", "ai agents", "agents", "agent", "multi-agent", "multi agent"), _AGENT),
+    (("aws", "amazon web services"), ("aws", "amazon web services")),
+    (("react", "reactjs"), ("react", "react.js", "reactjs")),
+    (("node", "nodejs"), ("node", "node.js", "nodejs")),
+    (("next", "nextjs"), ("next", "next.js", "nextjs")),
+    (("microservice", "microservices"), ("microservice", "microservices")),
+):
+    for _key in _keys:
+        _SKILL_EQUIVALENTS[_key] = _equivalents
+
+
+def _word_in(needle: str, haystack: str) -> bool:
+    """Whole-word containment, so "ai" is not found in "training" nor "go" in "django"."""
+    return len(needle) >= 2 and re.search(r"(?<![a-z0-9])%s(?![a-z0-9])" % re.escape(needle), haystack) is not None
+
+
+def _skill_subjects(normalised_question: str) -> List[str]:
+    """The skills a years question names, one per entry: "python and kubernetes" gives both.
+
+    Empty when the question names none ("Relevant experience (in years)").
+    """
+    match = _SKILL_SUBJECT_RE.search(normalised_question)
+    if not match:
+        return []
+    subject = re.sub(r"[()]", " ", re.sub(r"\(s\)", "s", match.group("subject")))
+    subjects = []
+    for part in re.split(r"\s*(?:,|&|\band\b|\bor\b|\bplus\b)\s*", subject):
+        words = part.split()
+        while words and words[0] in _SKILL_FILLER:
+            words = words[1:]
+        # A phrase the alias table knows stays whole: "large language models" must not lose
+        # "language" to the filler list and come out as "large models".
+        phrase = " ".join(words)
+        known = next((form for form in (phrase, phrase[:-1] if phrase.endswith("s") else "") if form in _SKILL_EQUIVALENTS), None)
+        if known:
+            subjects.append(known)
+            continue
+        words = [word for word in words if word not in _SKILL_FILLER]
+        if words:
+            subjects.append(" ".join(words))
+    return subjects
 
 
 class AnswerEngine:
@@ -894,6 +986,9 @@ class AnswerEngine:
         self, question: str, options: Optional[List[str]]
     ) -> Optional[AnswerResolution]:
         normalised_question = _normalise(question)
+        located = self._located_in_answer(normalised_question, options)
+        if located is not None:
+            return located
         mappings: List[Tuple[Tuple[str, ...], str, str]] = [
             (("notice period",), "notice_period_days", "notice_period_days"),
             (("expected ctc", "expected salary"), "expected_ctc_lpa", "expected_ctc_lpa"),
@@ -937,6 +1032,30 @@ class AnswerEngine:
             )
         return self._skill_years_answer(normalised_question, options)
 
+    def _located_in_answer(
+        self, normalised_question: str, options: Optional[List[str]]
+    ) -> Optional[AnswerResolution]:
+        """Yes or No to "are you currently living in <place>?" from current_location.
+
+        A question that also asks about relocating is left to the relocation rule and the model:
+        a bare "No" there would read as unwilling to move.
+        """
+        found = _LOCATED_IN_RE.search(normalised_question)
+        if found is None or "relocat" in normalised_question:
+            return None
+        home = self.profile.current_location or ""
+        if not home.strip():
+            return AnswerResolution.abstain("profile_fact_missing:current_location")
+        text = "Yes" if _same_place(found.group("place"), _normalise(home)) else "No"
+        if options is not None:
+            matched = self._exact_option(text, options)
+            if matched is None:
+                return None
+            text = matched
+        return AnswerResolution.resolved(
+            Answer(text=text, grounded_in="current_location", source=AnswerSource.PROFILE, confidence=1.0)
+        )
+
     def _skill_years_answer(
         self, normalised_question: str, options: Optional[List[str]]
     ) -> Optional[AnswerResolution]:
@@ -950,11 +1069,16 @@ class AnswerEngine:
         mentions. Stating the policy as a rule makes it the user's explicit
         choice rather than something coaxed out of the model.
         """
-        years = self.settings.default_skill_experience_years
-        if years <= 0:
-            return None
         if not _SKILL_YEARS_RE.search(normalised_question):
             return None
+        years = self.settings.default_skill_experience_years
+        grounding = "default_skill_experience_years"
+        if years <= 0:
+            skill = self._listed_skill(normalised_question)
+            total = self.profile.total_experience_years
+            if not (self.settings.skill_years_from_total and skill and total):
+                return None
+            years, grounding = float(total), "skills:%s + total_experience_years" % skill
 
         text = ("%g" % years)
         if options is not None:
@@ -969,11 +1093,36 @@ class AnswerEngine:
         return AnswerResolution.resolved(
             Answer(
                 text=text,
-                grounded_in="default_skill_experience_years",
+                grounded_in=grounding,
                 source=AnswerSource.PROFILE,
                 confidence=1.0,
             )
         )
+
+    def _listed_skill(self, normalised_question: str) -> Optional[str]:
+        """The profile skill(s) a years question is about, or None when any named skill is not listed.
+
+        Both directions count: "Python backend" holds the listed "Python", and "LLM" sits inside
+        the listed "LLM evaluation". A question naming two skills needs both listed; claiming years
+        in the one the resume lacks would be false.
+        """
+        skills = [(skill, _normalise(skill)) for skill in self.profile.skills or []]
+        subjects = _skill_subjects(normalised_question)
+        if not subjects:
+            for skill, token in skills:
+                if _word_in(token, normalised_question):
+                    return skill
+            return None
+        found: List[str] = []
+        for subject in subjects:
+            terms = (subject,) + _SKILL_EQUIVALENTS.get(subject, ())
+            hit = next((skill for skill, token in skills for term in terms
+                        if _word_in(term, token) or _word_in(token, term)), None)
+            if hit is None:
+                return None
+            if hit not in found:
+                found.append(hit)
+        return " + ".join(found)
 
     @staticmethod
     def _profile_candidates(field_name: str, value: Any) -> List[str]:

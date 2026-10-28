@@ -129,6 +129,7 @@ def load_settings(
             "DEFAULT_SKILL_EXPERIENCE_YEARS",
             defaults.default_skill_experience_years,
         ),
+        "skill_years_from_total": _env_bool("SKILL_YEARS_FROM_TOTAL", defaults.skill_years_from_total),
         "llm_rank_batch_size": _env_int(
             "LLM_RANK_BATCH_SIZE", defaults.llm_rank_batch_size
         ),

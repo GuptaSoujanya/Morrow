@@ -210,3 +210,24 @@ def test_shift_answers_that_disagree_with_the_profile_facts_are_named(tmp_path):
     assert [(item.topic, item.in_answers, item.in_profile) for item in found] == [
         ("rotational shifts", "No", "extra_facts.willing_rotational_shifts: true"),
     ]
+
+
+def test_a_range_the_profile_number_falls_in_is_not_a_disagreement(tmp_path):
+    """Forms offer ranges; "2-4" picked for 3 years is the profile's fact, not a conflict to warn about every run."""
+    answers = (
+        "Q: What is your total years of experience?\nA: 2-4\n\n"
+        "Q: Total experience?\nA: less than 2\n\n"
+        "Q: Overall experience in years\nA: 10+\n\n"
+        "Q: What is your expected CTC?\nA: 18 to 20 LPA\n\n"
+        "Q: Notice period (in days)\nA: up to 30 days\n"
+    )
+    settings, _ = _setup(tmp_path, answers=answers)
+    profile = Profile(total_experience_years=3, expected_ctc_lpa=19, notice_period_days=30)
+
+    found = assist.disagreements(profile, AnswerBook(str(tmp_path / "user" / "inputs" / "answers.txt")))
+
+    assert [(item.topic, item.in_answers) for item in found] == [
+        ("total experience", "less than 2"),
+        ("total experience", "10+"),
+        ("notice period", "up to 30 days"),
+    ]
