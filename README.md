@@ -10,6 +10,16 @@
 [![Tests](https://img.shields.io/badge/Tests-1702%20passing-39D353?style=for-the-badge&logo=pytest&logoColor=white)](#-verify-it-works)
 [![License](https://img.shields.io/badge/License-MIT-F5A623?style=for-the-badge)](LICENSE)
 
+<br/>
+
+<p align="center">
+  <a href="https://github.com/GuptaSoujanya/Morrow/stargazers"><img src="https://img.shields.io/github/stars/GuptaSoujanya/Morrow?style=for-the-badge&logo=apachespark&color=FFD700&label=STARS" alt="GitHub Stars" /></a>
+  &nbsp;
+  <a href="https://github.com/GuptaSoujanya/Morrow/network/members"><img src="https://img.shields.io/github/forks/GuptaSoujanya/Morrow?style=for-the-badge&logo=git&color=00F2FE&label=FORKS" alt="GitHub Forks" /></a>
+  &nbsp;
+  <a href="https://github.com/GuptaSoujanya/Morrow/watchers"><img src="https://img.shields.io/github/watchers/GuptaSoujanya/Morrow?style=for-the-badge&logo=github&color=39D353&label=WATCHERS" alt="GitHub Watchers" /></a>
+</p>
+
 **[Quick start](#-quick-start)** · **[Screenshots](#-a-look-inside)** · **[What it does](#-what-it-does)** · **[How it works](#-how-it-works)** · **[Full guide](GUIDE.md)** · **[SoujanyaLab](https://www.soujanyalab.in/)**
 
 <br/>
@@ -312,6 +322,20 @@ More in the [full guide](GUIDE.md#troubleshooting).
 
 > [!WARNING]
 > Use Morrow responsibly and within each site's terms. LinkedIn's User Agreement forbids automated access, and Naukri and the other boards may restrict accounts that automate. Start with dry runs and low limits, and read the daily report. Morrow is provided for educational use.
+
+---
+
+## ⭐ Star History & Community
+
+If you find Morrow helpful for your career and job application workflow, please consider starring ⭐ the repository and forking 🍴 it to stay synchronized with new updates!
+
+<div align="center">
+  <a href="https://star-history.com/#guptasoujanya/morrow&Date">
+    <img src="https://api.star-history.com/svg?repos=guptasoujanya/morrow&type=Date&theme=dark" width="750" alt="Morrow Star History Chart" />
+  </a>
+</div>
+
+<br/>
 
 <div align="center">
 
