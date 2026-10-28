@@ -196,3 +196,24 @@ def test_names_the_resume_does_not_cover_still_abstain(question):
     engine = _own_resume_engine()
     engine.profile.skills = [s for s in engine.profile.skills if s != "ML model evaluation"]
     assert engine.resolve(question).answer is None, "answered %r" % question
+
+
+def _salary_engine():
+    settings = Settings(email="t@example.com", password="secret")
+    profile = Profile(full_name="T", current_ctc_lpa=16, expected_ctc_lpa=20, total_experience_years=3,
+                      current_location="Indore, India")
+    return AnswerEngine(Ledger(":memory:"), _NoLLM(), profile, settings)
+
+
+@pytest.mark.parametrize("question, answer", [
+    ("What is your current annual salary? (in LPA, e.g., 45)", "16"),
+    ("Current CTC", "16"),
+    ("What is your present salary?", "16"),
+    ("Expected annual salary in LPA", "20"),
+    ("What is your expected compensation?", "20"),
+])
+def test_salary_asked_with_a_word_in_between_is_still_answered_from_the_facts(question, answer):
+    """Hirist asks 'current annual salary'; the plain 'current salary' phrase missed it."""
+    resolution = _salary_engine().resolve(question)
+    assert not resolution.abstained, "abstained on %r" % question
+    assert resolution.answer.text == answer

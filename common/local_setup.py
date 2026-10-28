@@ -49,8 +49,8 @@ ENV_KEYS = {'PROFILE_PATH', 'RESUME_PATH', 'DATA_DIR', 'FIRSTNAME', 'LASTNAME', 
 # day still gets a full 100; Naukri's own server cap ends a run early on its own)
 # and each other board through PLATFORM_LIMIT.
 # The candidate pool is sized so 100 relevant postings are actually there.
-VOLUME_DEFAULTS = {'TARGET_APPLICATIONS': '100', 'DAILY_QUOTA': '0', 'PLATFORM_LIMIT': '100', 'MIN_SCORE': '50',
-                   'MAX_DAYS_OLD': '14', 'MAX_CANDIDATES': '1200', 'LLM_RANK_TOP_N': '400', 'PAGES_PER_KEYWORD': '8',
+VOLUME_DEFAULTS = {'TARGET_APPLICATIONS': '100', 'DAILY_QUOTA': '0', 'PLATFORM_LIMIT': '100', 'MIN_SCORE': '40',
+                   'MAX_DAYS_OLD': '21', 'MAX_CANDIDATES': '1200', 'LLM_RANK_TOP_N': '400', 'PAGES_PER_KEYWORD': '8',
                    'SKILL_YEARS_FROM_TOTAL': 'true'}
 FACT_QUESTIONS = {
     'full_name': 'What is your full name?', 'email': 'What is your email address?',

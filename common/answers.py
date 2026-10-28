@@ -991,8 +991,10 @@ class AnswerEngine:
             return located
         mappings: List[Tuple[Tuple[str, ...], str, str]] = [
             (("notice period",), "notice_period_days", "notice_period_days"),
-            (("expected ctc", "expected salary"), "expected_ctc_lpa", "expected_ctc_lpa"),
-            (("current ctc", "current salary"), "current_ctc_lpa", "current_ctc_lpa"),
+            (("expected ctc", "expected salary", "expected annual salary", "expected compensation",
+              "expected annual ctc"), "expected_ctc_lpa", "expected_ctc_lpa"),
+            (("current ctc", "current salary", "current annual salary", "current compensation",
+              "current annual ctc", "present ctc", "present salary"), "current_ctc_lpa", "current_ctc_lpa"),
             (("total experience", "overall experience"), "total_experience_years", "total_experience_years"),
             (("current location", "currently located"), "current_location", "current_location"),
             (("willing to relocate",), "willing_to_relocate", "willing_to_relocate"),
