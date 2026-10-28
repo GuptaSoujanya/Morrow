@@ -15,12 +15,16 @@ import re
 import shutil
 import signal
 import subprocess
+import time
 from typing import List, Optional
 
 logger = logging.getLogger(__name__)
 
 TIMEOUT_S = int(os.getenv("PIPELINE_AI_TIMEOUT_S") or 1800)
 _ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
+# Installed by the pipeline CLI so its worker threads share a stop request.
+# Dashboard preparation supplies its own event instead.
+shutdown_event = None
 
 
 class AIError(RuntimeError):
@@ -71,8 +75,12 @@ def command_for(cli: str, prompt: str, web: bool = True) -> List[str]:
     return command
 
 
-def ask(prompt: str, cli: Optional[str] = None, timeout_s: int = TIMEOUT_S, web: bool = True) -> str:
+def ask(prompt: str, cli: Optional[str] = None, timeout_s: int = TIMEOUT_S, web: bool = True, cancel_event=None) -> str:
     """The CLI's answer as plain text; AIError when there is no CLI or it failed."""
+    if cancel_event is None:
+        cancel_event = shutdown_event
+    if cancel_event is not None and cancel_event.is_set():
+        raise AIError('AI preparation was cancelled')
     chosen = chosen_cli(cli)
     if not chosen:
         raise AIError("neither claude nor kiro-cli is on PATH (or PIPELINE_AI_CLI names a missing one)")
@@ -84,7 +92,22 @@ def ask(prompt: str, cli: Optional[str] = None, timeout_s: int = TIMEOUT_S, web:
     except OSError as exc:
         raise AIError("%s could not be started: %s" % (chosen, exc))
     try:
-        stdout, stderr = proc.communicate(timeout=timeout_s)
+        if cancel_event is None:
+            stdout, stderr = proc.communicate(timeout=timeout_s)
+        else:
+            deadline = time.monotonic() + timeout_s
+            while True:
+                if cancel_event.is_set():
+                    _kill_group(proc)
+                    raise AIError('AI preparation was cancelled')
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise subprocess.TimeoutExpired(proc.args, timeout_s)
+                try:
+                    stdout, stderr = proc.communicate(timeout=min(1, remaining))
+                    break
+                except subprocess.TimeoutExpired:
+                    continue
     except subprocess.TimeoutExpired:
         _kill_group(proc)
         raise AIError("%s ran past %d seconds" % (chosen, timeout_s))

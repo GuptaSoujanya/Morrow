@@ -131,6 +131,25 @@ the browsers you sign in to and the AI CLI you already use.
 
 ## Quick start
 
+**One command** (new users start here):
+
+```bash
+git clone --recurse-submodules https://github.com/GuptaSoujanya/Morrow.git
+cd Morrow
+bash setup.sh
+```
+
+`setup.sh` installs the system tools Morrow needs (Python 3.11+, Node.js, Poppler, Chrome), creates
+`venv/`, installs the locked Python and dashboard packages, signs you in to Claude Code or Kiro CLI,
+installs the `morrow` command, starts the dashboard and opens **http://127.0.0.1:8100/#/onboarding**.
+The guided setup there asks for your resume first, reads your details and job preferences out of it
+for you to confirm, and prepares `user/inputs/answers.txt` with the AI CLI. Everything it saves stays
+under `user/` on your computer. Flags: `--provider claude|kiro`, `--skip-login`, `--no-start`,
+`--no-open`, `--check`. Morrow is released under the [MIT license](LICENSE); see
+[CONTRIBUTING.md](CONTRIBUTING.md) to help.
+
+**Step by step** (the same result by hand):
+
 ```bash
 git clone --recurse-submodules https://github.com/GuptaSoujanya/Morrow.git
 cd Morrow
@@ -161,6 +180,10 @@ Run `scripts/morrow install` once from the repo root to create `~/.local/bin/mor
 checkout's launcher. With `~/.local/bin` on your `PATH`, run `morrow start` from any directory.
 If the command is not found, add `export PATH="$HOME/.local/bin:$PATH"` to your shell configuration.
 You can also use `scripts/morrow start` directly from the repo root without installing the command.
+If `~/.local/bin/morrow` still points at an older checkout (for example a worktree), `scripts/morrow install`
+repoints it at this checkout so `morrow start` runs the newest dashboard; any other existing file is left alone.
+When a Morrow server from another checkout already holds the port, `morrow start` names that checkout so
+you can stop it there before starting again.
 
 `morrow start` builds the frontend and starts the Python backend together in the background on
 **http://127.0.0.1:8100**, bound to localhost only. It waits for `/api/session` to confirm the free beta
