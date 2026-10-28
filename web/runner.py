@@ -213,7 +213,7 @@ class Runner:
             run.preview_store = tempfile.TemporaryDirectory(prefix=f"morrow-browser-{run.id[:8]}-", ignore_cleanup_errors=True)
             run.proc = subprocess.Popen(command.argv, cwd=str(state.APPLY), stdin=subprocess.DEVNULL,
                                         stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                        env={**os.environ, "PYTHONUNBUFFERED": "1", **runtime_env, **dict(command.env),
+                                        env={**inherited_environment(), "PYTHONUNBUFFERED": "1", **runtime_env, **dict(command.env),
                                              **{key: value for key, value in runtime_env.items() if key in
                                                 ("BROWSER_PROFILE_DIR", "RESUME_OUT_DIR", "MORROW_RESUME_LIBRARY_DIR", "SCREENSHOT_DIR")},
                                              "MORROW_RUN_ID": run.id,
@@ -655,3 +655,17 @@ class Runner:
         with self.changed:
             self.changed.wait_for(lambda: self.closed or self.revision != revision, timeout)
             return self.snapshot(after, epoch)
+
+
+def inherited_environment() -> dict[str, str]:
+    """os.environ without the keys the settings file defines, so a run reads .env as it is now.
+
+    The dashboard loads .env into its own environment once at startup; a value edited
+    since would otherwise shadow the file for every run it starts.
+    """
+    try:
+        from dotenv import dotenv_values
+        stale = set(dotenv_values(state.APPLY / ".env", interpolate=False))
+    except (OSError, ImportError):
+        stale = set()
+    return {key: value for key, value in os.environ.items() if key not in stale}

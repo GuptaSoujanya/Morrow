@@ -148,3 +148,12 @@ def test_descendant_cleanup_error_cannot_leave_exited_process_marked_running(run
         # and closes only its synthetic process group.
         monkeypatch.setattr(runner, "_signal", original)
         original(run, signal.SIGKILL, include_children=True)
+
+
+def test_a_run_reads_the_settings_file_as_it_is_now_not_the_dashboards_startup_copy(runner, tmp_path, monkeypatch):
+    (tmp_path / ".env").write_text("MIN_SCORE=40\nKEPT_ELSEWHERE=1\n")
+    monkeypatch.setenv("MIN_SCORE", "50")
+    monkeypatch.setenv("NOT_IN_FILE", "stays")
+    run_id = launch(runner, "import os; print('MIN_SCORE', os.environ.get('MIN_SCORE'), 'NOT_IN_FILE', os.environ.get('NOT_IN_FILE'), flush=True)")
+    seen = wait_for(runner, lambda result: any(line[1].startswith("MIN_SCORE") and line[2] == run_id for line in result["lines"]))
+    assert any("MIN_SCORE None NOT_IN_FILE stays" in line[1] for line in seen["lines"])
