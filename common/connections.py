@@ -11,6 +11,7 @@ import os
 import re
 import shutil
 import socket
+import subprocess
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -109,6 +110,25 @@ def managed_profile(base: str) -> bool:
         return False
 
 
+def local_hostnames() -> set:
+    """Every name this machine writes into a Chrome SingletonLock, case-folded.
+
+    Chrome records the Bonjour name ("Soujanya-Mac.local") while gethostname() can answer
+    with the computer name ("MacBookPro") once the network changes, so a lock left by a
+    killed Chrome on this very machine looked like a live browser on another host and
+    blocked every run until the file was deleted by hand.
+    """
+    names = {socket.gethostname()}
+    for key in ("LocalHostName", "ComputerName", "HostName"):
+        try:
+            value = subprocess.run(["scutil", "--get", key], capture_output=True, text=True, timeout=2).stdout.strip()
+        except (OSError, subprocess.SubprocessError):
+            continue
+        if value and not value.endswith("not set"):
+            names.update((value, value + ".local"))
+    return {name.casefold() for name in names if name} | {name.casefold().removesuffix(".local") for name in names if name}
+
+
 def profile_locked(base: Path) -> bool:
     """Block live or uncertain owners, but let Chrome recover a dead local lock.
 
@@ -133,7 +153,7 @@ def profile_locked(base: Path) -> bool:
     try:
         target = os.readlink(lock)
         owner = re.fullmatch(r"(.+)-([1-9][0-9]{0,9})", target)
-        if not owner or owner[1] != socket.gethostname():
+        if not owner or owner[1].casefold() not in local_hostnames():
             return True
         pid = int(owner[2])
         if pid > 2**31 - 1:

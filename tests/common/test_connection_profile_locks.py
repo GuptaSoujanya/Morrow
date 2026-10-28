@@ -129,3 +129,43 @@ def test_uninspectable_marker_is_not_treated_as_absent(profile, monkeypatch):
 
     monkeypatch.setattr(Path, "lstat", denied)
     assert connections.profile_locked(profile) is True
+
+
+def test_a_dead_browser_that_wrote_this_machines_other_name_is_not_a_foreign_owner(profile, monkeypatch):
+    """Chrome wrote the Bonjour name; gethostname() now answers with the computer name."""
+    add_lock(profile, target="Soujanya-Mac.local-41602")
+    monkeypatch.setattr(connections, "local_hostnames",
+                        lambda: {"test-machine.local", "test-machine", "soujanya-mac.local", "soujanya-mac", "macbookpro"})
+
+    def dead(pid, sig):
+        raise ProcessLookupError(errno.ESRCH, "No such process")
+
+    monkeypatch.setattr(connections.os, "kill", dead)
+    assert connections.profile_locked(profile) is False
+    lock = profile / "chrome" / "SingletonLock"
+    lock.unlink()
+    lock.symlink_to("someone-elses-laptop.local-41602")
+    assert connections.profile_locked(profile) is True, "a name this machine never had is still foreign"
+
+
+def test_local_hostnames_collect_every_name_macos_can_write(monkeypatch):
+    class Done:
+        def __init__(self, stdout):
+            self.stdout = stdout
+
+    answers = {"LocalHostName": "Soujanya-Mac\n", "ComputerName": "Soujanya Mac\n", "HostName": "HostName: not set\n"}
+
+    def fake_run(argv, **kwargs):
+        return Done(answers[argv[-1]])
+
+    monkeypatch.setattr(connections.subprocess, "run", fake_run)
+    monkeypatch.setattr(connections.socket, "gethostname", lambda: "MacBookPro")
+    names = connections.local_hostnames()
+    assert {"macbookpro", "soujanya-mac", "soujanya-mac.local", "soujanya mac"} <= names
+    assert not any("not set" in name for name in names)
+
+    def broken(argv, **kwargs):
+        raise OSError("no scutil here")
+
+    monkeypatch.setattr(connections.subprocess, "run", broken)
+    assert connections.local_hostnames() == {"macbookpro"}
