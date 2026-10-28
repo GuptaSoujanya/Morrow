@@ -2,6 +2,7 @@
 import importlib.util
 from pathlib import Path
 import stat
+import subprocess
 from types import SimpleNamespace
 
 import pytest
@@ -24,6 +25,9 @@ def launcher(tmp_path, monkeypatch):
     monkeypatch.setattr(module, 'START_TIMEOUT', 1)
     monkeypatch.setattr(module, 'check_dependencies', lambda: None)
     monkeypatch.setattr(module, 'port_in_use', lambda port: False)
+    module.real_foreign_morrow_root = module.foreign_morrow_root
+    monkeypatch.setattr(module, 'foreign_morrow_root', lambda port: None)
+    monkeypatch.setattr(module, 'describe_listener', lambda port: None)
     monkeypatch.setattr(module, 'beta_ready', lambda port: True)
     monkeypatch.setattr(module, 'listener_owned', lambda port, group: True)
     monkeypatch.setattr(module, 'listener_pids', lambda port: [6543])
@@ -98,6 +102,60 @@ def test_unrelated_listener_is_refused_without_starting_or_killing(launcher, mon
     assert launcher.main(['start', '--port', '8100']) == 1
     assert launcher.stopped == [] and not launcher.state_path().exists()
     assert 'used by another server' in capsys.readouterr().err
+
+
+def test_unrelated_listener_is_named_with_its_pid_and_a_kill_hint(launcher, monkeypatch, capsys):
+    monkeypatch.setattr(launcher, 'port_in_use', lambda port: True)
+    monkeypatch.setattr(launcher, 'describe_listener', lambda port: (4242, 'python froned-dashbord/server.py --port 8100'))
+    monkeypatch.setattr(launcher, 'check_dependencies', lambda: pytest.fail('Do not install before resolving occupied port'))
+    assert launcher.main(['start']) == 1
+    err = capsys.readouterr().err
+    assert 'used by another server' in err
+    assert 'PID 4242 (python froned-dashbord/server.py --port 8100)' in err
+    assert 'morrow did not start' in err and 'kill 4242' in err
+    assert launcher.stopped == []
+
+
+def test_stop_with_nothing_owned_points_at_whoever_holds_the_port(launcher, monkeypatch, capsys):
+    monkeypatch.setattr(launcher, 'port_in_use', lambda port: port == 8100)
+    monkeypatch.setattr(launcher, 'describe_listener', lambda port: (5151, 'node scripts/start.mjs'))
+    assert launcher.main(['stop']) == 0
+    out = capsys.readouterr().out
+    assert 'Morrow beta is stopped.' in out
+    assert 'Port 8100 is still in use. It belongs to PID 5151 (node scripts/start.mjs)' in out and 'kill 5151' in out
+    assert launcher.stopped == []
+
+
+def test_listener_from_another_checkout_is_named_without_starting_or_killing(launcher, tmp_path, monkeypatch, capsys):
+    other = tmp_path / 'other-checkout'
+    monkeypatch.setattr(launcher, 'port_in_use', lambda port: True)
+    monkeypatch.setattr(launcher, 'foreign_morrow_root', lambda port: other)
+    monkeypatch.setattr(launcher, 'check_dependencies', lambda: pytest.fail('Do not install before resolving occupied port'))
+    assert launcher.main(['start', '--port', '8100']) == 1
+    assert launcher.stopped == [] and not launcher.state_path().exists()
+    err = capsys.readouterr().err
+    assert 'another checkout' in err and str(other) in err
+
+
+def test_foreign_morrow_root_reads_the_server_command(launcher, tmp_path, monkeypatch):
+    other = tmp_path / 'other-checkout'
+    commands = {
+        4321: f'/usr/bin/python3 {other}/froned-dashbord/server.py --mode beta --port 8100\n',
+        4322: f'/usr/bin/python3 {launcher.ROOT}/froned-dashbord/server.py --mode beta --port 8100\n',
+        4323: 'node some-other-server.js\n',
+    }
+
+    def fake_run(argv, **kwargs):
+        assert argv[:3] == ['ps', '-p', argv[2]]
+        return subprocess.CompletedProcess(argv, 0, stdout=commands[int(argv[2])], stderr='')
+
+    monkeypatch.setattr(launcher.subprocess, 'run', fake_run)
+    monkeypatch.setattr(launcher, 'listener_pids', lambda port: [4323, 4321])
+    assert launcher.real_foreign_morrow_root(8100) == other
+    monkeypatch.setattr(launcher, 'listener_pids', lambda port: [4322])
+    assert launcher.real_foreign_morrow_root(8100) is None
+    monkeypatch.setattr(launcher, 'listener_pids', lambda port: [4323])
+    assert launcher.real_foreign_morrow_root(8100) is None
 
 
 def test_owned_start_is_idempotent_and_reuses_saved_custom_port(launcher, monkeypatch, capsys):
@@ -186,6 +244,21 @@ def test_install_preserves_unrelated_existing_target(launcher, tmp_path, monkeyp
         assert not target.is_symlink() and target.read_text() == 'unrelated command'
     else:
         assert target.is_symlink() and target.readlink() == unrelated
+
+
+def test_install_repoints_link_from_another_checkout(launcher, tmp_path, monkeypatch, capsys):
+    home = tmp_path / 'home'
+    target = home / '.local/bin/morrow'
+    target.parent.mkdir(parents=True)
+    monkeypatch.setattr(Path, 'home', classmethod(lambda cls: home))
+    other = tmp_path / 'other-checkout'
+    (other / 'scripts').mkdir(parents=True)
+    (other / 'scripts/morrow').write_text('older launcher')
+    target.symlink_to(other / 'scripts/morrow')
+    assert launcher.main(['install']) == 0
+    assert target.is_symlink() and target.resolve() == launcher.ROOT / 'scripts/morrow'
+    assert (other / 'scripts/morrow').read_text() == 'older launcher'
+    assert str(other) in capsys.readouterr().out
 
 
 def test_install_creates_checkout_link_and_is_idempotent(launcher, tmp_path, monkeypatch):

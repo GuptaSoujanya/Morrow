@@ -111,6 +111,39 @@ def listener_pids(port):
     return [int(pid) for pid in result.stdout.split()]
 
 
+def describe_listener(port):
+    """(pid, command) of the process listening on the port, or None when nothing can be told."""
+    try:
+        for pid in listener_pids(port):
+            result = subprocess.run(["ps", "-p", str(pid), "-o", "command="], capture_output=True, text=True)
+            return pid, " ".join(result.stdout.split())[:120]
+    except (OSError, subprocess.SubprocessError, ValueError):
+        pass
+    return None
+
+
+def listener_hint(port):
+    """How to free a port morrow did not claim, naming the process so the person is not guessing."""
+    holder = describe_listener(port)
+    if holder is None:
+        return ""
+    pid, command = holder
+    what = f"PID {pid} ({command})" if command else f"PID {pid}"
+    return f"It belongs to {what}, which morrow did not start, so morrow stop will not touch it. Stop it with: kill {pid}"
+
+
+def foreign_morrow_root(port):
+    """The checkout whose dashboard server holds the port, when it is not this one."""
+    for pid in listener_pids(port):
+        result = subprocess.run(["ps", "-p", str(pid), "-o", "command="], capture_output=True, text=True)
+        for argument in result.stdout.split():
+            if argument.endswith("froned-dashbord/server.py"):
+                root = Path(argument).parent.parent
+                if root != ROOT:
+                    return root
+    return None
+
+
 def listener_owned(port, group):
     """A racing server must not satisfy our readiness check."""
     pids = listener_pids(port)
@@ -179,8 +212,15 @@ def start(port):
         print(f"Morrow beta is already running: http://127.0.0.1:{port}")
         return
     if port_in_use(port):
+        other = foreign_morrow_root(port)
+        if other is not None:
+            raise LauncherError(
+                f"Port {port} is held by Morrow from another checkout: {other}\n"
+                f"Stop it there (morrow stop in that checkout, or kill its server), then run morrow start again."
+            )
+        hint = listener_hint(port)
         raise LauncherError(
-            f"Port {port} is used by another server. Stop that server, or use morrow start --port 8116."
+            f"Port {port} is used by another server. {hint + ' Or' if hint else 'Stop that server, or'} use morrow start --port 8116."
         )
     check_dependencies()
     env = os.environ.copy()
@@ -228,6 +268,10 @@ def stop():
     if not owned_process(state):
         state_path().unlink(missing_ok=True)
         print("Morrow beta is stopped.")
+        port = state.get("port") if isinstance(state, dict) else None
+        hint = listener_hint(port or 8100) if port_in_use(port or 8100) else ""
+        if hint:
+            print(f"Port {port or 8100} is still in use. {hint}")
         return
     print("Stopping Morrow beta and its local tasks…", flush=True)
     stop_group(state["pid"])
@@ -247,12 +291,27 @@ def status():
     return 0
 
 
+def other_checkout(path):
+    path = Path(path)
+    if path.name == "morrow" and path.parent.name == "scripts" and path.parent.parent != ROOT:
+        return path.parent.parent
+    return None
+
+
 def install():
     target = Path.home() / ".local" / "bin" / "morrow"
     source = ROOT / "scripts" / "morrow"
     if target.exists() or target.is_symlink():
-        if target.resolve() != source:
-            raise LauncherError(f"{target} already points elsewhere; it has not been changed.")
+        current = target.resolve()
+        if current != source:
+            previous = other_checkout(current) if target.is_symlink() else None
+            if previous is None:
+                raise LauncherError(f"{target} already points elsewhere; it has not been changed.")
+            # A link into another checkout (an old worktree, a moved clone) keeps
+            # `morrow start` running stale code. This checkout takes the command over.
+            target.unlink()
+            target.symlink_to(source)
+            print(f"{target} pointed at the other checkout {previous}; it now runs this checkout.")
     else:
         target.parent.mkdir(parents=True, exist_ok=True)
         target.symlink_to(source)
