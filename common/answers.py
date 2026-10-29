@@ -100,6 +100,75 @@ def _word_contains(text: str, part: str) -> bool:
     return (" %s " % part) in (" %s " % text)
 
 
+_UNIT_WORDS = (
+    "lpa", "lac", "lacs", "lakh", "lakhs", "cr", "crore", "crores", "rs", "inr",
+    "year", "years", "yr", "yrs", "month", "months", "day", "days", "week",
+    "weeks", "per", "annum", "pa", "k", "approx", "about", "around", "only",
+)
+_NUMBER_RE = re.compile(r"\d+(?:\.\d+)?")
+_RANGE_RE = re.compile(r"(\d+(?:\.\d+)?)\s*(?:-|–|—|to)\s*(\d+(?:\.\d+)?)")
+_UNDER_RE = re.compile(r"(?:less than|under|below|upto|up to|at most|within|fewer than)\s*(\d+(?:\.\d+)?)")
+_OVER_RE = re.compile(r"(?:more than|above|over|greater than|at least|minimum)\s*(\d+(?:\.\d+)?)")
+_PLUS_RE = re.compile(r"(\d+(?:\.\d+)?)\s*\+")
+
+
+def _plain_number(answer: str) -> Optional[float]:
+    """The number an answer is, when the answer is nothing but a number and its unit."""
+    found = _NUMBER_RE.findall(answer)
+    if len(found) != 1:
+        return None
+    rest = _NUMBER_RE.sub(" ", _normalise(answer))
+    if any(word not in _UNIT_WORDS for word in rest.split()):
+        return None
+    return float(found[0])
+
+
+def _band(option: str) -> Optional[Tuple[float, float]]:
+    """The numeric span an option covers: "3 - 6 LPA", "Less than 3", "10+ years"."""
+    text = _normalise(option)
+    ranged = _RANGE_RE.search(text)
+    if ranged is not None:
+        return float(ranged.group(1)), float(ranged.group(2))
+    under = _UNDER_RE.search(text)
+    if under is not None:
+        return float("-inf"), float(under.group(1))
+    over = _OVER_RE.search(text) or _PLUS_RE.search(text)
+    if over is not None:
+        return float(over.group(1)), float("inf")
+    return None
+
+
+def match_band(answer: str, options: List[str]) -> Optional[str]:
+    """The banded option a numeric answer falls in: 16 picks "15 - 18 LPA", 2.9 years picks "3"."""
+    value = _plain_number(answer)
+    if value is None:
+        return None
+    bands = [(option, _band(option)) for option in options]
+    inside = [option for option, band in bands if band and band[0] <= value < band[1]]
+    if len(inside) == 1:
+        return inside[0]
+    touching = [option for option, band in bands if band and band[0] <= value <= band[1]]
+    if len(touching) == 1:
+        return touching[0]
+    return _nearest_number(value, options)
+
+
+def _nearest_number(value: float, options: List[str]) -> Optional[str]:
+    """The closest option when they are all plain numbers ("0" to "11"), rounding 2.9 up to "3".
+
+    Picking the lower one would understate experience or notice, so a tie goes up.
+    """
+    numbered = []  # type: List[Tuple[float, str]]
+    for option in options:
+        number = _plain_number(option)
+        if number is None:
+            return None
+        numbered.append((number, option))
+    if not numbered:
+        return None
+    return min(numbered, key=lambda pair: (abs(pair[0] - value), -pair[0]))[1]
+
+
 def match_option(answer: str, options: List[str]) -> Optional[str]:
     """The rendered option the user's answer names, or None when none or several do."""
     wanted = _question_key(answer)
@@ -119,7 +188,9 @@ def match_option(answer: str, options: List[str]) -> Optional[str]:
         for option, key in keyed
         if key and (_word_contains(wanted, key) or _word_contains(key, wanted))
     ]
-    return containing[0] if len(containing) == 1 else None
+    if len(containing) == 1:
+        return containing[0]
+    return match_band(answer, options)
 
 
 def match_options(answer: str, options: List[str]) -> Optional[List[str]]:
@@ -400,6 +471,22 @@ _PASSPORT_DETAIL = re.compile(r"\b(number|no|id|expir\w*|issu\w*|valid\w*|date)\
 _NAMED_SKILL = re.compile(r"\b(total|overall) experience (in|with|on|of) (?!years?\b)\w")
 #: "Are you currently living in Delhi/ NCR?", "are you based out of Pune", "are you from Bangalore?":
 #: a yes/no about where the candidate is now, answered from current_location.
+# "age" must not be found inside average, coverage, message or manager.
+_AGE_RE = re.compile(r"(?<!\w)age\b|how old are you")
+_BIRTH_FORMATS = ("%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y", "%d.%m.%Y", "%d %B %Y", "%d %b %Y", "%B %d, %Y")
+
+
+def _years_since(born: str) -> Optional[int]:
+    for shape in _BIRTH_FORMATS:
+        try:
+            day = datetime.strptime(born.strip(), shape)
+        except ValueError:
+            continue
+        today = datetime.now()
+        return today.year - day.year - ((today.month, today.day) < (day.month, day.day))
+    return None
+
+
 _LOCATED_IN_RE = re.compile(
     r"\b(?:are|do) you\b(?: currently| presently| now)?"
     r" (?:(?:living|based|located|residing|staying|reside|live|stay) (?:in|at|out of|from)|from)"
@@ -989,6 +1076,9 @@ class AnswerEngine:
         located = self._located_in_answer(normalised_question, options)
         if located is not None:
             return located
+        aged = self._age_answer(normalised_question, options)
+        if aged is not None:
+            return aged
         mappings: List[Tuple[Tuple[str, ...], str, str]] = [
             (("notice period",), "notice_period_days", "notice_period_days"),
             (("expected ctc", "expected salary", "expected annual salary", "expected compensation",
@@ -1018,7 +1108,9 @@ class AnswerEngine:
             if options is not None:
                 text = ""
                 for candidate in candidates:
-                    matched = self._exact_option(candidate, options)
+                    matched = self._exact_option(candidate, options) or match_band(
+                        candidate, options
+                    )
                     if matched is not None:
                         text = matched
                         break
@@ -1056,6 +1148,29 @@ class AnswerEngine:
             text = matched
         return AnswerResolution.resolved(
             Answer(text=text, grounded_in="current_location", source=AnswerSource.PROFILE, confidence=1.0)
+        )
+
+    def _age_answer(
+        self, normalised_question: str, options: Optional[List[str]]
+    ) -> Optional[AnswerResolution]:
+        if _AGE_RE.search(normalised_question) is None:
+            return None
+        years = _years_since(str(self.profile.extra_facts.get("date_of_birth") or ""))
+        if years is None:
+            return None
+        text = str(years)
+        if options is not None:
+            matched = self._exact_option(text, options) or match_band(text, options)
+            if matched is None:
+                return None
+            text = matched
+        return AnswerResolution.resolved(
+            Answer(
+                text=text,
+                grounded_in="extra_facts.date_of_birth",
+                source=AnswerSource.PROFILE,
+                confidence=1.0,
+            )
         )
 
     def _skill_years_answer(
