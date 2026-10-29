@@ -29,6 +29,40 @@ def _snippet(text: str, limit: int = 300) -> str:
     return " ".join(text.split())[:limit]
 
 
+# A subscription's window runs out mid-run: the CLI then exits 1 on every call
+# with "You've hit your session limit · resets 3pm". One run spent 35 minutes
+# and all 50 browser-agent tries on that reply, marking 53 good postings failed,
+# so the first sighting is remembered and the rest of the run stops asking.
+_OUT_OF_QUOTA = re.compile(
+    r"session limit|usage limit|limit reached|rate.?limit|out of (?:credit|quota)", re.I)
+_out_of_quota = ""
+
+
+def out_of_quota() -> str:
+    """Why the model is out for the rest of this run, or "" while it answers."""
+    return _out_of_quota
+
+
+def note_out_of_quota(text: str) -> bool:
+    """Record a model limit named in `text`; True when it is one (logged once)."""
+    global _out_of_quota
+    if not text or not _OUT_OF_QUOTA.search(text):
+        return bool(_out_of_quota)
+    if not _out_of_quota:
+        _out_of_quota = _snippet(text, 160)
+        logger.warning(
+            "The model is out for now (%s). The rest of this run works from your saved "
+            "answers and facts only, and anything that needs the model is left for later.",
+            _out_of_quota)
+    return True
+
+
+def allow_quota_again() -> None:
+    """Forget a recorded limit: a new run, or the window has reset."""
+    global _out_of_quota
+    _out_of_quota = ""
+
+
 def _extract_json(text: str) -> Optional[Dict[str, Any]]:
     """Extract the first balanced JSON object from mixed model output."""
     start = text.find("{")
@@ -136,6 +170,8 @@ class ClaudeCLIClient(LLMClient):
         extra: Dict[str, Any] = {"stdin": subprocess.DEVNULL}
         if image is not None:
             extra["cwd"] = str(image.parent)
+        if out_of_quota():
+            return None
         for attempt in range(2):
             request = full_prompt
             if attempt:
@@ -171,6 +207,8 @@ class ClaudeCLIClient(LLMClient):
                         completed.returncode,
                     )
                     return parsed
+                if note_out_of_quota(combined):
+                    return None
                 logger.warning(
                     "%s exited with code %s; output=%r",
                     self.label,
@@ -324,6 +362,7 @@ def score_jobs(
         "skills": profile.skills,
         "total_experience_years": profile.total_experience_years,
         "preferred_locations": profile.preferred_locations,
+        "open_to_any_location": not profile.preferred_locations,
         "resume_excerpt": profile.resume_text[:2500],
     }
     results: Dict[str, Dict[str, Any]] = {}
@@ -370,7 +409,8 @@ def _score_batch(
     prompt = (
         "Score each job from 0 to 100 for this candidate. Penalise experience "
         "mismatch (especially jobs wanting 8+ years for a roughly 2.5-year "
-        "candidate), wrong domain, and non-preferred locations. Reward LLM, "
+        "candidate), wrong domain, and non-preferred locations unless "
+        "open_to_any_location is true, in which case ignore location. Reward LLM, "
         "AI, ML, agent, evaluation, and RAG roles. Return one entry per job.\n"
         "Candidate: %s\nJobs: %s"
     ) % (candidate_json, json.dumps(payload, ensure_ascii=True))

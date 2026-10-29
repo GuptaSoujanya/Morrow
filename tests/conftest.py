@@ -19,6 +19,16 @@ def _isolate_working_directory(tmp_path, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _reset_model_quota_memo():
+    """A recorded model limit is module state: left set it would mute every later test."""
+    from common import llm
+
+    llm.allow_quota_again()
+    yield
+    llm.allow_quota_again()
+
+
+@pytest.fixture(autouse=True)
 def _reset_unanswered_dedup_cache():
     """The record-once cache is module state and would leak between tests."""
     from common import answers
