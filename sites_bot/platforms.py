@@ -28,13 +28,13 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 from urllib.parse import quote_plus, urlparse
 
-from selenium.common.exceptions import WebDriverException
+from selenium.common.exceptions import TimeoutException, WebDriverException
 from urllib3.exceptions import HTTPError as TransportError
 
 from . import browser_agent, profile_agent
 from . import external as ext
 from .board import Board
-from common import memory, profile_plan
+from common import llm, memory, profile_plan
 from common.browser import BrowserError, human_pause, safe_get
 from common.models import ApplyResult, ApplyStatus, JobPosting, Profile, RunSummary, Settings
 from cutshort_bot.board import BOARD as CUTSHORT
@@ -447,9 +447,14 @@ def answer_form(
         if application_landed(driver, board):
             return True, filled, []
         fields = ext.application_fields(ext.settled_fields(driver))
-        outcome = ext.fill_form(driver, fields, profile, engine, resume_pdf, writer)
+        outcome = ext.fill_form(driver, fields, profile, engine, resume_pdf, writer, settings)
         filled += outcome.filled
         missing = list(outcome.missing)
+        if not missing and outcome.skipped and ext.disabled_step(driver):
+            fields = ext.application_fields(ext.settled_fields(driver))
+            outcome = ext.fill_form(driver, fields, profile, engine, None, writer, settings, insist=True)
+            filled += outcome.filled
+            missing = list(outcome.missing)
         if ext.challenge_shown(driver):
             missing.append("captcha (a check only a person may answer)")
         if missing:
@@ -586,10 +591,18 @@ def _company_site(
             status=ApplyStatus.EXTERNAL_MANUAL, url=url, ats=ext.detect_ats(url),
             detail="%s sends this one to the company's site; EXTERNAL_APPLY is off" % board.label))
         return _result(job, ApplyStatus.EXTERNAL_SKIPPED, "company site: %s" % url)
+    if llm.out_of_quota():
+        # These forms need the model, so the posting is kept for the next run
+        # rather than recorded as something gone wrong.
+        ext.record_company_site(settings, job, ext.ExternalResult(
+            status=ApplyStatus.EXTERNAL_MANUAL, url=url, ats=ext.detect_ats(url),
+            detail="waiting for the model: %s" % llm.out_of_quota()))
+        return _result(job, ApplyStatus.EXTERNAL_SKIPPED,
+                       "company site left for the next run (the model is out): %s" % url)
     logger.info("      company site: %s (%s)", url, ext.detect_ats(url))
     result = ext.apply_here(driver, job, profile, engine, settings, resume_pdf, False)
     result = browser_agent.take_over(driver, job, profile, settings, resume_pdf, False, result)
-    if result.status in (ApplyStatus.APPLIED_EXTERNAL, ext.GONE):
+    if result.status in (ApplyStatus.APPLIED_EXTERNAL, ApplyStatus.ALREADY_APPLIED, ext.GONE):
         ext.forget_company_site(settings, job)
     else:
         ext.record_company_site(settings, job, result)
@@ -653,7 +666,13 @@ def run_board(
                     break
             logger.info("[%s %d of %d applied] %s @ %s (%.0f)", board.label, sent, limit, job.title,
                         job.company or "-", scored.score)
-            result = apply_to(driver, board, job, profile, engine, settings, resume_pdf, dry_run)
+            try:
+                result = apply_to(driver, board, job, profile, engine, settings, resume_pdf, dry_run)
+            except TimeoutException:
+                # One posting whose page stops answering costs that posting, not the board.
+                if not browser_alive(driver):
+                    raise
+                result = _result(job, ApplyStatus.ERROR, "the job page stopped answering")
             logger.info("      -> %s (%s)", result.status, result.detail[:250])
             summary.attempted += 1
             if result.status == DRY_RUN:

@@ -131,8 +131,15 @@ def external_command(
     dry_run: bool = False,
     no_tailor: bool = False,
     headless: bool = False,
+    retry_pending: bool = False,
 ) -> Command:
     url = url.strip()
+    if retry_pending and not url:
+        args = ["-m", "sites_bot.external", "--retry-pending"]
+        for flag, on in (("--dry-run", dry_run), ("--no-tailor", no_tailor), ("--headless", headless)):
+            if on:
+                args.append(flag)
+        return py("Finish the company sites waiting", *args)
     if not url:
         raise ValueError("paste the application page link")
     if not url.startswith(("http://", "https://")):

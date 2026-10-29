@@ -275,6 +275,28 @@ def _google_button_shown(driver: Any) -> bool:
         return False
 
 
+def _clear_verification(driver: Any, settings: Settings, host: str) -> str:
+    """Open the verification link their Gmail just got; "" when there is none to open."""
+    from .inbox import verification
+
+    found = verification(settings, driver, domain=host)
+    if not found.link:
+        logger.info("      company site: no verification mail to open (%s)", found.why or "none found")
+        return ""
+    start = driver.current_window_handle
+    keep = list(driver.window_handles)
+    try:
+        driver.switch_to.new_window("tab")
+        ext.safe_get(driver, found.link)
+        _settle(driver, SIGN_IN_WAIT_S)
+    except WebDriverException as exc:
+        logger.info("      company site: could not open the verification link (%s)", type(exc).__name__)
+        return ""
+    finally:
+        ext.return_to(driver, start, keep)
+    return "opened the link %s emailed" % host
+
+
 def sign_in(driver: Any, settings: Settings, profile: Profile, dry_run: bool) -> Tuple[bool, str]:
     """Get past the account wall on the current page; (signed in, how or why not)."""
     host = _host(driver)
@@ -329,6 +351,11 @@ def sign_in(driver: Any, settings: Settings, profile: Profile, dry_run: bool) ->
         if state == "captcha":
             return False, "%s shows a captcha at sign-in" % host
         if state == "verify":
+            if _clear_verification(driver, settings, host):
+                state, detail = _submit_sign_in(driver, email, settings.company_site_password, _fields(driver))
+                if state == "in":
+                    record_account(settings, host, email, "signed in after verifying the email")
+                    return True, "verified %s from the email and signed in" % email
             return False, "%s wants the email %s verified first; click the link it sent, then apply again" % (host, email)
         return False, (
             "the account on %s for %s did not take the saved password (%s); sign in there once by hand"
@@ -361,6 +388,9 @@ def sign_in(driver: Any, settings: Settings, profile: Profile, dry_run: bool) ->
         return True, "created an account on %s for %s" % (host, email)
     if state == "verify":
         record_account(settings, host, email, "account created, waiting for email verification")
+        if _clear_verification(driver, settings, host):
+            record_account(settings, host, email, "account created and verified from the email")
+            return True, "created an account on %s for %s and verified it from the email" % (host, email)
         return False, "%s sent a verification email to %s; click the link in it, then apply again" % (host, email)
     if state == "captcha":
         return False, "%s shows a captcha at sign-up" % host

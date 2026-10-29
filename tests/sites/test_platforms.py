@@ -172,6 +172,18 @@ def test_a_company_site_redirect_is_listed_when_company_sites_are_off(board_page
     assert "EXTERNAL_APPLY is off" in ext.pending_company_sites(_settings(tmp_path))[0]["why"]
 
 
+def test_a_company_site_is_kept_for_the_next_run_while_the_model_is_out(board_page, tmp_path):
+    from common import llm
+
+    board_page["landed"] = "site"
+    llm.note_out_of_quota("You've hit your session limit · resets 3pm (Asia/Calcutta)")
+    result = _apply(tmp_path, external_apply=True)
+    assert result.status == ApplyStatus.EXTERNAL_SKIPPED
+    entry = ext.pending_company_sites(_settings(tmp_path))[0]
+    assert "waiting for the model" in entry["why"]
+    assert ext.retryable(entry), "it waits for the model, not for you"
+
+
 def test_no_apply_button_is_reported_with_what_was_there(board_page, tmp_path, monkeypatch):
     board_page["buttons"] = []
     monkeypatch.setattr(ext, "_visible_controls", lambda driver: ["Save", "Share"])
@@ -571,7 +583,7 @@ def test_a_form_whose_last_next_sent_the_application_counts_as_submitted(monkeyp
     monkeypatch.setattr(ext, "long_answer_writer", lambda *a: None)
     monkeypatch.setattr(ext, "settled_fields", lambda driver, settle_s=None: [])
     monkeypatch.setattr(ext, "application_fields", lambda fields: [])
-    monkeypatch.setattr(ext, "fill_form", lambda *a: SimpleNamespace(filled=["Current CTC?"], missing=[]))
+    monkeypatch.setattr(ext, "fill_form", lambda *a, **k: SimpleNamespace(filled=["Current CTC?"], missing=[], skipped=[]))
     monkeypatch.setattr(ext, "challenge_shown", lambda driver: False)
     monkeypatch.setattr(ext, "find_next", lambda driver: None)
     monkeypatch.setattr(ext, "find_submit", lambda driver: None)
@@ -591,7 +603,7 @@ def test_a_form_still_on_its_page_with_no_submit_needs_a_person(monkeypatch):
     monkeypatch.setattr(ext, "long_answer_writer", lambda *a: None)
     monkeypatch.setattr(ext, "settled_fields", lambda driver, settle_s=None: [])
     monkeypatch.setattr(ext, "application_fields", lambda fields: [])
-    monkeypatch.setattr(ext, "fill_form", lambda *a: SimpleNamespace(filled=[], missing=[]))
+    monkeypatch.setattr(ext, "fill_form", lambda *a, **k: SimpleNamespace(filled=[], missing=[], skipped=[]))
     monkeypatch.setattr(ext, "challenge_shown", lambda driver: False)
     monkeypatch.setattr(ext, "find_next", lambda driver: None)
     monkeypatch.setattr(ext, "find_submit", lambda driver: None)
@@ -807,7 +819,7 @@ def test_a_disabled_send_button_is_reported_instead_of_clicking_the_page_top_app
     monkeypatch.setattr(ext, "long_answer_writer", lambda *a: None)
     monkeypatch.setattr(ext, "settled_fields", lambda driver, settle_s=None: [])
     monkeypatch.setattr(ext, "application_fields", lambda fields: [SimpleNamespace(question="I am currently in…", name="", value="")])
-    monkeypatch.setattr(ext, "fill_form", lambda *a: SimpleNamespace(filled=[], missing=[]))
+    monkeypatch.setattr(ext, "fill_form", lambda *a, **k: SimpleNamespace(filled=[], missing=[], skipped=[]))
     monkeypatch.setattr(ext, "challenge_shown", lambda driver: False)
     monkeypatch.setattr(ext, "find_next", lambda driver: None)
     monkeypatch.setattr(ext, "find_submit", lambda driver: "page-top Apply")
@@ -856,7 +868,7 @@ def test_a_board_form_is_read_once_it_has_finished_drawing(monkeypatch):
         SimpleNamespace(question="Years of experience in NODE.JS?", name="", value=""),
         SimpleNamespace(question="Are you currently living in Gurgaon/Gurugram?", name="", value="")])
     monkeypatch.setattr(ext, "application_fields", lambda fields: fields)
-    monkeypatch.setattr(ext, "fill_form", lambda *a: SimpleNamespace(filled=["Years of experience in NODE.JS?"], missing=[]))
+    monkeypatch.setattr(ext, "fill_form", lambda *a, **k: SimpleNamespace(filled=["Years of experience in NODE.JS?"], missing=[], skipped=[]))
     monkeypatch.setattr(ext, "challenge_shown", lambda driver: False)
     monkeypatch.setattr(ext, "find_next", lambda driver: None)
     monkeypatch.setattr(ext, "find_submit", lambda driver: None)

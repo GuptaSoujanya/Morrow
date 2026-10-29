@@ -105,6 +105,7 @@ ACTIONS: Dict[str, Callable[[Dict[str, Any], bool], Command]] = {
         dry_run=_on(o, "dry_run"),
         no_tailor=_on(o, "no_tailor"),
         headless=_on(o, "headless"),
+        retry_pending=_on(o, "retry_pending"),
     ),
     "profile": lambda o, save: state.profile_command(
         dry_run=_on(o, "dry_run"), if_due=_on(o, "if_due"), headless=_on(o, "headless")

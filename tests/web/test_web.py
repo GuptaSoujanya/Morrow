@@ -614,3 +614,21 @@ def test_parallel_resume_requests_keep_separate_job_descriptions(monkeypatch, tm
         paths = list(pool.map(state.save_job_description, descriptions))
     assert len(set(paths)) == len(descriptions)
     assert [path.read_text().strip() for path in paths] == descriptions
+
+
+def test_the_company_sites_waiting_can_be_finished_without_a_link():
+    command = state.external_command(url="", retry_pending=True)
+    assert command.label == "Finish the company sites waiting"
+    assert "--retry-pending" in command.argv
+    assert "--url" not in command.argv
+
+
+def test_a_link_still_wins_over_the_waiting_list():
+    command = state.external_command(url="https://jobs.acme.test/1", company="Acme", retry_pending=True)
+    assert "--retry-pending" not in command.argv
+    assert "--url" in command.argv
+
+
+def test_without_a_link_or_the_waiting_list_it_asks_for_the_link():
+    with pytest.raises(ValueError, match="paste the application page link"):
+        state.external_command(url="")

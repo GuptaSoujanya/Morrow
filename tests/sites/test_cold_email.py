@@ -11,7 +11,7 @@ import pytest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from sites_bot import cold_email as ce
-from common.models import Profile, Settings
+from common.models import JobPosting, Profile, Settings
 
 TEX = r"""\documentclass{extarticle}
 \begin{document}
@@ -206,3 +206,87 @@ def test_a_lead_uses_the_posting_saved_for_its_job(settings, profile, tmp_path):
     (folder / "posting.txt").write_text("Title: AI Engineer\n\nFull posting text about agent evaluation.")
     lead = ce.unique_leads(settings, profile, [_lead(posting="share your resume at hr@acmelabs.in")])[0]
     assert "Full posting text about agent evaluation." in lead.posting
+
+
+class _Page:
+    """A browser showing one page, for harvesting addresses off it."""
+
+    def __init__(self, text, fail=False):
+        self.text = text
+        self.fail = fail
+
+    def execute_script(self, script):
+        if self.fail:
+            raise RuntimeError("the tab went away")
+        return self.text
+
+
+def _posting(company="Acme Labs", title="AI Engineer", url="https://acmelabs.in/careers/ai-engineer"):
+    return JobPosting(job_id=url, url=url, title=title, company=company)
+
+
+def test_an_address_on_the_page_being_applied_to_is_kept_for_a_cold_email(settings):
+    page = _Page("Apply here, or send your resume to careers@acmelabs.in for a faster reply.\nhr@acmelabs.in")
+
+    kept = ce.harvest_contacts(page, _posting(), settings, "career page acmelabs.in")
+
+    assert kept == ["careers@acmelabs.in", "hr@acmelabs.in"]
+    entry = ce.read_contacts(settings)[0]
+    assert entry["email"] == "careers@acmelabs.in"
+    assert entry["company"] == "Acme Labs"
+    assert entry["title"] == "AI Engineer"
+    assert entry["job_url"] == "https://acmelabs.in/careers/ai-engineer"
+    assert entry["source"] == "career page acmelabs.in"
+    assert "send your resume to" in entry["posting"]
+    assert entry["found_at"]
+
+
+def test_the_same_address_is_kept_once_however_many_jobs_show_it(settings):
+    page = _Page("Write to careers@acmelabs.in about any role.")
+    ce.harvest_contacts(page, _posting(), settings, "career page acmelabs.in")
+
+    again = ce.harvest_contacts(page, _posting(title="LLM Engineer"), settings, "career page acmelabs.in")
+
+    assert again == []
+    assert len(ce.read_contacts(settings)) == 1
+
+
+def test_a_page_that_prints_no_address_leaves_no_record(settings):
+    assert ce.harvest_contacts(_Page("No addresses here, use the form."), _posting(), settings, "career page") == []
+    assert ce.read_contacts(settings) == []
+    assert not ce.contacts_path(settings).exists()
+
+
+def test_a_browser_that_cannot_be_read_costs_the_application_nothing(settings):
+    assert ce.harvest_contacts(_Page("", fail=True), _posting(), settings, "career page") == []
+    assert ce.read_contacts(settings) == []
+
+
+def test_a_naukri_posting_text_is_harvested_without_opening_the_page(settings):
+    description = "Role: AI Engineer. Interested candidates share their CV at talent@acmelabs.in."
+
+    kept = ce.record_contacts(settings, _posting(url="https://www.naukri.com/job-1"), description, "Naukri posting")
+
+    assert kept == ["talent@acmelabs.in"]
+    assert ce.read_contacts(settings)[0]["source"] == "Naukri posting"
+
+
+def test_addresses_kept_while_applying_become_leads_to_write_to(settings, profile):
+    ce.record_contacts(settings, _posting(), "Send your resume to hr@acmelabs.in", "career page acmelabs.in")
+
+    leads = ce.leads_from_contacts(settings)
+
+    assert [lead.email for lead in leads] == ["hr@acmelabs.in"]
+    assert leads[0].company == "Acme Labs"
+    assert leads[0].title == "AI Engineer"
+    assert "hr@acmelabs.in" in leads[0].posting
+    assert [lead.email for lead in ce.unique_leads(settings, profile, leads)] == ["hr@acmelabs.in"]
+
+
+def test_a_folder_that_cannot_be_written_does_not_stop_an_application(settings, monkeypatch):
+    def refuse(*args, **kwargs):
+        raise OSError("read-only file system")
+
+    monkeypatch.setattr(ce.Path, "mkdir", refuse)
+
+    assert ce.record_contacts(settings, _posting(), "mail hr@acmelabs.in", "career page") == []

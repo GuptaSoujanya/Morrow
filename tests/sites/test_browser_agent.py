@@ -179,14 +179,27 @@ def test_the_devtools_address_comes_from_the_driver():
 @pytest.mark.parametrize("detail", [
     "needs you for: captcha (a check only a person may answer)",
     "Submit was clicked but no confirmation appeared",
-    "the site needs a code it emails to jane@example.com",
-    "the site sent a verification email; open it first",
     "an account already exists on jobs.acme.test",
     "workday applications need a linkedin session; finish this one by hand",
     "the browser agent did not report (timeout); check the site before trying again",
 ])
 def test_what_only_a_person_can_clear_never_goes_to_the_agent(settings, detail):
     assert not agent.should_take_over(settings, _stuck(detail))
+
+
+@pytest.mark.parametrize("detail", [
+    "signing up on jobs.acme.test needs a code it emails to jane@example.com",
+    "jobs.acme.test sent a verification email to jane@example.com; click the link in it",
+    "jobs.acme.test wants the email jane@example.com verified first",
+])
+def test_a_code_a_site_emails_goes_to_the_agent_now_that_it_can_read_the_inbox(settings, detail):
+    assert agent.should_take_over(settings, _stuck(detail))
+
+
+def test_the_agent_is_told_it_may_read_an_emailed_code_in_gmail_and_never_to_close_its_own_tab():
+    assert "mail.google.com" in agent._RULES
+    assert "Never close the tab you were given." in agent._RULES
+    assert "SMS" in agent._RULES
 
 
 def test_only_stuck_results_go_to_the_agent_and_only_while_it_is_on(settings):
@@ -234,7 +247,16 @@ def test_the_task_carries_her_facts_but_never_her_password(settings, profile, jo
     assert "jobs.acme.test" in prompt
     assert "CAPTCHA" in prompt
     real = agent.application_prompt(job, SITE, facts, "e@x.test", None, False, "")
-    assert "Click the final Submit button at most once" in real
+    assert "only when every required field holds an answer taken from the facts" in real
+
+
+def test_a_submit_the_site_itself_refuses_may_be_tried_again(job, tmp_path):
+    """One application was left one click from done: the site rejected the first click for a
+    blank field, which sends nothing, and the agent read "at most once" as never again."""
+    real = agent.application_prompt(job, SITE, "facts", "e@x.test", None, False, "")
+
+    assert "has sent nothing: fix exactly what it named and click Submit again" in real
+    assert "Never click a second time after a click the site accepted" in real
 
 
 def test_claude_gets_only_the_browser_tools_and_the_password_as_a_secret(claude, settings, profile, job, tmp_path):

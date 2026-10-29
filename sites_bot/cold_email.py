@@ -34,6 +34,8 @@ from common import paths
 logger = logging.getLogger(__name__)
 
 RECORDS_NAME = "cold_emails.jsonl"
+CONTACTS_NAME = "job_contacts.jsonl"
+CONTACT_POSTING_CHARS = 4000
 REWRITE_DAYS = 30
 MIN_WORDS = 70
 MAX_WORDS = 190
@@ -171,6 +173,48 @@ def leads_from_naukri(driver: Any, settings: Settings, ledger: Any, days: int, l
     return leads
 
 
+def harvest_contacts(driver: Any, job: JobPosting, settings: Settings, source: str) -> List[str]:
+    """Keep any application address on the page the browser is showing; returns the new ones."""
+    try:
+        text = driver.execute_script(_PAGE_SCRIPT) or ""
+    except Exception as exc:
+        logger.info("Could not read the page for addresses: %s", str(exc).split("\n")[0])
+        return []
+    return record_contacts(settings, job, text, source)
+
+
+def record_contacts(settings: Settings, job: JobPosting, text: str, source: str) -> List[str]:
+    """Write the addresses `text` shows to user/inputs/job_contacts.jsonl; returns the ones not seen before."""
+    found = find_addresses(text or "")
+    if not found:
+        return []
+    known = {str(entry.get("email", "")).lower() for entry in read_contacts(settings)}
+    fresh = [address for address in found if address not in known]
+    if not fresh:
+        return []
+    path = contacts_path(settings)
+    # Keeping an address is a side errand during an application: a full disk or a
+    # read-only folder must not cost the application itself.
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as handle:
+            for address in fresh:
+                handle.write(json.dumps({
+                    "email": address,
+                    "company": job.company or "",
+                    "title": job.title or "",
+                    "job_url": job.url or "",
+                    "source": source,
+                    "posting": (text or "")[:CONTACT_POSTING_CHARS],
+                    "found_at": datetime.now().isoformat(timespec="seconds"),
+                }, ensure_ascii=False) + "\n")
+    except OSError as exc:
+        logger.warning("Could not write %s: %s", path, exc)
+        return []
+    logger.info("Kept %d address(es) to write to: %s", len(fresh), ", ".join(fresh))
+    return fresh
+
+
 # ---------------------------------------------------------------------------
 # Records
 # ---------------------------------------------------------------------------
@@ -180,8 +224,11 @@ def records_path(settings: Settings) -> Path:
     return Path(settings.data_dir or paths.user("inputs")) / RECORDS_NAME
 
 
-def read_records(settings: Settings) -> List[Dict[str, Any]]:
-    path = records_path(settings)
+def contacts_path(settings: Settings) -> Path:
+    return Path(settings.data_dir or paths.user("inputs")) / CONTACTS_NAME
+
+
+def _read_jsonl(path: Path) -> List[Dict[str, Any]]:
     if not path.is_file():
         return []
     records = []
@@ -191,6 +238,26 @@ def read_records(settings: Settings) -> List[Dict[str, Any]]:
         except json.JSONDecodeError:
             continue
     return records
+
+
+def read_records(settings: Settings) -> List[Dict[str, Any]]:
+    return _read_jsonl(records_path(settings))
+
+
+def read_contacts(settings: Settings) -> List[Dict[str, Any]]:
+    return _read_jsonl(contacts_path(settings))
+
+
+def leads_from_contacts(settings: Settings) -> List[Lead]:
+    """Addresses kept while applying: a job page or a career page printed them."""
+    leads = []  # type: List[Lead]
+    for entry in read_contacts(settings):
+        address = str(entry.get("email", "")).strip().lower()
+        if not address:
+            continue
+        leads.append(Lead(address, entry.get("company", ""), entry.get("title", ""), entry.get("job_url", ""),
+                          entry.get("source", "kept while applying"), entry.get("posting", "")))
+    return leads
 
 
 def already_written(records: Iterable[Dict[str, Any]], email: str, now: Optional[datetime] = None) -> bool:
@@ -465,7 +532,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     if args.to:
         leads = [Lead(args.to.lower(), args.company, args.title, args.url, "given by hand")]
     else:
-        leads = leads_from_files(settings)
+        leads = leads_from_files(settings) + leads_from_contacts(settings)
         if args.scan_naukri:
             from common import browser, ledger as ledger_module
 

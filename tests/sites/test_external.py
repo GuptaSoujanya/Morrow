@@ -8,10 +8,12 @@ element, so the tests see exactly what a recruiter would receive.
 import os
 import sys
 import time
+from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
-from selenium.common.exceptions import NoSuchWindowException, StaleElementReferenceException
+from selenium.common.exceptions import (
+    NoSuchWindowException, StaleElementReferenceException, TimeoutException, WebDriverException)
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 
@@ -124,10 +126,11 @@ class _Control:
 
 
 class _Button:
-    def __init__(self, text, on_click=None, kind="button"):
+    def __init__(self, text, on_click=None, kind="button", enabled=True):
         self.text = text
         self.on_click = on_click
         self.kind = kind
+        self.enabled = enabled
         self.clicks = 0
 
     def click(self):
@@ -142,7 +145,7 @@ class _Button:
         return True
 
     def is_enabled(self):
-        return True
+        return self.enabled
 
 
 class _Combo(_Control):
@@ -235,9 +238,12 @@ class _Page:
         self.google_email = []
         self.google_password = []
         self.challenges = []
+        self.mailtos = []
 
     def script(self, script, *args):
         self.scripts.append(script)
+        if script is ext._MAILTO_SCRIPT:
+            return list(self.mailtos)
         if script is acc._FOLLOWS_SCRIPT:
             return args[1] not in self.header
         if script is ext._FIELDS_SCRIPT:
@@ -272,12 +278,17 @@ class _Browser:
     def __init__(self, tabs, current):
         self.tabs = dict(tabs)
         self.handle = current
-        self.switch_to = SimpleNamespace(window=self._switch)
+        self.switch_to = SimpleNamespace(window=self._switch, new_window=self._new_window)
 
     def _switch(self, handle):
         if handle not in self.tabs:
             raise NoSuchWindowException(handle)
         self.handle = handle
+
+    def _new_window(self, kind="tab"):
+        name = "tab-%d" % (len(self.tabs) + 1)
+        self.tabs[name] = _Page("about:blank")
+        self.handle = name
 
     def _page(self):
         if self.handle not in self.tabs:
@@ -2080,6 +2091,35 @@ def test_only_entries_stopped_on_the_bots_side_are_tried_again(why, again):
     assert ext.retryable({"site": "https://x", "why": why}) is again
 
 
+@pytest.mark.parametrize(
+    "why, again",
+    [
+        ("needs you for: the 'Next' button stays disabled until every question is answered; "
+         "still blank: none the bot can see", True),
+        ("needs you for: the Apply click opened nothing the bot recognised", True),
+        ("needs you for: no Submit button on the form", True),
+        ("the site asks for an account: signing up on x needs a code it emails to me@x.com", True),
+        ("x sent a verification email to me@x.com; click the link in it, then apply again", True),
+        ("no way to the form: the screens went in a circle (screenshot: s.png)", True),
+        ("needs you for: the 'Next' button stays disabled until every question is answered; "
+         "still blank: Why do you want to work here?", True),
+        ("needs you for: Postal Code*", False),
+        ("Submit was clicked but no confirmation within 30 seconds", False),
+        ("the site shows a check only a person may answer (screenshot: s.png)", False),
+        ("the browser agent did not report (timeout); check the site before trying again", False),
+        ("an account for me@x.com already exists on x with another password", False),
+    ],
+)
+def test_with_the_agent_on_a_wall_it_can_read_past_is_tried_again_but_your_own_answer_is_not(why, again):
+    assert ext.retryable({"site": "https://x", "why": why}, agent=True) is again
+
+
+def test_a_wall_the_agent_could_clear_still_waits_for_you_while_the_agent_is_off():
+    stuck = {"site": "https://x", "why": "needs you for: the Apply click opened nothing the bot recognised"}
+    assert ext.retryable(stuck) is False
+    assert ext.retryable(stuck, agent=True) is True
+
+
 def test_an_entry_keeps_its_naukri_job_id():
     job = ext.job_from_entry({"naukri": "https://www.naukri.com/job-listings-ai-test-engineer-bengaluru-3-to-6-years-091026929914",
                               "site": "https://wd3", "title": "AI Test Engineer", "company": "Fidelity"})
@@ -2104,6 +2144,39 @@ def test_a_retried_site_that_now_goes_through_leaves_the_list_and_is_recorded(tm
     assert page.buttons[0].clicks == 1
     assert [entry["company"] for entry in ext.pending_company_sites(settings)] == ["Beta"]
     assert ledger.has_applied("111111111111")
+
+
+def test_the_waiting_list_carries_on_in_a_new_browser_when_the_old_one_dies(tmp_path):
+    """A careers page hung Chrome's renderer until chromedriver died, and the remaining
+    entries then waited on a browser that would never answer again."""
+    settings = _settings(data_dir=str(tmp_path / "user" / "inputs"))
+    stuck = ext.ExternalResult(status=ApplyStatus.EXTERNAL_MANUAL, url=GREENHOUSE,
+                               detail="no application form found on %s (controls: none)" % GREENHOUSE)
+    for number, company in (("111111111111", "Acme"), ("222222222222", "Beta")):
+        ext.record_company_site(settings, JobPosting(
+            job_id=number, url="https://www.naukri.com/job-listings-%s" % number,
+            title="Role", company=company), replace(stuck, url="%s/%s" % (GREENHOUSE, number)))
+
+    dead = _browser(_Page(GREENHOUSE))
+
+    def gone(*args, **kwargs):
+        raise WebDriverException("chrome not reachable")
+
+    dead.execute_script = gone
+    dead.get = gone
+    type(dead).window_handles = property(gone)
+    alive = _browser(_confirming_page())
+    opened = []
+
+    def reopen():
+        opened.append(alive)
+        return alive
+
+    counts = ext.retry_pending(dead, settings, PROFILE, _Engine(), Ledger(":memory:"),
+                               _resume(tmp_path), dry_run=False, reopen=reopen)
+
+    assert opened, "a new browser was opened"
+    assert counts["applied"] == 1, "the second entry went through in the new browser"
 
 
 class _ListButton(_Combo):
@@ -2325,3 +2398,392 @@ def test_an_optional_box_that_is_not_a_fact_is_left_to_your_own_answers():
 
     assert engine.asked == [], "the model is not asked to invent an address"
     assert outcome.skipped == ["Street address"]
+
+
+# ---------------------------------------------------------------------------
+# A code the site emails
+# ---------------------------------------------------------------------------
+
+
+def _code_form():
+    return [
+        _Control("text", "Email *", required=True, name="email"),
+        _Control("text", "Verification code *", required=True, name="code"),
+    ]
+
+
+def test_a_code_the_site_emailed_is_read_from_gmail_and_typed_in(tmp_path, monkeypatch):
+    from sites_bot import inbox
+
+    asked = {}
+
+    def read(settings, driver=None, **kwargs):
+        asked.update(kwargs)
+        return inbox.Verification(code="483920", subject="Verify your email")
+
+    monkeypatch.setattr(inbox, "verification", read)
+    page = _Page("https://jobs.acme.test/apply", fields=_code_form())
+
+    outcome = ext.fill_form(_browser(page), ext.discover_fields(_browser(page)), PROFILE, _Engine(), None,
+                            None, _settings())
+
+    assert _by_name(page, "code").value == "483920"
+    assert outcome.missing == []
+    assert asked["domain"] == "jobs.acme.test"
+
+
+def test_a_code_that_never_arrived_is_left_for_a_person_with_the_reason(monkeypatch):
+    from sites_bot import inbox
+
+    monkeypatch.setattr(inbox, "verification",
+                        lambda settings, driver=None, **kwargs: inbox.Verification(why="nothing arrived in 60s"))
+    page = _Page("https://jobs.acme.test/apply", fields=_code_form())
+
+    outcome = ext.fill_form(_browser(page), ext.discover_fields(_browser(page)), PROFILE, _Engine(), None,
+                            None, _settings())
+
+    assert _by_name(page, "code").value == ""
+    assert outcome.missing == ["Verification code * (the code the site emailed)"]
+
+
+def test_without_settings_a_code_field_is_never_guessed_at():
+    page = _Page("https://jobs.acme.test/apply", fields=_code_form())
+
+    outcome = ext.fill_form(_browser(page), ext.discover_fields(_browser(page)), PROFILE, _Engine(), None)
+
+    assert _by_name(page, "code").value == ""
+    assert outcome.missing == ["Verification code * (the code the site emailed)"]
+
+
+def test_a_password_box_is_never_filled_from_the_inbox(monkeypatch):
+    from sites_bot import inbox
+
+    monkeypatch.setattr(inbox, "verification",
+                        lambda settings, driver=None, **kwargs: inbox.Verification(code="483920"))
+    page = _Page("https://jobs.acme.test/apply",
+                 fields=[_Control("password", "One-time password *", required=True, name="pw")])
+
+    outcome = ext.fill_form(_browser(page), ext.discover_fields(_browser(page)), PROFILE, _Engine(), None,
+                            None, _settings())
+
+    assert _by_name(page, "pw").value == ""
+    assert outcome.missing == ["One-time password *"]
+
+
+# ---------------------------------------------------------------------------
+# Which resume gets attached
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def resumes(tmp_path, monkeypatch):
+    """The uploaded PDF and a tailored one, with the builders standing in for LaTeX and pdftotext."""
+    from common import resume as resume_module
+
+    uploaded = tmp_path / "Jane_Doe_Resume.pdf"
+    uploaded.write_bytes(b"%PDF-1.4 uploaded")
+    tailored = tmp_path / "Jane_Doe_Acme.pdf"
+    tailored.write_bytes(b"%PDF-1.4 tailored")
+    monkeypatch.setattr(resume_module, "build_base_pdf", lambda settings: Path(settings.resume_path).resolve())
+    return SimpleNamespace(uploaded=uploaded, tailored=tailored, module=resume_module)
+
+
+def test_an_uploaded_pdf_is_attached_unchanged_when_tailoring_is_off(resumes):
+    settings = _settings(resume_path=str(resumes.uploaded), tailor_resume=False)
+
+    assert ext.resume_to_attach(settings, None, JOB) == resumes.uploaded.resolve()
+
+
+def test_a_pdf_that_cannot_be_tailored_is_still_attached(resumes, monkeypatch):
+    def refuse(settings, client, job):
+        raise resumes.module.ResumeError("Resume tailoring requires the LaTeX source (.tex).")
+
+    monkeypatch.setattr(resumes.module, "build_tailored_pdf", refuse)
+    settings = _settings(resume_path=str(resumes.uploaded), tailor_resume=True)
+
+    assert ext.resume_to_attach(settings, None, JOB) == resumes.uploaded.resolve()
+
+
+def test_a_tailored_resume_is_used_when_tailoring_is_on_and_works(resumes, monkeypatch):
+    monkeypatch.setattr(resumes.module, "build_tailored_pdf",
+                        lambda s, c, j: (resumes.tailored, ["kept every claim"]))
+    settings = _settings(resume_path=str(resumes.uploaded), tailor_resume=True)
+
+    assert ext.resume_to_attach(settings, None, JOB) == resumes.tailored
+
+
+def test_no_tailor_skips_tailoring_even_when_it_is_on(resumes, monkeypatch):
+    def never(settings, client, job):
+        raise AssertionError("tailoring was asked for after --no-tailor")
+
+    monkeypatch.setattr(resumes.module, "build_tailored_pdf", never)
+    settings = _settings(resume_path=str(resumes.uploaded), tailor_resume=True)
+
+    assert ext.resume_to_attach(settings, None, JOB, no_tailor=True) == resumes.uploaded.resolve()
+
+
+def test_a_job_with_no_title_is_never_tailored_for(resumes, monkeypatch):
+    def never(settings, client, job):
+        raise AssertionError("tailoring was asked for without a title")
+
+    monkeypatch.setattr(resumes.module, "build_tailored_pdf", never)
+    settings = _settings(resume_path=str(resumes.uploaded), tailor_resume=True)
+
+    assert ext.resume_to_attach(settings, None, replace(JOB, title=""))  == resumes.uploaded.resolve()
+
+
+def test_with_no_readable_resume_at_all_nothing_is_attached(tmp_path):
+    settings = _settings(resume_path=str(tmp_path / "missing.pdf"), tailor_resume=False)
+
+    assert ext.resume_to_attach(settings, None, JOB) is None
+
+
+# ---------------------------------------------------------------------------
+# A page that keeps Next or Submit disabled until every box is answered
+# ---------------------------------------------------------------------------
+
+
+class _WriterEngine(_FactEngine):
+    """Answers the salary fact; everything else only through a per-job written answer."""
+
+    def __init__(self):
+        super().__init__()
+        self.book = SimpleNamespace(answer_for=lambda q: None, per_job=lambda q: False, add_blank=lambda *a, **k: None)
+
+
+def test_insisting_answers_an_optional_question_in_your_own_words():
+    engine = _WriterEngine()
+    driver = _one_field_page("textarea", "Why do you want to work here?")
+
+    outcome = ext.fill_form(driver, ext.discover_fields(driver), PROFILE, engine, None, lambda q: "Because of the agent work.",
+                            _settings(), insist=True)
+
+    assert outcome.filled == ["Why do you want to work here?"] and outcome.skipped == []
+
+
+def test_insisting_reports_a_box_nobody_can_answer_instead_of_passing_over_it():
+    engine = _WriterEngine()
+    driver = _one_field_page("text", "Employee referral code")
+
+    outcome = ext.fill_form(driver, ext.discover_fields(driver), PROFILE, engine, None, None, _settings(), insist=True)
+
+    assert outcome.missing == ["Employee referral code"] and outcome.skipped == []
+
+
+def test_an_optional_box_is_answered_on_a_second_pass_when_submit_stays_disabled(tmp_path):
+    """Hirist and Wellfound mark every screening question optional and still refuse to move on."""
+    page = _Page(
+        GREENHOUSE,
+        fields=[
+            _Control("text", "Full name", required=True, name="name"),
+            _Control("number", "What is your current annual salary? (in LPA, e.g., 45)", name="ctc"),
+        ],
+        buttons=[_Button("Submit application", kind="submit", enabled=False)],
+    )
+    engine = _FactEngine()
+
+    result = ext.apply_here(_browser(page), JOB, PROFILE, engine, _settings(), None, dry_run=False)
+
+    assert _by_name(page, "ctc").value == "16", "the second pass answered the optional question"
+    assert page.buttons[0].clicks == 0, "a disabled Submit is never clicked"
+    assert "stays disabled" in result.detail and result.status == ApplyStatus.EXTERNAL_MANUAL
+
+
+def test_a_submit_the_page_keeps_disabled_is_named_as_disabled_not_missing(tmp_path):
+    page = _Page(
+        GREENHOUSE,
+        fields=[
+            _Control("text", "Full name", required=True, name="name"),
+            _Control("text", "Email", required=True, name="email"),
+        ],
+        buttons=[_Button("Submit application", kind="submit", enabled=False)],
+    )
+
+    result = ext.apply_here(_browser(page), JOB, PROFILE, _Engine(), _settings(), None, dry_run=False)
+
+    assert page.buttons[0].clicks == 0, "a disabled Submit is never clicked"
+    assert result.detail == "every field is filled but the 'Submit application' button stays disabled"
+    assert ext.retryable({"site": "https://x", "why": result.detail}) is True, "worth another try, not held for you"
+
+
+def test_a_page_with_several_code_boxes_waits_on_the_inbox_once(monkeypatch):
+    """Oracle Cloud's gate shows four; a minute of waiting each would cost four."""
+    from sites_bot import inbox
+
+    reads = []
+
+    def read(settings, driver=None, **kwargs):
+        reads.append(kwargs.get("domain", ""))
+        return inbox.Verification(why="no verification mail yet")
+
+    monkeypatch.setattr(inbox, "verification", read)
+    page = _Page(
+        "https://egug.fa.us2.oraclecloud.com/apply",
+        fields=[
+            _Control("text", "Verification code", required=True, name="a"),
+            _Control("text", "One-time code", required=True, name="b"),
+            _Control("text", "Enter the OTP", required=True, name="c"),
+        ],
+    )
+
+    ext.fill_form(_browser(page), ext.discover_fields(_browser(page)), PROFILE, _Engine(), None, None, _settings())
+
+    assert len(reads) == 1, "the inbox is read once for the whole page"
+
+
+def test_the_email_a_code_goes_to_is_the_inbox_the_bot_can_open(monkeypatch):
+    """A code sent to an address nobody here can read leaves the form stuck for good."""
+    from sites_bot import inbox
+
+    monkeypatch.setattr(inbox, "verification", lambda *a, **k: inbox.Verification(why="nothing yet"))
+    page = _Page(
+        "https://egug.fa.us2.oraclecloud.com/apply/email",
+        fields=[
+            _Control("text", "Email address", required=True, name="email"),
+            _Control("text", "Verification code", required=True, name="code"),
+        ],
+    )
+    driver = _browser(page)
+
+    ext.fill_form(driver, ext.discover_fields(driver), PROFILE, _Engine(), None, None,
+                  _settings(google_email="signed.in@gmail.com"))
+
+    assert _by_name(page, "email").value == "signed.in@gmail.com"
+
+
+def test_a_form_with_no_code_box_still_uses_your_own_address():
+    page = _Page(GREENHOUSE, fields=[
+        _Control("text", "Email", required=True, name="email"),
+        _Control("text", "Full name", required=True, name="name"),
+    ])
+    driver = _browser(page)
+
+    ext.fill_form(driver, ext.discover_fields(driver), PROFILE, _Engine(), None, None,
+                  _settings(google_email="signed.in@gmail.com"))
+
+    assert _by_name(page, "email").value == PROFILE.email
+
+
+def test_what_the_agent_already_judged_as_yours_is_not_paid_for_twice():
+    stopped = "the browser agent stopped (needs_you): the form wants a Google Drive link to your CV"
+    assert ext.retryable({"site": "https://x", "why": stopped}, agent=True) is False
+
+
+# ---------------------------------------------------------------------------
+# A posting already applied to through the board itself
+# ---------------------------------------------------------------------------
+
+
+def _showing(body):
+    return _browser(_Page(GREENHOUSE, body=body))
+
+
+@pytest.mark.parametrize("body", [
+    "You have already applied to this job.",
+    "Application sent! on October 29, 2026",
+    "You have applied for this position",
+    "Thanks - you already applied to this job",
+])
+def test_a_page_saying_the_application_is_in_is_read_as_such(body):
+    """Hirist screening links for jobs its own board bot had applied to filled the waiting
+    list; each retry spent an agent task to be told the application was already on file."""
+    assert ext.already_applied(_showing(body))
+
+
+@pytest.mark.parametrize("body", [
+    "Apply now for this job",
+    "Submit your application",
+    "",
+])
+def test_an_ordinary_posting_is_not_read_as_already_applied(body):
+    assert ext.already_applied(_showing(body)) == ""
+
+
+def test_an_application_already_on_file_is_not_offered_to_the_agent(tmp_path):
+    page = _Page(GREENHOUSE, body="You have already applied to this job.")
+    result = ext.apply_here(_browser(page), JOB, PROFILE, _Engine(), _settings(), _resume(tmp_path), dry_run=False)
+    assert result.status == ApplyStatus.ALREADY_APPLIED
+    assert "already in" in result.detail
+
+
+def test_a_page_that_stops_answering_is_given_up_instead_of_read_again(tmp_path):
+    """A careers page hung Chrome's renderer; each read cost a minute and came back empty,
+    so the page looked like one still drawing its form and a single entry held a whole run."""
+    page = _Page(GREENHOUSE)
+    driver = _browser(page)
+    reads = []
+
+    def hung(script, *args):
+        reads.append(script)
+        raise TimeoutException("timeout: Timed out receiving message from renderer: 60.000")
+
+    driver.execute_script = hung
+    with pytest.raises(TimeoutException):
+        ext.discover_fields(driver)
+    assert len(reads) == 1, "the page is not read a second time"
+
+
+def _mail_link(address, text="", around="", subject=""):
+    href = "mailto:%s" % address + ("?subject=%s" % subject if subject else "")
+    return {"href": href, "text": text, "around": around}
+
+
+@pytest.mark.parametrize("link, address", [
+    (_mail_link("hr@acme.test", text="Apply Now"), "hr@acme.test"),
+    (_mail_link("talent@acme.test", text="Email your CV"), "talent@acme.test"),
+    (_mail_link("jobs@acme.test", text="jobs@acme.test"), "jobs@acme.test"),
+    (_mail_link("careers@acme.test", text="careers@acme.test"), "careers@acme.test"),
+    (_mail_link("people@acme.test", around="To apply, write to us"), "people@acme.test"),
+    (_mail_link("people@acme.test", subject="Application%20for%20AI%20Engineer"), "people@acme.test"),
+])
+def test_the_address_a_posting_wants_the_application_sent_to_is_read(link, address):
+    """Three postings today could only be applied to by email; each one paid for an agent task
+    to be told there was no form on the page."""
+    page = _Page(GREENHOUSE)
+    page.mailtos = [link]
+
+    assert ext.apply_by_email(_browser(page)) == address
+
+
+@pytest.mark.parametrize("link", [
+    _mail_link("info@acme.test", text="Contact us"),
+    _mail_link("press@acme.test", around="For media enquiries"),
+    {"href": "mailto:", "text": "Apply by email"},
+])
+def test_an_address_that_is_not_the_way_to_apply_is_left_alone(link):
+    page = _Page(GREENHOUSE)
+    page.mailtos = [link]
+
+    assert ext.apply_by_email(_browser(page)) == ""
+
+
+def test_a_browser_that_cannot_be_read_names_no_address():
+    page = _Page(GREENHOUSE)
+    driver = _browser(page)
+    driver.execute_script = lambda *a, **k: (_ for _ in ()).throw(WebDriverException("gone"))
+
+    assert ext.apply_by_email(driver) == ""
+
+
+def test_a_posting_that_only_takes_email_is_named_without_paying_for_help(tmp_path):
+    brain = _PageBrain()
+    page = _Page(GREENHOUSE, fields=SEARCH_BOX, buttons=[_Button("Search")], body="AI Engineer. Apply via email.")
+    page.mailtos = [_mail_link("jobs@neotechie.test", text="Apply via Email")]
+
+    result = ext.apply_here(_shooting(page), JOB, PROFILE, _BrainEngine(brain), _settings(), _resume(tmp_path), dry_run=False)
+
+    assert result.detail == "this employer takes applications by email only: jobs@neotechie.test"
+    assert brain.calls == []
+    assert not ext.retryable({"why": result.detail}, agent=True)
+
+
+def test_a_page_with_an_apply_button_is_still_read_for_a_form(tmp_path):
+    """A careers page with a contact address in its footer must not be mistaken for an
+    email-only posting while its Apply button is still unopened."""
+    page = _Page(GREENHOUSE, fields=SEARCH_BOX, buttons=[_Button("Apply for this job")], body="AI Engineer at Acme")
+    page.mailtos = [_mail_link("careers@acme.test", text="careers@acme.test")]
+    brain = _PageBrain()
+
+    ext.apply_here(_shooting(page), JOB, PROFILE, _BrainEngine(brain), _settings(), _resume(tmp_path), dry_run=False)
+
+    assert brain.calls

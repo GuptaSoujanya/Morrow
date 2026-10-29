@@ -24,6 +24,7 @@ from selenium.common.exceptions import (
     ElementClickInterceptedException,
     NoSuchWindowException,
     StaleElementReferenceException,
+    TimeoutException,
     WebDriverException,
 )
 from selenium.webdriver.common.by import By
@@ -35,6 +36,7 @@ from common.browser import human_pause, human_type, safe_get
 from common.models import AnswerMode, ApplyResult, ApplyStatus, JobPosting, Profile, Settings
 from common.shared_files import atomic_write_text, locked_file
 from common import paths
+from common.llm import out_of_quota
 
 
 logger = logging.getLogger(__name__)
@@ -78,6 +80,21 @@ ATS_HOSTS = (
 # Applying there needs that network's own session, not a career-site account.
 NOT_A_CAREER_SITE = ("linkedin", "indeed")
 MAX_PAGES = 8
+# An employer runs one careers system for all its postings, so a second identical
+# stop means the rest of its entries get the same reason without another visit.
+SAME_SITE_FAILURES = 2
+# A posting applied to through the board itself still waits in the company-site
+# list. Its page says so, and reading that is cheaper than an agent task that
+# ends up reporting a submit it never made.
+_ALREADY_APPLIED = re.compile(
+    r"already applied|application sent|you have applied|applied to this job|"
+    r"applied for this (?:job|position|role)", re.I)
+
+
+def already_applied(driver: Any) -> str:
+    """The page's own words saying this application is in, or "" when it does not."""
+    found = _ALREADY_APPLIED.search(_page_text(driver))
+    return found.group(0) if found else ""
 
 _FIELD_RULES = (
     (re.compile(r"\bfirst\s*name\b|\bgiven\s*name\b|\bforename\b", re.I), "first_name"),
@@ -109,6 +126,13 @@ _RESUME = re.compile(r"\bresume\b|\bcv\b|curriculum", re.I)
 _COVER = re.compile(r"cover[\s_-]*letter", re.I)
 _CONSENT = re.compile(r"\bagree\b|\bconsent\b|\backnowledge\b|\bprivacy\b|\bterms\b|\bgdpr\b", re.I)
 _ACCOUNT = re.compile(r"password|captcha|verification\s*code|\botp\b", re.I)
+# Checked before _ACCOUNT, which also matches these: a code the site emailed can
+# be read from their Gmail, while a password on the same form cannot.
+_ONE_TIME_CODE = re.compile(
+    r"one[- ]?time (code|password|pin)|\botp\b|verification\s*code|security code|confirmation code"
+    r"|code (we|that was|just)? ?(e-?mailed|sent)|e-?mailed code|enter the code",
+    re.I,
+)
 # Workday's forms carry a box labelled "This input is for robots only, do not
 # enter"; filling it marks the applicant as a bot.
 # Captchas and "type the text in the image" checks are for a person; a form
@@ -530,6 +554,12 @@ def decline_option(options: List[str]) -> Optional[str]:
 def discover_fields(driver: Any) -> List[Field]:
     try:
         raw = driver.execute_script(_FIELDS_SCRIPT) or []
+    except TimeoutException:
+        # One careers page hung the renderer: every later read spent the same minute
+        # and came back empty, so the page kept being treated as "no form yet" and a
+        # single entry held a whole run. A minute of silence is answer enough.
+        logger.warning("The page stopped answering; giving this one up.")
+        raise
     except WebDriverException as exc:
         logger.warning("Could not read the form (%s): %s", type(exc).__name__, exc)
         return []
@@ -561,6 +591,8 @@ def discover_fields(driver: Any) -> List[Field]:
 def _page_text(driver: Any) -> str:
     try:
         return _clean(driver.find_element(By.TAG_NAME, "body").text)
+    except TimeoutException:
+        raise
     except WebDriverException:
         return ""
 
@@ -911,6 +943,8 @@ def find_form_with_help(
         if challenge_shown(driver) or page_brain.human_check(text):
             shot = page_brain.save_screenshot(driver, settings, "check")
             return [], "the site shows a check only a person may answer (screenshot: %s)" % shot
+        if out_of_quota():
+            return [], "waiting for the model: %s" % out_of_quota()
         if not settings.judge_answers or client is None or not client.available():
             return [], ""
         controls = [(control, _control_text(control)) for control in _visible_controls(driver)]
@@ -1301,6 +1335,20 @@ def _fill_single_checkbox(driver: Any, item: Field, answer_engine: Any, outcome:
         outcome.skipped.append(label)
 
 
+def _emailed_code(driver: Any, settings: Optional[Settings]) -> str:
+    """The code the site just emailed, read out of their Gmail; "" when it cannot be had."""
+    if settings is None:
+        return ""
+    from .inbox import verification
+
+    found = verification(settings, driver, domain=urlparse(_current_url(driver)).netloc)
+    if found.code:
+        logger.info("      read the code Gmail got (%s)", found.subject or "no subject")
+        return found.code
+    logger.info("      no emailed code to use: %s", found.why or "nothing recent in the inbox")
+    return ""
+
+
 def fill_form(
     driver: Any,
     fields: List[Field],
@@ -1308,10 +1356,19 @@ def fill_form(
     answer_engine: Any,
     resume_pdf: Optional[Path],
     writer: Optional[Writer] = None,
+    settings: Optional[Settings] = None,
+    insist: bool = False,
 ) -> FormOutcome:
-    """Fill every control the bot can answer for; name the required ones it cannot."""
+    """Fill every control the bot can answer for; name the required ones it cannot.
+
+    Without `settings` a code the site emailed cannot be read, and that field is
+    reported as one for a person. With `insist` every box counts as required: forms
+    that mark their questions optional and still refuse to move on get a second pass
+    where an unanswered one is reported rather than passed over.
+    """
     outcome = FormOutcome()
     values = known_values(profile)
+    emailed = {}  # type: Dict[str, Optional[str]]
     radios = {}  # type: Dict[str, List[Field]]
     checkboxes = {}  # type: Dict[str, List[Field]]
     for item in fields:
@@ -1319,6 +1376,13 @@ def fill_form(
             radios.setdefault(item.name or item.group or item.label, []).append(item)
         elif item.kind == "checkbox":
             checkboxes.setdefault(item.name or item.group or item.label, []).append(item)
+
+    if settings is not None and any(_ONE_TIME_CODE.search(item.question or item.name) for item in fields):
+        # This page will email a code, and the only inbox the bot can read is the one
+        # signed in to this browser: an address it cannot open leaves the form stuck.
+        from .accounts import account_email
+
+        values["email"] = account_email(settings) or values.get("email", "")
 
     for item in fields:
         label = item.question or item.name
@@ -1344,6 +1408,17 @@ def fill_form(
         if _CHALLENGE.search(label):
             outcome.missing.append("%s (a check only a person may answer)" % label)
             continue
+        if _ONE_TIME_CODE.search(label) and item.kind != "password":
+            # Oracle Cloud's gate has four boxes the inbox could fill; waiting a minute
+            # for each one costs four minutes to learn the same thing once would.
+            if "code" not in emailed:
+                emailed["code"] = _emailed_code(driver, settings)
+            code = emailed["code"]
+            if code:
+                _fill_text(driver, item, code, outcome)
+            else:
+                outcome.missing.append("%s (the code the site emailed)" % label)
+            continue
         if _ACCOUNT.search(label) or item.kind == "password":
             outcome.missing.append(label or item.kind)
             continue
@@ -1358,27 +1433,30 @@ def fill_form(
             chosen = decline_option(options) if options else None
             if chosen is not None and _choose(driver, item, chosen):
                 outcome.filled.append(label)
-            else:
-                (outcome.missing if item.required else outcome.skipped).append(label)
-            continue
+                continue
+            # This form has no "prefer not to say", so the answer you wrote yourself
+            # is better than a required box left empty; falls through to the usual path.
         key = classify_label(label)
         value = values.get(key or "", "")
+        wanted = item.required or insist
         if not value and item.kind == "textarea":
             # Hirist asks for CTC, notice and years in a textarea: a fact first, prose only when no fact answers.
             if _FACT_QUESTION.search(label):
                 value = _resolve(answer_engine, label, options or None) or ""
-            value = value or _own_words(answer_engine, label, item.required, writer) or ""
-        elif not value and (item.required or _FACT_QUESTION.search(label)):
+            value = value or _own_words(answer_engine, label, wanted, writer) or ""
+        elif not value and (wanted or _FACT_QUESTION.search(label)):
             # Hirist marks every screening question optional and still keeps Next disabled
             # until each one is answered, so a fact is worth looking up either way.
             value = _resolve(answer_engine, label, options or None) or ""
+            if not value and insist:
+                value = _own_words(answer_engine, label, True, writer) or ""
         elif not value:
             # Other optional boxes (social links, "Street", search widgets) take only your own
             # answers: asking the model filled answers.txt with "Loading" and "Facebook".
             own = getattr(answer_engine, "own_answer", None)
             value = (own(label, options or None) if callable(own) else None) or ""
         if not value:
-            (outcome.missing if item.required else outcome.skipped).append(label)
+            (outcome.missing if wanted else outcome.skipped).append(label)
             continue
         if item.kind == "select" or (item.is_combobox and options):
             _fill_choice(driver, item, value, options, answer_engine, outcome)
@@ -1429,6 +1507,40 @@ def find_submit(driver: Any) -> Optional[Any]:
         if rank < best_rank:
             best, best_rank = control, rank
     return best
+
+
+_MAILTO_SCRIPT = """
+return Array.from(document.querySelectorAll('a[href^="mailto:"], a[href^="MAILTO:"]'))
+  .filter(function (a) { var r = a.getBoundingClientRect(); return r.width > 0 && r.height > 0; })
+  .map(function (a) {
+    return {
+      href: a.getAttribute('href') || '',
+      text: ((a.innerText || '') + ' ' + (a.getAttribute('aria-label') || '') + ' ' + (a.getAttribute('title') || '')).trim(),
+      around: ((a.parentElement && a.parentElement.innerText) || '').slice(0, 200)
+    };
+  });
+"""
+
+_APPLY_BY_MAIL = re.compile(r"appl|resume|\bcv\b|candidat|hiring|recruit|\bjobs?\b|careers?|\bhr\b", re.I)
+
+
+def apply_by_email(driver: Any) -> str:
+    """The address to send an application to, when a mail link is the posting's only apply route."""
+    try:
+        links = driver.execute_script(_MAILTO_SCRIPT) or []
+    except TimeoutException:
+        raise
+    except WebDriverException:
+        return ""
+    for link in links:
+        href = str(link.get("href") or "")
+        address = href.split(":", 1)[-1].split("?", 1)[0].strip()
+        if "@" not in address:
+            continue
+        said = " ".join([str(link.get("text") or ""), str(link.get("around") or ""), href])
+        if _APPLY_BY_MAIL.search(said):
+            return address
+    return ""
 
 
 def disabled_step(driver: Any) -> str:
@@ -1522,11 +1634,19 @@ def apply_here(
     """Apply on the page the browser is showing; never submit a half-filled form."""
     from .accounts import sign_in
 
+    from .cold_email import harvest_contacts
+
     url = _current_url(driver)
     ats = detect_ats(url)
     result = ExternalResult(status=ApplyStatus.EXTERNAL_MANUAL, url=url, ats=ats, resume=str(resume_pdf or ""))
     if ats in NOT_A_CAREER_SITE:
         result.detail = "%s applications need a %s session; finish this one by hand" % (ats, ats)
+        return result
+    harvest_contacts(driver, job, settings, "career page %s" % (urlparse(url).netloc or ats or "the employer"))
+    said = already_applied(driver)
+    if said:
+        result.status = ApplyStatus.ALREADY_APPLIED
+        result.detail = "this one is already in; the page says: %s" % said
         return result
 
     from .page_brain import dead_reason
@@ -1539,6 +1659,12 @@ def apply_here(
             result.status, result.detail = GONE, "the posting is gone: %s" % gone
             return result
         if not wants_account(driver, fields):
+            # No form and no Apply control, but a hiring mailbox: reading the page with the model
+            # or handing it to the agent cannot help, because there is nothing here to fill in.
+            address = apply_by_email(driver) if find_submit(driver) is None else ""
+            if address:
+                result.detail = "this employer takes applications by email only: %s" % address
+                return result
             fields, stuck = find_form_with_help(driver, job, settings, answer_engine)
             if stuck.startswith("the posting is gone"):
                 result.status, result.detail = GONE, stuck
@@ -1569,12 +1695,25 @@ def apply_here(
     writer = long_answer_writer(settings, answer_engine, job)
     saw_file_input = False
     for page in range(1, MAX_PAGES + 1):
-        outcome = fill_form(driver, fields, profile, answer_engine, resume_pdf, writer)
+        outcome = fill_form(driver, fields, profile, answer_engine, resume_pdf, writer, settings)
         result.filled += outcome.filled
         result.missing = outcome.missing
         saw_file_input = saw_file_input or any(item.kind == "file" for item in fields)
         if outcome.resume_attached:
             resume_pdf = None
+        held = disabled_step(driver) if outcome.skipped and not outcome.missing else ""
+        if held:
+            # The page will not move until every box is answered, whatever it marks as
+            # optional, so the ones passed over get a second pass that insists.
+            logger.info(
+                "      company site: '%s' is disabled; answering the %d optional question(s) too",
+                held,
+                len(outcome.skipped),
+            )
+            fields = application_fields(settled_fields(driver))
+            outcome = fill_form(driver, fields, profile, answer_engine, None, writer, settings, insist=True)
+            result.filled += outcome.filled
+            result.missing = outcome.missing
         if challenge_shown(driver):
             result.missing.append("captcha (a check only a person may answer)")
         if result.missing:
@@ -1603,7 +1742,12 @@ def apply_here(
         return result
     submit = find_submit(driver)
     if submit is None:
-        result.detail = "every field is filled but no Submit button was found"
+        held = disabled_step(driver)
+        result.detail = (
+            "every field is filled but the '%s' button stays disabled" % held
+            if held
+            else "every field is filled but no Submit button was found"
+        )
         return result
     if dry_run:
         result.status = DRY_RUN
@@ -1678,7 +1822,7 @@ def apply_on_company_site(
         result = ExternalResult(status=ApplyStatus.ERROR, url=_current_url(driver), detail="%s: %s" % (type(exc).__name__, exc))
     finally:
         return_to(driver, naukri_handle, keep)
-    if result.status in (ApplyStatus.APPLIED_EXTERNAL, GONE):
+    if result.status in (ApplyStatus.APPLIED_EXTERNAL, ApplyStatus.ALREADY_APPLIED, GONE):
         forget_company_site(settings, job)
     elif result.status != DRY_RUN:
         record_company_site(settings, job, result)
@@ -1789,9 +1933,40 @@ _WAITS_ON_YOU = re.compile(
 )
 
 
-def retryable(entry: Dict[str, str]) -> bool:
-    """Whether a company_sites.md entry stopped on the bot's side, so another try can get further."""
-    return bool(entry.get("site")) and not _WAITS_ON_YOU.search(entry.get("why", ""))
+# Walls the scripted filler cannot get through but the browser agent can read its
+# way past. A question only they can answer is not here: retrying that costs an
+# agent task and ends in the same place.
+_FOR_THE_AGENT = re.compile(
+    r"still blank: none the bot can see|opened nothing the bot recognised|no Submit button on the form"
+    r"|needs a code it emails|sent a verification email|verified first|no way to the form"
+    r"|no application form found|stays disabled"
+    r"|upload (your |the )?(cv|resume)|resume \(the form has no file upload\)|resume/cv"
+    r"|drop your resume|file size|autofill option|attach (your |the )?(cv|resume)",
+    re.I,
+)
+# Trying these again either applies twice or repeats a failure the agent already had.
+_NEVER_AGAIN = re.compile(
+    r"^submit was clicked|already exists on|did not take the saved password|captcha"
+    r"|a check only a person|browser agent did not report|^the browser agent stopped"
+    r"|by email only",
+    re.I,
+)
+
+
+# A form that marks its questions optional and keeps Next disabled until each one is
+# answered: the second, insisting pass answers those now, so these are worth a retry
+# on their own, without spending an agent task.
+_NOW_HANDLED = re.compile(r"stays disabled until every question is answered", re.I)
+
+
+def retryable(entry: Dict[str, str], agent: bool = False) -> bool:
+    """Whether another try can get further: the bot stopped on its own side, or the agent can clear the wall."""
+    why = entry.get("why", "")
+    if not entry.get("site") or _NEVER_AGAIN.search(why):
+        return False
+    if _NOW_HANDLED.search(why):
+        return True
+    return not _WAITS_ON_YOU.search(why) or bool(agent and _FOR_THE_AGENT.search(why))
 
 
 def job_from_entry(entry: Dict[str, str]) -> JobPosting:
@@ -1805,15 +1980,29 @@ def job_from_entry(entry: Dict[str, str]) -> JobPosting:
     )
 
 
+def browser_answers(driver: Any) -> bool:
+    try:
+        driver.window_handles
+        return True
+    except Exception:
+        return False
+
+
 def retry_pending(
     driver: Any, settings: Settings, profile: Profile, answer_engine: Any, ledger: Any,
-    base_pdf: Optional[Path], dry_run: bool,
+    base_pdf: Optional[Path], dry_run: bool, reopen: Optional[Any] = None,
 ) -> Dict[str, int]:
-    """Work through user/inputs/company_sites.md again; counts of what became of each entry tried."""
+    """Work through user/inputs/company_sites.md again; counts of what became of each entry tried.
+
+    `reopen` returns a fresh browser: one careers page hung Chrome's renderer until
+    chromedriver died, and the rest of the list then waited on a browser that was
+    never going to answer. With it the list carries on in a new window.
+    """
     counts = {"tried": 0, "applied": 0, "gone": 0, "still waiting": 0}
     walls = {}  # type: Dict[str, ExternalResult]
+    failures = {}  # type: Dict[str, int]
     home = driver.current_window_handle
-    for entry in [entry for entry in pending_company_sites(settings) if retryable(entry)]:
+    for entry in [entry for entry in pending_company_sites(settings) if retryable(entry, settings.browser_agent)]:
         company = (entry.get("company") or "").casefold()
         job = job_from_entry(entry)
         if company in walls:
@@ -1827,30 +2016,47 @@ def retry_pending(
         set_context = getattr(answer_engine, "set_job_context", None)
         if callable(set_context):
             set_context(job)
+        result = None  # type: Optional[ExternalResult]
         try:
-            if not safe_get(driver, entry["site"]):
+            if safe_get(driver, entry["site"]):
+                human_pause(1.5, 3.0)
+                result = apply_here(driver, job, profile, answer_engine, settings, resume_pdf, dry_run)
+                result = browser_agent.take_over(driver, job, profile, settings, resume_pdf, dry_run, result)
+            else:
                 logger.info("      -> could not open the site")
-                continue
-            human_pause(1.5, 3.0)
-            result = apply_here(driver, job, profile, answer_engine, settings, resume_pdf, dry_run)
-            result = browser_agent.take_over(driver, job, profile, settings, resume_pdf, dry_run, result)
         except WebDriverException as exc:
             logger.warning("      -> browser error: %s", " ".join(str(exc).split())[:200])
-            continue
-        finally:
+        # safe_get reports a dead browser as a page it could not open, so every
+        # remaining entry would quietly retry against it; the list is only worth
+        # going on with in a browser that still answers.
+        if browser_answers(driver):
             return_to(driver, home, [home])
+        elif reopen is None:
+            logger.error("The browser stopped answering; the rest of the list waits for the next run.")
+            break
+        else:
+            logger.warning("The browser stopped answering; opening a new one to carry on.")
+            try:
+                driver = reopen()
+                home = driver.current_window_handle
+            except Exception as problem:
+                logger.error("Could not open another browser (%s); the rest waits for the next run.", problem)
+                break
+        if result is None:
+            continue
         logger.info("      -> %s (%s)", result.status, result.detail[:300])
         if result.status == ApplyStatus.APPLIED_EXTERNAL:
             counts["applied"] += 1
             forget_company_site(settings, job)
             ledger.record_attempt(result.to_apply_result(job), title=job.title, company=job.company)
-        elif result.status == GONE:
+        elif result.status in (GONE, ApplyStatus.ALREADY_APPLIED):
             counts["gone"] += 1
             forget_company_site(settings, job)
         elif result.status in (ApplyStatus.EXTERNAL_MANUAL, ApplyStatus.ERROR):
             counts["still waiting"] += 1
             record_company_site(settings, job, result)
-            if "the site asks for an account" in result.detail:
+            failures[company] = failures.get(company, 0) + 1
+            if "the site asks for an account" in result.detail or failures[company] >= SAME_SITE_FAILURES:
                 walls[company] = result
     return counts
 
@@ -1858,6 +2064,29 @@ def retry_pending(
 # ---------------------------------------------------------------------------
 # Command line
 # ---------------------------------------------------------------------------
+
+
+def resume_to_attach(settings: Settings, client: Any, job: JobPosting, no_tailor: bool = False) -> Optional[Path]:
+    """The PDF to upload: tailored when tailoring is on and possible, otherwise the one they uploaded.
+
+    A resume that cannot be tailored is still worth attaching unchanged: every
+    career form wants a file, and attaching none stops the whole application.
+    """
+    from common import resume as resume_module
+
+    if not no_tailor and job.title and settings.tailor_resume:
+        try:
+            tailored, notes = resume_module.build_tailored_pdf(settings, client, job)
+            for note in notes:
+                logger.info("  resume: %s", note)
+            return tailored
+        except resume_module.ResumeError as exc:
+            logger.warning("Could not tailor the resume (%s); attaching the one you uploaded", exc)
+    try:
+        return resume_module.build_base_pdf(settings)
+    except resume_module.ResumeError as exc:
+        logger.warning("No resume PDF to attach (%s)", exc)
+        return None
 
 
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
@@ -1936,11 +2165,25 @@ def main(argv: Optional[List[str]] = None) -> int:
         except resume_module.ResumeError as exc:
             logger.warning("No resume PDF to attach (%s)", exc)
             base_pdf = None
-        driver = browser.create_driver(settings)
+        opened = [browser.create_driver(settings)]
+
+        def reopen() -> Any:
+            for old in opened:
+                try:
+                    old.quit()
+                except Exception:
+                    pass
+            opened.append(browser.create_driver(settings))
+            return opened[-1]
+
         try:
-            counts = retry_pending(driver, settings, profile, engine, ledger, base_pdf, args.dry_run)
+            counts = retry_pending(opened[0], settings, profile, engine, ledger, base_pdf,
+                                   args.dry_run, reopen)
         finally:
-            driver.quit()
+            try:
+                opened[-1].quit()
+            except Exception:
+                pass
             ledger.close()
         logger.info("Company sites tried again: %s", ", ".join("%s %d" % item for item in counts.items()))
         if not args.dry_run:
@@ -1956,16 +2199,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     client = llm.build_client(settings)
     engine = AnswerEngine(ledger, client, profile, settings)
     engine.set_job_context(job)
-    resume_pdf = None  # type: Optional[Path]
-    try:
-        if args.no_tailor or not args.title:
-            resume_pdf = resume_module.build_base_pdf(settings)
-        else:
-            resume_pdf, notes = resume_module.build_tailored_pdf(settings, client, job)
-            for note in notes:
-                logger.info("  resume: %s", note)
-    except resume_module.ResumeError as exc:
-        logger.warning("No resume PDF to attach (%s)", exc)
+    resume_pdf = resume_to_attach(settings, client, job, args.no_tailor)
 
     driver = browser.create_driver(settings)
     try:

@@ -51,7 +51,8 @@ ENV_KEYS = {'PROFILE_PATH', 'RESUME_PATH', 'DATA_DIR', 'FIRSTNAME', 'LASTNAME', 
 # The candidate pool is sized so 100 relevant postings are actually there.
 VOLUME_DEFAULTS = {'TARGET_APPLICATIONS': '100', 'DAILY_QUOTA': '0', 'PLATFORM_LIMIT': '100', 'MIN_SCORE': '40',
                    'MAX_DAYS_OLD': '21', 'MAX_CANDIDATES': '1200', 'LLM_RANK_TOP_N': '400', 'PAGES_PER_KEYWORD': '8',
-                   'SKILL_YEARS_FROM_TOTAL': 'true'}
+                   'SKILL_YEARS_FROM_TOTAL': 'true', 'BROWSER_AGENT': 'true', 'BROWSER_AGENT_LIMIT': '12',
+                   'BROWSER_AGENT_TIMEOUT_S': '600', 'BROWSER_AGENT_BUDGET_USD': '1.5'}
 FACT_QUESTIONS = {
     'full_name': 'What is your full name?', 'email': 'What is your email address?',
     'phone': 'What is your phone number?', 'current_location': 'Where are you currently based?',

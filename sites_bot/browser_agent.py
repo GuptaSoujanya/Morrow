@@ -42,13 +42,11 @@ FACTS_POSTING_CHARS = 3000
 STOP_GRACE_S = 10
 
 # Reasons only a person can clear. After a Submit click a second attempt could
-# apply twice, so those never go to the agent either.
+# apply twice, so those never go to the agent either. A code a site emails is not
+# on this list: the agent reads it from the signed-in Gmail (rule 2).
 _NOT_FOR_AGENT = (
     "captcha",
     "a check only a person",
-    "needs a code it emails",
-    "verification email",
-    "verified first",
     "submit was clicked",
     "already exists on",
     "did not take the saved password",
@@ -90,7 +88,9 @@ def cdp_endpoint(driver: Any) -> str:
 
 
 def should_take_over(settings: Settings, result: Any) -> bool:
-    if not settings.browser_agent or tasks_left(settings) <= 0:
+    from common.llm import out_of_quota
+
+    if not settings.browser_agent or tasks_left(settings) <= 0 or out_of_quota():
         return False
     if result.status not in (ApplyStatus.EXTERNAL_MANUAL, ApplyStatus.ERROR):
         return False
@@ -144,9 +144,14 @@ _RULES = """Rules, in order of importance:
 1. Never solve, skip or work around a CAPTCHA, "I am not a robot" box, puzzle or
    image-text check, and never try to get past bot detection. Stop and report
    needs_you.
-2. Stop and report needs_you for a verification code or link sent by email or
-   SMS, a two-factor prompt, any payment, or an identity number (PAN, SSN,
-   passport number) they have not given.
+2. When the site emails a verification code or link to the address given below,
+   read it yourself: open a new tab on https://mail.google.com (that account is
+   already signed in in this browser), take the newest code or verification link,
+   go back to the application tab, use it, then close only the tab you opened.
+   When a site asks which address to send that code to, give the account email
+   named under Accounts, not any other: that is the only inbox you can open here.
+   Stop and report needs_you for a code sent by SMS, a two-factor prompt, any
+   payment, or an identity number (PAN, SSN, passport number) they have not given.
 3. Use only the facts below. Never invent a fact, a number, a date or a yes/no.
    When a required question is not answered by them, do not guess and do not pick
    any option just to move on: leave it, finish what you can, and list the
@@ -159,8 +164,8 @@ _RULES = """Rules, in order of importance:
    status: choose the decline / prefer-not-to-say option when there is one.
 5. Some fields may already be filled by the bot. Check them against the facts and
    fix wrong ones; do not retype correct ones.
-6. Work only in the tab named below, on that site and the sign-in pages it sends
-   you to. Do not close tabs and do not open other websites.
+6. Work only in the tab named below, on that site, the sign-in pages it sends you
+   to, and Gmail when rule 2 applies. Never close the tab you were given.
 7. Report exactly what happened. If you are unsure whether something worked, say
    so in "why"."""
 
@@ -192,9 +197,12 @@ def application_prompt(
         )
     else:
         goal = (
-            "Complete the application and submit it. Click the final Submit button at most once, "
-            "and only when every required field holds an answer taken from the facts. After it, "
-            "wait for the page to change and copy the site's confirmation sentence word for word."
+            "Complete the application and submit it. Click the final Submit button only when every "
+            "required field holds an answer taken from the facts. A click the site itself refuses, "
+            "because it names a field as missing or invalid and keeps you on the form, has sent "
+            "nothing: fix exactly what it named and click Submit again. Never click a second time "
+            "after a click the site accepted, or after one whose outcome you cannot tell. After a "
+            "click, wait for the page to change and copy the site's confirmation sentence word for word."
         )
     if resume_file is not None:
         resume = (
@@ -555,10 +563,11 @@ def _strings(value: Any) -> List[str]:
 
 def to_result(driver: Any, run: AgentRun, previous: Any, dry_run: bool) -> Any:
     """The agent's report as an ExternalResult; a submit counts only with its proof on the page."""
-    from .external import DRY_RUN, GONE
+    from .external import DRY_RUN, GONE, already_applied
 
     report = run.report or {}
     status = str(report.get("status", "")).strip().lower()
+    said = already_applied(driver) if status == "submitted" else ""
     why = " ".join(str(report.get("why", "")).split())
     missing = _strings(report.get("missing"))
     filled = list(previous.filled) + [item for item in _strings(report.get("filled")) if item not in previous.filled]
@@ -572,6 +581,10 @@ def to_result(driver: Any, run: AgentRun, previous: Any, dry_run: bool) -> Any:
         if quote_on_page(driver, quote):
             result.status = ApplyStatus.APPLIED_EXTERNAL
             result.detail = "submitted by the browser agent; the site says: %s" % quote
+        elif said:
+            # It reports a submit it never made when the page already said applied.
+            result.status = ApplyStatus.ALREADY_APPLIED
+            result.detail = "this one was already in; the page says: %s" % said
         else:
             result.status = ApplyStatus.ERROR
             result.detail = "Submit was clicked by the browser agent but its confirmation is not on the page (%s)" % (
@@ -656,6 +669,8 @@ def finish_application(
     previous: Any,
 ) -> Any:
     """Hand the open application page to the agent and turn its report into an ExternalResult."""
+    from common.llm import note_out_of_quota
+
     from .accounts import account_email
     from .external import _current_url
 
@@ -673,6 +688,9 @@ def finish_application(
     logger.info("      browser agent: Claude Code takes over %s (task %d of %d)", url, _started,
                 settings.browser_agent_limit)
     run = run_agent(driver, settings, prompt, workdir, (Path(resume_pdf),) if resume_copy is not None else ())
+    if run.report is None and note_out_of_quota(run.problem):
+        # It stopped in seconds without reaching the page, so the try is given back.
+        _started -= 1
     result = to_result(driver, run, previous, dry_run)
     if run.report:
         _keep_written(settings, job, run.report)
