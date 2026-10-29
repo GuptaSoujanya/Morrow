@@ -49,6 +49,7 @@ PAGE_WAIT_S = 4.0
 AFTER_CLICK_WAIT_S = 15.0
 POLL_S = 0.5
 MAX_FORM_PAGES = 6
+SUBMIT_SETTLE_S = 6.0
 #: A Chrome that closes mid-run (quit by hand, or gone under the browser agent) is
 #: reopened this many times before the run stops.
 MAX_BROWSER_RESTARTS = 2
@@ -476,7 +477,32 @@ def answer_form(
             return True, filled, []
         return False, filled, ["no Submit button on the form"]
     ext._click(driver, submit)
+    refused = _submit_refused(driver, board)
+    if refused:
+        return False, filled, [refused]
     return True, filled, []
+
+
+def _submit_refused(driver: Any, board: Board) -> str:
+    """Why a clicked Submit sent nothing, or "" when the form went away and the click may have.
+
+    Wellfound turns the click down and keeps its apply box open with the location question
+    unanswered. Calling that an application sent blind both mislabels it and spends the run's
+    blind-apply guard, so a form still on screen is reported as unfinished instead.
+    """
+    deadline = time.monotonic() + SUBMIT_SETTLE_S
+    while True:
+        if application_landed(driver, board):
+            return ""
+        if time.monotonic() >= deadline:
+            break
+        time.sleep(POLL_S)
+    fields = ext.application_fields(ext.settled_fields(driver))
+    if not fields:
+        return ""
+    blank = [item.question or item.name for item in fields if not item.value]
+    return "the form is still on screen after the Submit click; %s" % (
+        "still blank: " + ", ".join(blank[:6]) if blank else "the site turned the click down")
 
 
 def _wait_for_controls(driver: Any, pattern: str, timeout_s: float) -> List[Any]:

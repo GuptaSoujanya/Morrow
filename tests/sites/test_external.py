@@ -20,6 +20,7 @@ from selenium.webdriver.common.keys import Keys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from sites_bot import accounts as acc
+from sites_bot import browser_agent
 from naukri_bot import apply as apply_module
 from sites_bot import external as ext
 from common.answers import AnswerEngine
@@ -2787,3 +2788,66 @@ def test_a_page_with_an_apply_button_is_still_read_for_a_form(tmp_path):
     ext.apply_here(_shooting(page), JOB, PROFILE, _BrainEngine(brain), _settings(), _resume(tmp_path), dry_run=False)
 
     assert brain.calls
+
+
+def _waiting(tmp_path, *entries):
+    settings = _settings()
+    lines = ["# Applications on company websites that need you", ""]
+    for site, why in entries:
+        lines += ["", "## 2026-10-29 10:00 | Acme | Role", "- Status: needs you", "- Why: %s" % why, "- Site: %s" % site]
+    Path(settings.data_dir).mkdir(parents=True, exist_ok=True)
+    (Path(settings.data_dir) / "company_sites.md").write_text("\n".join(lines), encoding="utf-8")
+    return settings
+
+
+def test_a_site_that_already_stopped_for_good_is_not_opened_again(tmp_path):
+    """One run spent nine of fifteen tries re-visiting djaxtech, Prevalent and Amantra, each
+    already on the waiting list behind a captcha."""
+    settings = _waiting(tmp_path, ("https://www.djaxtech.com/careers-a.html", "needs you for: captcha (a check only a person may answer)"))
+
+    assert ext.site_already_waiting(settings, "https://www.djaxtech.com/careers-b.html", True) == \
+        "needs you for: captcha (a check only a person may answer)"
+
+
+def test_a_site_still_worth_a_try_is_opened_again(tmp_path):
+    settings = _waiting(tmp_path, ("https://acme.test/jobs/1", "every field is filled but the 'Next' button stays disabled"))
+
+    assert ext.site_already_waiting(settings, "https://acme.test/jobs/2", True) == ""
+
+
+def test_one_posting_worth_a_try_keeps_the_whole_site_open(tmp_path):
+    settings = _waiting(
+        tmp_path,
+        ("https://acme.test/jobs/1", "needs you for: captcha (a check only a person may answer)"),
+        ("https://acme.test/jobs/2", "every field is filled but the 'Next' button stays disabled"),
+    )
+
+    assert ext.site_already_waiting(settings, "https://acme.test/jobs/3", True) == ""
+
+
+def test_a_site_nobody_has_tried_is_opened(tmp_path):
+    settings = _waiting(tmp_path, ("https://other.test/jobs/1", "needs you for: captcha"))
+
+    assert ext.site_already_waiting(settings, "https://acme.test/jobs/1", True) == ""
+    assert ext.site_already_waiting(settings, "", True) == ""
+
+
+def test_the_posting_is_left_for_another_day_without_reading_the_page(tmp_path):
+    settings = _waiting(tmp_path, ("https://job-boards.greenhouse.io/acme/jobs/9", "needs you for: captcha (a check only a person may answer)"))
+    brain = _PageBrain()
+    page = _Page(GREENHOUSE, fields=SEARCH_BOX, buttons=[_Button("Search")])
+
+    result = ext.apply_here(_shooting(page), JOB, PROFILE, _BrainEngine(brain), settings, _resume(tmp_path), dry_run=False)
+
+    assert result.status == ApplyStatus.EXTERNAL_SKIPPED
+    assert result.detail.startswith(ext.SAME_SITE_WAITING)
+    assert brain.calls == []
+    assert browser_agent.should_take_over(replace(settings, browser_agent=True), result) is False
+
+
+@pytest.mark.parametrize("status", [ApplyStatus.ALREADY_APPLIED, ApplyStatus.EXTERNAL_SKIPPED])
+def test_an_application_on_file_or_a_site_left_for_later_is_logged_as_itself(status):
+    """Both fell through to "error", so a run that correctly skipped work read as broken."""
+    result = ext.ExternalResult(status=status, url="https://acme.test/jobs/1", detail="why")
+
+    assert result.to_apply_result(JOB).status == status

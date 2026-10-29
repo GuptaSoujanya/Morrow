@@ -438,7 +438,12 @@ class ExternalResult:
     resume: str = ""
 
     def to_apply_result(self, job: JobPosting) -> ApplyResult:
-        if self.status in (ApplyStatus.APPLIED_EXTERNAL, ApplyStatus.EXTERNAL_MANUAL):
+        if self.status in (
+            ApplyStatus.APPLIED_EXTERNAL,
+            ApplyStatus.EXTERNAL_MANUAL,
+            ApplyStatus.EXTERNAL_SKIPPED,
+            ApplyStatus.ALREADY_APPLIED,
+        ):
             status = self.status
         elif self.status == DRY_RUN:
             status = ApplyStatus.EXTERNAL_SKIPPED
@@ -1648,6 +1653,11 @@ def apply_here(
         result.status = ApplyStatus.ALREADY_APPLIED
         result.detail = "this one is already in; the page says: %s" % said
         return result
+    waiting = site_already_waiting(settings, url, settings.browser_agent)
+    if waiting:
+        result.status = ApplyStatus.EXTERNAL_SKIPPED
+        result.detail = "%s: %s" % (SAME_SITE_WAITING, waiting)
+        return result
 
     from .page_brain import dead_reason
 
@@ -1824,9 +1834,27 @@ def apply_on_company_site(
         return_to(driver, naukri_handle, keep)
     if result.status in (ApplyStatus.APPLIED_EXTERNAL, ApplyStatus.ALREADY_APPLIED, GONE):
         forget_company_site(settings, job)
-    elif result.status != DRY_RUN:
+    elif result.status != DRY_RUN and not (result.detail or "").startswith(SAME_SITE_WAITING):
         record_company_site(settings, job, result)
     return result
+
+
+SAME_SITE_WAITING = "another posting on this site is already waiting"
+
+
+def site_already_waiting(settings: Settings, url: str, agent: bool = False) -> str:
+    """Why this employer's site stopped before, when no posting on it is worth trying again."""
+    host = (urlparse(url).netloc or "").casefold()
+    if not host:
+        return ""
+    waiting = [
+        entry
+        for entry in pending_company_sites(settings)
+        if (urlparse(str(entry.get("site") or "")).netloc or "").casefold() == host
+    ]
+    if not waiting or any(retryable(entry, agent=agent) for entry in waiting):
+        return ""
+    return str(waiting[-1].get("why") or "something only you can finish")
 
 
 def record_company_site(settings: Settings, job: JobPosting, result: ExternalResult) -> Path:

@@ -834,6 +834,54 @@ def test_a_disabled_send_button_is_reported_instead_of_clicking_the_page_top_app
     assert missing == ["the 'Send application' button stays disabled until every question is answered; still blank: I am currently in…"]
 
 
+def _submitting(monkeypatch, fields, applied=False):
+    """answer_form on a one-page form that reaches Submit; `fields` is what the page still shows."""
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(pf, "SUBMIT_SETTLE_S", 0.0)
+    monkeypatch.setattr(ext, "_current_url", lambda driver: "https://wellfound.com/jobs/1610860-python-developer")
+    monkeypatch.setattr(ext, "_confirmation_url", lambda url: False)
+    monkeypatch.setattr(ext, "long_answer_writer", lambda *a: None)
+    monkeypatch.setattr(ext, "settled_fields", lambda driver, settle_s=None: [])
+    monkeypatch.setattr(ext, "application_fields", lambda raw: list(fields))
+    monkeypatch.setattr(ext, "fill_form", lambda *a, **k: SimpleNamespace(filled=["Email"], missing=[], skipped=[]))
+    monkeypatch.setattr(ext, "challenge_shown", lambda driver: False)
+    monkeypatch.setattr(ext, "find_next", lambda driver: None)
+    monkeypatch.setattr(ext, "disabled_step", lambda driver: None)
+    monkeypatch.setattr(ext, "find_submit", lambda driver: "Send application")
+    state = {"clicked": False}
+    monkeypatch.setattr(ext, "_click", lambda driver, control: state.__setitem__("clicked", True))
+    monkeypatch.setattr(pf, "shows_applied", lambda driver, board: applied and state["clicked"])
+    return pf.answer_form(_Driver(), pf.BOARDS["wellfound"], _job(), Profile(full_name="Jane"), None,
+                          Settings(email="t@example.com", password="secret"), None)
+
+
+def test_a_submit_the_site_turns_down_is_reported_unfinished_not_sent_blind(monkeypatch):
+    """Wellfound keeps its apply box open when the location question is unanswered: nothing was sent."""
+    from types import SimpleNamespace
+
+    still_there = [SimpleNamespace(question="I can relocate to…", name="", value=""),
+                   SimpleNamespace(question="Email", name="", value="jane@example.com")]
+
+    sent, _, missing = _submitting(monkeypatch, still_there)
+
+    assert sent is False
+    assert missing == ["the form is still on screen after the Submit click; still blank: I can relocate to…"]
+
+
+def test_a_submit_that_closes_the_form_is_taken_as_sent(monkeypatch):
+    assert _submitting(monkeypatch, []) == (True, ["Email"], [])
+
+
+def test_the_applied_marker_right_after_the_click_counts_as_sent(monkeypatch):
+    """The marker settles the question even while the form is still drawn on the page."""
+    from types import SimpleNamespace
+
+    left_on_screen = [SimpleNamespace(question="I can relocate to…", name="", value="")]
+
+    assert _submitting(monkeypatch, left_on_screen, applied=True) == (True, ["Email"], [])
+
+
 def test_job_pages_that_will_not_open_count_as_a_stall_too(board_page, tmp_path, monkeypatch):
     """Instahyre served 38 unopenable pages in a row once the bot had applied about a hundred times."""
     from naukri_bot import ranking

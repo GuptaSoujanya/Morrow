@@ -196,6 +196,12 @@ def test_a_code_a_site_emails_goes_to_the_agent_now_that_it_can_read_the_inbox(s
     assert agent.should_take_over(settings, _stuck(detail))
 
 
+def test_a_submit_the_site_turned_down_is_work_the_agent_may_finish(settings):
+    """Nothing was sent, so unlike an unconfirmed send this one is safe to hand over."""
+    detail = "needs you for: the form is still on screen after the Submit click; still blank: I can relocate to…"
+    assert agent.should_take_over(settings, _stuck(detail))
+
+
 def test_the_agent_is_told_it_may_read_an_emailed_code_in_gmail_and_never_to_close_its_own_tab():
     assert "mail.google.com" in agent._RULES
     assert "Never close the tab you were given." in agent._RULES
