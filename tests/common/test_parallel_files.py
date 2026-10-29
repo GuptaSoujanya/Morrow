@@ -48,7 +48,8 @@ def test_three_simultaneous_compilers_cannot_overwrite_each_others_resumes(tmp_p
 
     monkeypatch.setattr(resume, "compile_pdf", compile_fake)
     monkeypatch.setattr(resume, "pdf_page_count", lambda path: 1)
-    monkeypatch.setattr(resume, "tailor", lambda client, base, job: (
+    monkeypatch.setattr(resume, "analyse_posting", lambda client, base, job: None)
+    monkeypatch.setattr(resume, "tailor", lambda client, base, job, profile=None, analyse=True: (
         replace(base.sections, summary=job.description), []))
 
     def build(site):

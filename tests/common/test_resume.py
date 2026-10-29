@@ -229,7 +229,7 @@ def test_tailoring_takes_the_reorder_and_refuses_the_invented_claim(base):
     assert sections.skills[1][1][0] == "LangChain"
     assert any("Kubernetes" in note for note in notes)
     assert "model: Led with LangChain." in notes
-    assert "100% remote" in client.prompts[0]
+    assert all("100% remote" in prompt for prompt in client.prompts)
 
 
 def test_a_rewritten_summary_may_barely_grow():
@@ -735,7 +735,7 @@ def test_the_model_may_put_the_relevant_bullet_first_but_not_change_a_word(bulle
     assert rendered.index("LangChain pipelines") < rendered.index("Next.js dashboards") < rendered.index("training-data")
     assert sorted(rendered.splitlines()) == sorted(bulleted.tex.splitlines())
     assert 'bullets under Software Engineer 2024 -- Present Ethara AI: now lead with "Built LangChain pipelines that benchmark five model providers."' in notes
-    assert '"0: Built Next.js dashboards for model training."' in client.prompts[0]
+    assert '"0: Built Next.js dashboards for model training."' in client.prompts[-1]
 
 
 @pytest.mark.parametrize("proposal", [[[0, 0, 1]], [[0, 1]], [["a", "b", "c"]], "first"])

@@ -12,6 +12,13 @@ appear somewhere in the base resume, or the proposal is dropped and the base
 text is used instead. A recruiter reading the tailored PDF therefore reads
 the user's own claims, in the user's own words, in a different order.
 
+Before anything is edited, the posting is read into a profile (must-have and
+nice-to-have requirements, the kind of role, the themes it returns to) and
+every bullet and skill item is scored against it on four weighted axes:
+direct 40%, transferable 30%, adjacent 20%, impact 10%. That ranking decides
+what the tailored resume leads with; requirements nothing in the resume covers
+are reported as gaps in tailoring.json rather than papered over.
+
     python3 -m common.resume                     # compile the base resume
     python3 -m common.resume --tailor jd.txt \\
         --title "Backend Engineer" --company Acme    # tailor to a pasted posting
@@ -34,7 +41,7 @@ import zlib
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, List, Optional, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 from selenium.common.exceptions import (
     ElementNotInteractableException,
@@ -449,17 +456,418 @@ def summary_bounds(summary: str) -> Tuple[int, int]:
     return max(30, words - 20), words + 10
 
 
+# --- reading the posting and matching the resume against it ----------------------
+#
+# The method follows the truth-preserving tailoring playbook: read the posting
+# into a success profile first, score what the resume already says against it,
+# and only then decide what to lead with. Four axes, weighted: direct (the
+# item's keywords, domain, tech and outcome match a requirement as written),
+# transferable (the same capability in another context), adjacent (a related
+# tool or problem space) and impact (the kind of achievement the posting
+# values). Nothing here invents content; a requirement the resume cannot cover
+# is a gap to report, never a claim to add.
+
+MATCH_WEIGHTS = (("direct", 0.4), ("transferable", 0.3), ("adjacent", 0.2), ("impact", 0.1))
+MATCH_BANDS = (("DIRECT", 90), ("TRANSFERABLE", 75), ("ADJACENT", 60), ("WEAK", 45), ("GAP", 0))
+COVERED_AT = 60  # a requirement counts as covered from the ADJACENT band up
+_MAX_REQUIREMENTS = 12
+
+
+def match_band(score: float) -> str:
+    for name, floor in MATCH_BANDS:
+        if score >= floor:
+            return name
+    return "GAP"
+
+
+@dataclass
+class Requirement:
+    text: str
+    must_have: bool = True
+    keywords: List[str] = field(default_factory=list)
+
+
+@dataclass
+class ItemMatch:
+    """One bullet or skill item scored against the posting.
+
+    `item` names it: b<block>.<bullet> for a bullet, s<category>.<item> for a
+    skill. `covers` lists the requirements (by index) it gives evidence for.
+    """
+
+    item: str
+    text: str
+    direct: int = 0
+    transferable: int = 0
+    adjacent: int = 0
+    impact: int = 0
+    covers: List[int] = field(default_factory=list)
+
+    @property
+    def score(self) -> float:
+        return round(sum(getattr(self, axis) * weight for axis, weight in MATCH_WEIGHTS), 1)
+
+    @property
+    def band(self) -> str:
+        return match_band(self.score)
+
+
+@dataclass
+class JobProfile:
+    """What one posting asks for, and how each resume item measures up."""
+
+    requirements: List[Requirement]
+    archetype: str = ""
+    themes: List[str] = field(default_factory=list)
+    # The posting's term -> the resume's own wording for the same thing.
+    terminology: Dict[str, str] = field(default_factory=dict)
+    red_flags: List[str] = field(default_factory=list)
+    matches: List[ItemMatch] = field(default_factory=list)
+
+    def ranked(self) -> List[ItemMatch]:
+        return sorted(self.matches, key=lambda match: (-match.score, match.item))
+
+    def requirement_scores(self) -> List[float]:
+        """The best match each requirement has, by requirement index."""
+        best = [0.0] * len(self.requirements)
+        for match in self.matches:
+            for index in match.covers:
+                if 0 <= index < len(best):
+                    best[index] = max(best[index], match.score)
+        return best
+
+    def gaps(self) -> List[Requirement]:
+        return [req for req, score in zip(self.requirements, self.requirement_scores()) if score < COVERED_AT]
+
+    def coverage(self) -> Dict[str, Any]:
+        scores = self.requirement_scores()
+        must = [score for req, score in zip(self.requirements, scores) if req.must_have]
+        bands = {name: 0 for name, _ in MATCH_BANDS}
+        for score in scores:
+            bands[match_band(score)] += 1
+        covered = sum(1 for score in scores if score >= COVERED_AT)
+        return {
+            "requirements": len(scores),
+            "covered": covered,
+            "percent": int(round(100.0 * covered / len(scores))) if scores else 0,
+            "must_have": len(must),
+            "must_have_covered": sum(1 for score in must if score >= COVERED_AT),
+            "bands": bands,
+        }
+
+    def report(self) -> Dict[str, Any]:
+        """What tailoring.json keeps: the reading of the posting and the ranking."""
+        scores = self.requirement_scores()
+        return {
+            "archetype": self.archetype,
+            "requirements": [
+                {"text": req.text, "must_have": req.must_have, "keywords": req.keywords, "best_match": score}
+                for req, score in zip(self.requirements, scores)
+            ],
+            "themes": self.themes,
+            "terminology": self.terminology,
+            "red_flags": self.red_flags,
+            "coverage": self.coverage(),
+            "gaps": [req.text for req in self.gaps()],
+            "ranking": [
+                {"item": match.item, "score": match.score, "band": match.band, "covers": match.covers, "text": match.text}
+                for match in self.ranked()
+            ],
+        }
+
+
+def match_items(base: BaseResume) -> List[Tuple[str, str]]:
+    """Every bullet and skill item, as (id, plain text), in resume order."""
+    items = []  # type: List[Tuple[str, str]]
+    for block, bullets in enumerate(base.sections.bullets):
+        for n, bullet in enumerate(bullets):
+            items.append(("b%d.%d" % (block, n), _plain(bullet)))
+    for category_index, (category, skills) in enumerate(base.sections.skills):
+        for n, skill in enumerate(skills):
+            items.append(("s%d.%d" % (category_index, n), "%s: %s" % (_plain(category), _plain(skill))))
+    return items
+
+
+def keyword_hits(text: str, requirements: List[Requirement]) -> List[int]:
+    """Indexes of the requirements whose own keywords appear in `text`."""
+    lowered = " %s " % " ".join(_plain(text).lower().split())
+    hits = []  # type: List[int]
+    for index, req in enumerate(requirements):
+        for keyword in req.keywords:
+            key = " ".join(keyword.lower().split())
+            if len(key) >= 2 and key in lowered:
+                hits.append(index)
+                break
+    return hits
+
+
+def keyword_match(item: str, text: str, requirements: List[Requirement]) -> ItemMatch:
+    """A score from keyword overlap alone, for items the model did not rate.
+
+    One shared keyword is only adjacent evidence; each further requirement the
+    item names moves it up a band. It never reaches DIRECT on keywords alone.
+    """
+    hits = keyword_hits(text, requirements)
+    level = min(85, 50 + 15 * len(hits)) if hits else 0
+    return ItemMatch(item, text, direct=level, transferable=level, adjacent=level, impact=level, covers=hits)
+
+
+def _clean_strings(value: Any, limit: int, width: int = 160) -> List[str]:
+    if not isinstance(value, list):
+        return []
+    cleaned = []  # type: List[str]
+    for entry in value:
+        if isinstance(entry, str) and entry.strip():
+            text = " ".join(entry.split())[:width]
+            if text not in cleaned:
+                cleaned.append(text)
+    return cleaned[:limit]
+
+
+def _axis(value: Any) -> int:
+    try:
+        return max(0, min(100, int(round(float(value)))))
+    except (TypeError, ValueError):
+        return 0
+
+
+_PROFILE_SCHEMA = (
+    '{"archetype": "individual contributor | people leadership | cross-functional", '
+    '"requirements": [{"text": "...", "must_have": true, "keywords": ["..."]}], '
+    '"themes": ["..."], "terminology": {"<posting term>": "<resume wording>"}, "red_flags": ["..."], '
+    '"matches": [{"item": "b0.0", "direct": 0, "transferable": 0, "adjacent": 0, "impact": 0, "covers": [0]}]}'
+)
+
+_PROFILE_PROMPT = (
+    "You are reading one job posting for a candidate and matching their resume "
+    "against it, as a careful recruiter would. The resume text is the ONLY source "
+    "of facts about the candidate; never assume experience it does not state.\n"
+    "1. requirements: what the posting asks for, each as one short line, at most "
+    "%d and the most important first. must_have is true for what it demands "
+    "(required, must, essential, the core stack, years of experience) and false "
+    "for what it would like (preferred, nice to have, bonus, a plus). keywords: "
+    "1-5 of the posting's own words for it, including tool and domain names.\n"
+    "2. archetype: the kind of role: individual contributor, people leadership, "
+    "or cross-functional.\n"
+    "3. themes: 2-4 short phrases for what the posting keeps coming back to.\n"
+    "4. terminology: where the posting and the resume name the same thing with "
+    "different words, map the posting's term to the resume's own wording; both "
+    "must appear verbatim in their texts. Empty when there are none.\n"
+    "5. red_flags: anything in the posting that may not suit the candidate (a "
+    "clearance, relocation, a stack the resume never mentions). Empty when none.\n"
+    "6. matches: score EVERY resume item below by its id, 0-100 on four axes. "
+    "direct: its keywords, domain, tech and outcome match a requirement as "
+    "written. transferable: the same capability shown in a different context. "
+    "adjacent: a related tool or problem space. impact: the kind of achievement "
+    "the posting values. covers: the indexes (into requirements) the item gives "
+    "real evidence for, empty when none. Score honestly: an item unrelated to the "
+    "posting scores low on every axis.\n"
+    "Posting: %s\nResume items: %s\nResume text: %s"
+)
+
+
+def _posting_text(job: JobPosting) -> str:
+    return " ".join([job.title or "", job.company or "", " ".join(job.tags or []), job.description or ""]).lower()
+
+
+def _posting_json(job: JobPosting) -> str:
+    return json.dumps(
+        {
+            "title": job.title,
+            "company": job.company,
+            "location": job.location,
+            "experience": job.experience,
+            "tags": job.tags,
+            "description": job.description[:3500],
+        },
+        ensure_ascii=True,
+    )
+
+
+def analyse_posting(client: LLMClient, base: BaseResume, job: JobPosting) -> Optional[JobProfile]:
+    """Read `job` into a JobProfile with every resume item scored, or None.
+
+    The model's answer is taken only where it can be checked: requirements
+    must be non-empty text, terminology pairs must exist in both texts, axis
+    scores are clamped to 0-100, and an item the model skipped is scored by
+    keyword overlap so the ranking is always complete.
+    """
+    if not client.available():
+        return None
+    items = match_items(base)
+    prompt = _PROFILE_PROMPT % (
+        _MAX_REQUIREMENTS,
+        _posting_json(job),
+        json.dumps(["%s: %s" % (item_id, text[:200]) for item_id, text in items], ensure_ascii=True),
+        base.plain_text[:5000],
+    )
+    response = client.complete_json(prompt, _PROFILE_SCHEMA)
+    if not isinstance(response, dict) or not isinstance(response.get("requirements"), list):
+        return None
+
+    requirements = []  # type: List[Requirement]
+    for entry in response["requirements"]:
+        if not isinstance(entry, dict) or not isinstance(entry.get("text"), str) or not entry["text"].strip():
+            continue
+        requirements.append(
+            Requirement(
+                text=" ".join(entry["text"].split())[:200],
+                must_have=bool(entry.get("must_have", True)),
+                keywords=_clean_strings(entry.get("keywords"), 5, 60),
+            )
+        )
+        if len(requirements) == _MAX_REQUIREMENTS:
+            break
+    if not requirements:
+        return None
+
+    posting = _posting_text(job)
+    terminology = {}  # type: Dict[str, str]
+    raw_terms = response.get("terminology")
+    if isinstance(raw_terms, dict):
+        for theirs, ours in raw_terms.items():
+            if not (isinstance(theirs, str) and isinstance(ours, str) and theirs.strip() and ours.strip()):
+                continue
+            theirs, ours = " ".join(theirs.split())[:60], " ".join(ours.split())[:60]
+            if theirs.lower() in posting and not ungrounded_terms(ours, base) and len(terminology) < 12:
+                terminology[theirs] = ours
+
+    rated = {}  # type: Dict[str, Dict[str, Any]]
+    for entry in response.get("matches") or []:
+        if isinstance(entry, dict) and isinstance(entry.get("item"), str):
+            rated[entry["item"].strip()] = entry
+    matches = []  # type: List[ItemMatch]
+    for item_id, text in items:
+        entry = rated.get(item_id)
+        if entry is None:
+            matches.append(keyword_match(item_id, text, requirements))
+            continue
+        covers = sorted(
+            {
+                int(index)
+                for index in (entry.get("covers") if isinstance(entry.get("covers"), list) else [])
+                if isinstance(index, (int, float)) and 0 <= int(index) < len(requirements)
+            }
+            | set(keyword_hits(text, requirements))
+        )
+        matches.append(
+            ItemMatch(
+                item_id,
+                text,
+                direct=_axis(entry.get("direct")),
+                transferable=_axis(entry.get("transferable")),
+                adjacent=_axis(entry.get("adjacent")),
+                impact=_axis(entry.get("impact")),
+                covers=covers,
+            )
+        )
+
+    archetype = response.get("archetype")
+    return JobProfile(
+        requirements=requirements,
+        archetype=" ".join(archetype.split())[:60] if isinstance(archetype, str) else "",
+        themes=_clean_strings(response.get("themes"), 4, 80),
+        terminology=terminology,
+        red_flags=_clean_strings(response.get("red_flags"), 6),
+        matches=matches,
+    )
+
+
+def _profile_prompt(profile: Optional[JobProfile]) -> str:
+    """The reading of the posting, as the tailoring prompt presents it."""
+    if profile is None:
+        return ""
+    lines = ["What the posting asks for, read before editing:"]
+    if profile.archetype:
+        lines.append("role archetype: %s" % profile.archetype)
+    lines.append("must-have: %s" % json.dumps([req.text for req in profile.requirements if req.must_have], ensure_ascii=True))
+    nice = [req.text for req in profile.requirements if not req.must_have]
+    if nice:
+        lines.append("nice-to-have: %s" % json.dumps(nice, ensure_ascii=True))
+    if profile.themes:
+        lines.append("themes: %s" % json.dumps(profile.themes, ensure_ascii=True))
+    if profile.terminology:
+        lines.append(
+            "the posting's terms and the resume's own wording for them; prefer the "
+            "resume's wording, and use the posting's only where the resume already "
+            "contains that word: %s" % json.dumps(profile.terminology, ensure_ascii=True)
+        )
+    lines.append(
+        "resume items scored against the posting, best first (b<block>.<bullet>, "
+        "s<category>.<item>; 90+ DIRECT, 75-89 TRANSFERABLE, 60-74 ADJACENT, 45-59 "
+        "WEAK, under 45 GAP): %s"
+        % json.dumps(["%s %s %s" % (m.item, m.band, m.text[:80]) for m in profile.ranked()[:40]], ensure_ascii=True)
+    )
+    gaps = profile.gaps()
+    if gaps:
+        lines.append(
+            "requirements nothing in the resume covers: %s. Do not pretend to cover "
+            "them; leave them out rather than stretch a claim." % json.dumps([req.text for req in gaps], ensure_ascii=True)
+        )
+    lines.append(
+        "Lead the subtitle and summary with the DIRECT and TRANSFERABLE items. Within "
+        "each bullet block and skills category, put higher-scored items first unless "
+        "an item is the natural lead for its role."
+    )
+    return "\n".join(lines) + "\n"
+
+
+def _profile_notes(profile: Optional[JobProfile]) -> List[str]:
+    if profile is None:
+        return []
+    coverage = profile.coverage()
+    bands = coverage["bands"]
+    notes = [
+        "posting read%s: %d must-have and %d nice-to-have requirements; %d of %d covered (%d%%): "
+        "%d direct, %d transferable, %d adjacent"
+        % (
+            " as %s role" % profile.archetype if profile.archetype else "",
+            coverage["must_have"],
+            coverage["requirements"] - coverage["must_have"],
+            coverage["covered"],
+            coverage["requirements"],
+            coverage["percent"],
+            bands["DIRECT"],
+            bands["TRANSFERABLE"],
+            bands["ADJACENT"],
+        )
+    ]
+    gaps = profile.gaps()
+    if gaps:
+        notes.append("gaps the resume does not cover: %s" % "; ".join(req.text for req in gaps[:6]))
+    if profile.red_flags:
+        notes.append("posting flags: %s" % "; ".join(profile.red_flags[:4]))
+    return notes
+
+
+# --- editing the resume ------------------------------------------------------------
+
+
 _TAILOR_SCHEMA = (
     '{"subtitle": "...", "summary": "...", "skills": {"<category exactly as given>": ["..."]}, '
     '"bullets": [[0, 1, 2]], "notes": "..."}'
 )
 
 
-def tailor(client: LLMClient, base: BaseResume, job: JobPosting) -> Tuple[ResumeSections, List[str]]:
-    """Return sections adjusted for `job`, plus notes on what changed or was refused."""
+def tailor(
+    client: LLMClient,
+    base: BaseResume,
+    job: JobPosting,
+    profile: Optional[JobProfile] = None,
+    analyse: bool = True,
+) -> Tuple[ResumeSections, List[str]]:
+    """Return sections adjusted for `job`, plus notes on what changed or was refused.
+
+    The posting is read into a JobProfile first (pass one in, or `analyse`
+    does it here); its ranking of the resume's own items steers what the
+    edits lead with. Without a profile, the edit still runs on the posting
+    text alone.
+    """
     sections = base.sections
     if not client.available():
         return sections, ["LLM unavailable; resume left as is"]
+    if profile is None and analyse:
+        profile = analyse_posting(client, base, job)
 
     target_words = len(sections.summary.split())
     prompt = (
@@ -486,23 +894,16 @@ def tailor(client: LLMClient, base: BaseResume, job: JobPosting) -> Tuple[Resume
         "bullets' words never change. Always return this list, even when no order "
         "changes.\n"
         "If a part is already right for the posting, return it unchanged. "
+        "Reframe, never invent: the same facts may lead with a different "
+        "outcome or use a term the resume already has, but no new claim.\n"
         "notes: one sentence on what you changed and why.\n"
-        "Posting: %s\nCurrent subtitle: %s\nCurrent summary: %s\nCurrent skills: %s\n"
+        "%sPosting: %s\nCurrent subtitle: %s\nCurrent summary: %s\nCurrent skills: %s\n"
         "Bullet blocks: %s\nResume text: %s"
     ) % (
         target_words,
         target_words + 10,
-        json.dumps(
-            {
-                "title": job.title,
-                "company": job.company,
-                "location": job.location,
-                "experience": job.experience,
-                "tags": job.tags,
-                "description": job.description[:3500],
-            },
-            ensure_ascii=True,
-        ),
+        _profile_prompt(profile),
+        _posting_json(job),
         sections.subtitle,
         sections.summary,
         json.dumps({category: items for category, items in sections.skills}, ensure_ascii=True),
@@ -517,9 +918,9 @@ def tailor(client: LLMClient, base: BaseResume, job: JobPosting) -> Tuple[Resume
     )
     response = client.complete_json(prompt, _TAILOR_SCHEMA)
     if response is None:
-        return sections, ["LLM gave no usable proposal; resume left as is"]
+        return sections, _profile_notes(profile) + ["LLM gave no usable proposal; resume left as is"]
 
-    notes = []  # type: List[str]
+    notes = _profile_notes(profile)
     # The subtitle is the one line meant to echo the posting's role, so the
     # words of the job title count as grounded there and nowhere else.
     subtitle, subtitle_notes = _accept_text(
@@ -816,7 +1217,9 @@ def _write_posting(path: Path, job: JobPosting) -> None:
         logger.warning("Could not write %s: %s", path, exc)
 
 
-def _write_record(record: Path, job: JobPosting, pdf: Path, notes: List[str]) -> None:
+def _write_record(
+    record: Path, job: JobPosting, pdf: Path, notes: List[str], profile: Optional[JobProfile] = None
+) -> None:
     try:
         record.write_text(
             json.dumps(
@@ -829,6 +1232,7 @@ def _write_record(record: Path, job: JobPosting, pdf: Path, notes: List[str]) ->
                     "generated_at": datetime.now().isoformat(timespec="seconds"),
                     "resume": str(pdf),
                     "notes": notes,
+                    "analysis": profile.report() if profile is not None else None,
                 },
                 indent=2,
             ),
@@ -859,7 +1263,8 @@ def build_tailored_pdf(
 
     out_dir.mkdir(parents=True, exist_ok=True)
     _write_posting(out_dir / "posting.txt", job)
-    sections, notes = tailor(client, base, job)
+    profile = analyse_posting(client, base, job)
+    sections, notes = tailor(client, base, job, profile, analyse=False)
     base_pdf = build_base_pdf(settings)
     base_pages = pdf_page_count(base_pdf)
     tailored_tex = out_dir / "tailored.tex"
@@ -879,7 +1284,7 @@ def build_tailored_pdf(
         notes.append("tailoring failed to compile; used the base resume")
     if result is None:
         result = base_pdf
-    _write_record(record, job, result, notes)
+    _write_record(record, job, result, notes, profile)
     return result, notes
 
 
