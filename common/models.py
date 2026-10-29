@@ -351,6 +351,9 @@ class Settings:
 
     keywords: List[str] = field(default_factory=list)
     location: str = ""
+    # Search every city and score them all alike: the profile's preferred
+    # locations stop being a bonus or a penalty while ranking.
+    any_location: bool = False
     pages_per_keyword: int = 3
 
     headless: bool = False

@@ -51,6 +51,10 @@ GOOGLE_LOGIN_WAIT_S = 120.0
 # and tries once more, and only a third refusal means Naukri has closed for the day.
 REFUSALS_BEFORE_STOP = 3
 REFUSAL_COOLOFF_S = 90
+# One employer's careers system behaves the same on every one of its postings.
+# Accenture listed 34 roles in one run and each failed the same way, taking the
+# whole company-site budget, so a second identical failure retires the company.
+SITE_FAILURES_PER_COMPANY = 2
 
 # Generic resume words that make terrible job-search keywords on their own.
 _WEAK_KEYWORDS = {
@@ -587,7 +591,7 @@ def run(
     from . import auth
     from common import browser
     from . import early_access as early_access_module
-    from sites_bot import external as external_module
+    from sites_bot import cold_email, external as external_module
     from common import ledger as ledger_module
     from common import llm
     from . import ranking
@@ -684,8 +688,11 @@ def run(
         keywords = derive_keywords(profile, settings)
         logger.info("Searching with keywords: %s", ", ".join(keywords) or "(none)")
 
+        search_location = "" if settings.any_location else settings.location
+        if settings.any_location:
+            logger.info("Searching every location (ANY_LOCATION=true).")
         candidates = sources.collect_candidates(
-            driver, settings, keywords, settings.location
+            driver, settings, keywords, search_location
         )  # type: List[JobPosting]
         summary.collected = len(candidates)
         logger.info("Collected %d unique candidate postings.", summary.collected)
@@ -824,9 +831,18 @@ def run(
         # Ten Accenture postings met the same sign-up wall one after another and
         # used up every company-site try; one meeting per company is enough.
         walled: Set[str] = set()
+        site_failures: Dict[str, int] = {}
+
+        def site_blocked(key: str) -> bool:
+            return bool(key) and (key in walled or site_failures.get(key, 0) >= SITE_FAILURES_PER_COMPANY)
 
         def sites_left() -> bool:
-            return settings.external_apply and company_site_tries < settings.external_apply_limit
+            # A company-site form needs the model for its own-words and judged
+            # answers, so once the model is out these postings are worth more
+            # tomorrow than as failures today.
+            return (settings.external_apply
+                    and company_site_tries < settings.external_apply_limit
+                    and not llm.out_of_quota())
 
         for scored in selected:
             if naukri_open:
@@ -848,7 +864,12 @@ def run(
                         break
                     logger.warning("%s; going on with company sites only.", closed)
             if not naukri_open and not sites_left():
-                logger.info("Tried %d company sites; stopping.", company_site_tries)
+                if llm.out_of_quota():
+                    logger.warning(
+                        "The model is out, so the remaining company sites are left for the next run "
+                        "(%d tried).", company_site_tries)
+                else:
+                    logger.info("Tried %d company sites; stopping.", company_site_tries)
                 break
 
             # One prolific poster can list a dozen near-identical roles, each
@@ -872,7 +893,7 @@ def run(
                 if kind == "signed_out":
                     logger.warning("Signed out of Naukri. Stopping.")
                     break
-                if kind != "external" or company_key in walled:
+                if kind != "external" or site_blocked(company_key):
                     continue
                 company_site_tries += 1
                 logger.info(
@@ -916,7 +937,7 @@ def run(
                 naukri_open
                 and result.status == ApplyStatus.EXTERNAL_SKIPPED
                 and sites_left()
-                and company_key not in walled
+                and not site_blocked(company_key)
             ):
                 company_site_tries += 1
                 if tailored_pdf is None and base_pdf is None:
@@ -931,10 +952,17 @@ def run(
                 and company_key
             ):
                 walled.add(company_key)
+            elif company_key and result.status in (ApplyStatus.EXTERNAL_MANUAL, ApplyStatus.ERROR):
+                site_failures[company_key] = site_failures.get(company_key, 0) + 1
+                if site_blocked(company_key):
+                    logger.info(
+                        "      %s's site stopped %d application(s) the same way; its other postings "
+                        "are left for another day.", scored.job.company, site_failures[company_key])
             ledger.record_attempt(
                 result, title=scored.job.title or "", company=scored.job.company or "",
                 facts=facts,
             )
+            cold_email.record_contacts(settings, scored.job, scored.job.description or "", "Naukri posting")
             _tally(summary, result)
             logger.info("      -> %s (%s)", result.status, result.detail or "-")
             sent = result.status in (ApplyStatus.APPLIED, ApplyStatus.APPLIED_EXTERNAL)
@@ -954,10 +982,18 @@ def run(
                 )
 
             if result.status in ApplyStatus.TERMINAL:
-                logger.warning(
-                    "Naukri reports the daily quota is exhausted. Stopping."
-                )
-                break
+                if sites_left():
+                    # Naukri's quota is Naukri's alone: an employer's own site does not
+                    # share it, so those postings are still worth the rest of the run.
+                    naukri_open = False
+                    logger.warning(
+                        "Naukri reports the daily quota is exhausted; going on with company sites only."
+                    )
+                else:
+                    logger.warning(
+                        "Naukri reports the daily quota is exhausted. Stopping."
+                    )
+                    break
             refused_in_a_row = (
                 refused_in_a_row + 1
                 if result.status == ApplyStatus.NAUKRI_REFUSED

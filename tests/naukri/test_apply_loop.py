@@ -49,7 +49,7 @@ def _settings(**overrides):
     return Settings(**values)
 
 
-def _scored(score, days, jid):
+def _scored(score, days, jid, company=None):
     # llm_score is set because these tests are about the apply loop, not about
     # ranking health: without it every job looks unranked and the LLM coverage
     # guard stops the run before the loop is reached.
@@ -58,7 +58,7 @@ def _scored(score, days, jid):
             job_id=jid,
             url="https://www.naukri.com/job-listings-%s" % jid,
             title="Role %s" % jid,
-            company="Co %s" % jid,
+            company=company or "Co %s" % jid,
             posted_days_ago=days,
         ),
         score=score,
@@ -384,3 +384,90 @@ def test_one_refusal_between_applications_does_not_end_the_run(fake_naukri, tmp_
 
     assert len(attempted) == 5
     assert summary.applied == 3
+
+
+def test_naukris_own_quota_does_not_stop_the_employers_sites(fake_naukri, tmp_path, monkeypatch):
+    """Naukri's cap is Naukri's: a company-site application never consumed it."""
+    from sites_bot import external as external_module
+    from sites_bot.external import ExternalResult
+
+    install, attempted = fake_naukri
+    queue = [_scored(80.0 - i, 1, "j%02d" % i) for i in range(5)]
+    install(queue, {"j00": ApplyStatus.QUOTA_EXPIRED})
+
+    monkeypatch.setattr(apply_module, "apply_button_kind", lambda driver, job: "external")
+    sites = []
+
+    def on_site(driver, job, profile, engine, settings, pdf):
+        sites.append(job.job_id)
+        return ExternalResult(status=ApplyStatus.APPLIED_EXTERNAL, url=job.url, detail="the site says: applied")
+
+    monkeypatch.setattr(external_module, "apply_on_company_site", on_site)
+
+    summary = _run(tmp_path, _settings(target_applications=5, external_apply=True, external_apply_limit=4))
+
+    assert attempted == ["j00"], "Naukri's own Apply is not pressed again after the 403"
+    assert sites == ["j01", "j02", "j03", "j04"], "every remaining posting went to the employer's site"
+    assert summary.applied_external == 4
+
+
+def test_a_used_up_naukri_quota_stops_the_run_when_company_sites_are_off(fake_naukri, tmp_path):
+    install, attempted = fake_naukri
+    queue = [_scored(80.0 - i, 1, "j%02d" % i) for i in range(5)]
+    install(queue, {"j00": ApplyStatus.QUOTA_EXPIRED})
+
+    summary = _run(tmp_path, _settings(target_applications=5, external_apply=False))
+
+    assert attempted == ["j00"] and summary.applied == 0
+
+
+def test_one_employers_site_cannot_take_the_whole_company_site_budget(fake_naukri, tmp_path, monkeypatch):
+    """Accenture listed 34 roles in one run; each failed the same way and used up every try."""
+    from sites_bot import external as external_module
+    from sites_bot.external import ExternalResult
+
+    install, attempted = fake_naukri
+    queue = [_scored(80.0 - i, 1, "j%02d" % i, company="Accenture") for i in range(6)]
+    install(queue, {"j00": ApplyStatus.QUOTA_EXPIRED})
+
+    monkeypatch.setattr(apply_module, "apply_button_kind", lambda driver, job: "external")
+    sites = []
+
+    def on_site(driver, job, profile, engine, settings, pdf):
+        sites.append(job.job_id)
+        return ExternalResult(status=ApplyStatus.EXTERNAL_MANUAL, url=job.url,
+                              detail="needs you for: PAN Card*")
+
+    monkeypatch.setattr(external_module, "apply_on_company_site", on_site)
+
+    _run(tmp_path, _settings(target_applications=6, external_apply=True, external_apply_limit=6))
+
+    assert attempted == ["j00"]
+    assert len(sites) == 2, "after two identical failures the rest of that company's postings are left"
+
+
+def test_company_sites_wait_for_the_next_run_once_the_model_is_out(fake_naukri, tmp_path, monkeypatch):
+    """Their forms need the model; without it a run turned 53 good postings into errors."""
+    from common import llm
+    from sites_bot import external as external_module
+    from sites_bot.external import ExternalResult
+
+    install, attempted = fake_naukri
+    queue = [_scored(80.0 - i, 1, "j%02d" % i) for i in range(5)]
+    install(queue, {"j00": ApplyStatus.QUOTA_EXPIRED})
+
+    monkeypatch.setattr(apply_module, "apply_button_kind", lambda driver, job: "external")
+    sites = []
+
+    def on_site(driver, job, profile, engine, settings, pdf):
+        sites.append(job.job_id)
+        return ExternalResult(status=ApplyStatus.APPLIED_EXTERNAL, url=job.url, detail="the site says: applied")
+
+    monkeypatch.setattr(external_module, "apply_on_company_site", on_site)
+    llm.note_out_of_quota("You've hit your session limit · resets 3pm (Asia/Calcutta)")
+
+    summary = _run(tmp_path, _settings(target_applications=5, external_apply=True, external_apply_limit=4))
+
+    assert attempted == ["j00"]
+    assert sites == [], "no employer's form is opened while the model cannot answer its questions"
+    assert summary.applied_external == 0

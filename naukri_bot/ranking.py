@@ -12,6 +12,7 @@ scoring contract intentionally has no settings argument).
 
 import logging
 import re
+from dataclasses import replace
 from typing import Any, Dict, List, Optional, Tuple
 
 from common import llm
@@ -212,6 +213,12 @@ def rank(
     settings: Settings,
 ) -> List[ScoredJob]:
     """Rank the lexical shortlist, blending optional LLM scores when available."""
+    if settings.any_location and profile.preferred_locations:
+        logger.info(
+            "ANY_LOCATION is on: scoring every city alike, ignoring %s",
+            ", ".join(profile.preferred_locations),
+        )
+        profile = replace(profile, preferred_locations=[])
     shortlist = prefilter(profile, jobs, settings.llm_rank_top_n)
     llm_results: Dict[str, Dict[str, Any]] = {}
     try:

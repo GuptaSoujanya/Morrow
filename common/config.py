@@ -136,6 +136,7 @@ def load_settings(
         "llm_rank_workers": _env_int("LLM_RANK_WORKERS", defaults.llm_rank_workers),
         "keywords": _env_list("KEYWORDS", defaults.keywords),
         "location": os.getenv("LOCATION", defaults.location),
+        "any_location": _env_bool("ANY_LOCATION", defaults.any_location),
         "pages_per_keyword": _env_int(
             "PAGES_PER_KEYWORD", defaults.pages_per_keyword
         ),
