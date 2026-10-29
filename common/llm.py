@@ -363,6 +363,7 @@ def score_jobs(
         "total_experience_years": profile.total_experience_years,
         "preferred_locations": profile.preferred_locations,
         "open_to_any_location": not profile.preferred_locations,
+        "work_authorization": profile.work_authorization,
         "resume_excerpt": profile.resume_text[:2500],
     }
     results: Dict[str, Dict[str, Any]] = {}
@@ -410,7 +411,10 @@ def _score_batch(
         "Score each job from 0 to 100 for this candidate. Penalise experience "
         "mismatch (especially jobs wanting 8+ years for a roughly 2.5-year "
         "candidate), wrong domain, and non-preferred locations unless "
-        "open_to_any_location is true, in which case ignore location. Reward LLM, "
+        "open_to_any_location is true, in which case ignore which city it is in. "
+        "Score 0 for a job the candidate could not legally take: one in a country "
+        "where work_authorization does not let them work, or that says it needs "
+        "visa sponsorship or citizenship they do not have. Reward LLM, "
         "AI, ML, agent, evaluation, and RAG roles. Return one entry per job.\n"
         "Candidate: %s\nJobs: %s"
     ) % (candidate_json, json.dumps(payload, ensure_ascii=True))

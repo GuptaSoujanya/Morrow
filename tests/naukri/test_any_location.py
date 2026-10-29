@@ -78,7 +78,32 @@ def test_the_judge_is_told_to_ignore_location_when_no_city_is_preferred():
     open_profile = Profile(full_name="T", titles=["AI Engineer"])
     llm.score_jobs(Client(), open_profile, [_job("Hyderabad")])
     assert '"open_to_any_location": true' in asked["prompt"]
-    assert "ignore location" in asked["prompt"]
+    assert "ignore which city it is in" in asked["prompt"]
+
+
+def test_a_job_she_could_not_legally_take_is_still_a_poor_match():
+    """Searching every location brought up San Francisco roles needing US work authorisation;
+    each one reached the browser agent before anybody noticed she cannot take it."""
+    asked = {}
+
+    class Client:
+        def available(self):
+            return True
+
+        def complete_json(self, prompt, schema):
+            asked["prompt"] = prompt
+            return {"jobs": []}
+
+    open_profile = Profile(
+        full_name="T",
+        titles=["AI Engineer"],
+        work_authorization="Indian citizen, authorised to work in India; no visa sponsorship needed",
+    )
+    llm.score_jobs(Client(), open_profile, [_job("San Francisco")])
+
+    assert '"work_authorization": "Indian citizen' in asked["prompt"]
+    assert "Score 0 for a job the candidate could not legally take" in asked["prompt"]
+    assert "visa sponsorship" in asked["prompt"]
 
 
 def test_a_candidate_with_cities_is_still_judged_on_them():
