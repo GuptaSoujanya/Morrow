@@ -84,3 +84,36 @@ def test_an_absolute_user_dir_is_honoured(mac_home, monkeypatch):
     monkeypatch.setenv(paths.USER_DIR_ENV, str(user))
     folder = paths.browser_home(mac_home / "src" / "apply")
     assert folder == user / "browser" and folder.is_symlink()
+
+
+def test_a_resume_in_a_protected_folder_is_uploaded_from_a_copy_the_browser_may_read(mac_home):
+    root = mac_home / "Desktop" / "apply"
+    resume = root / "user" / "resume" / "onboarding.pdf"
+    resume.parent.mkdir(parents=True)
+    resume.write_bytes(b"%PDF-1.4 one")
+
+    copy = paths.readable_upload(resume, root)
+
+    assert copy != resume and not paths.mac_protected(copy)
+    assert copy.name == "onboarding.pdf" and copy.read_bytes() == b"%PDF-1.4 one"
+
+
+def test_a_resume_that_changed_is_copied_again(mac_home):
+    root = mac_home / "Desktop" / "apply"
+    resume = root / "user" / "resume" / "onboarding.pdf"
+    resume.parent.mkdir(parents=True)
+    resume.write_bytes(b"first")
+    first = paths.readable_upload(resume, root)
+    resume.write_bytes(b"second draft")
+    os.utime(resume, (first.stat().st_mtime + 10, first.stat().st_mtime + 10))
+
+    assert paths.readable_upload(resume, root).read_bytes() == b"second draft"
+
+
+def test_a_resume_outside_those_folders_is_uploaded_where_it_lies(mac_home):
+    root = mac_home / "src" / "apply"
+    resume = root / "user" / "resume" / "onboarding.pdf"
+    resume.parent.mkdir(parents=True)
+    resume.write_bytes(b"%PDF-1.4")
+
+    assert paths.readable_upload(resume, root) == resume

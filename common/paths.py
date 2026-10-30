@@ -135,9 +135,38 @@ def mac_protected(path: Path) -> bool:
     return any(relative.is_relative_to(folder) for folder in MAC_PROTECTED)
 
 
-def private_browser_home(root: Path = ROOT) -> Path:
+def private_support_dir(root: Path = ROOT) -> Path:
     key = hashlib.sha256(str(root.resolve()).encode()).hexdigest()[:16]
-    return Path.home() / "Library" / "Application Support" / "Morrow" / key / "browser"
+    return Path.home() / "Library" / "Application Support" / "Morrow" / key
+
+
+def private_browser_home(root: Path = ROOT) -> Path:
+    return private_support_dir(root) / "browser"
+
+
+def readable_upload(path: Path, root: Path = ROOT) -> Path:
+    """A copy of a file a Chrome started by Morrow can read; the file itself when it already can.
+
+    macOS lets that Chrome see a file in a protected folder's name and size but not its bytes.
+    The resume looked attached and the employer's own upload then failed with
+    net::ERR_ACCESS_DENIED, which their forms show as "Failed to fetch", so several
+    applications were filled in completely and never sent. The copy sits beside the browser
+    profiles, which are kept out of those folders for the same reason.
+    """
+    path = Path(path)
+    if not mac_protected(path):
+        return path
+    try:
+        source = path.stat()
+        copy = private_support_dir(root) / "uploads" / path.name
+        copy.parent.mkdir(parents=True, exist_ok=True)
+        fresh = copy.exists() and copy.stat().st_size == source.st_size and copy.stat().st_mtime >= source.st_mtime
+        if not fresh:
+            shutil.copy2(str(path), str(copy))
+    except OSError as exc:
+        logger.warning("Could not copy %s somewhere this browser may read it (%s); using the original.", path, exc)
+        return path
+    return copy
 
 
 def _chrome_running_in(folder: Path) -> bool:
