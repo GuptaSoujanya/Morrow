@@ -524,7 +524,7 @@ _SKILL_FILLER = frozenset((
     "a", "an", "the", "any", "in", "of", "for", "with", "using", "hands-on", "hands", "on", "relevant",
     "experience", "exp", "years", "year", "yrs", "skills", "skill", "architecture", "engineer", "engineering",
     "development", "developer", "domain", "framework", "frameworks", "technology", "technologies", "tool",
-    "tools", "stack", "programming", "language", "languages",
+    "tools", "stack", "programming", "language", "languages", "integration", "integrations",
 ))
 #: Recruiters name a skill one way and a resume another: a question about "Generative AI" or "LLM"
 #: is answered by an "LLM evaluation" line, "AWS" by "AWS Bedrock", "Agent to Agent" by
@@ -565,7 +565,7 @@ def _skill_subjects(normalised_question: str) -> List[str]:
         return []
     subject = re.sub(r"[()]", " ", re.sub(r"\(s\)", "s", match.group("subject")))
     subjects = []
-    for part in re.split(r"\s*(?:,|&|\band\b|\bor\b|\bplus\b)\s*", subject):
+    for part in re.split(r"\s*(?:,|&|\band\b|\bor\b|\bplus\b|\bwith\b)\s*", subject):
         words = part.split()
         while words and words[0] in _SKILL_FILLER:
             words = words[1:]
@@ -1082,9 +1082,9 @@ class AnswerEngine:
         mappings: List[Tuple[Tuple[str, ...], str, str]] = [
             (("notice period",), "notice_period_days", "notice_period_days"),
             (("expected ctc", "expected salary", "expected annual salary", "expected compensation",
-              "expected annual ctc"), "expected_ctc_lpa", "expected_ctc_lpa"),
+              "expected annual ctc", "ectc"), "expected_ctc_lpa", "expected_ctc_lpa"),
             (("current ctc", "current salary", "current annual salary", "current compensation",
-              "current annual ctc", "present ctc", "present salary"), "current_ctc_lpa", "current_ctc_lpa"),
+              "current annual ctc", "present ctc", "present salary", "cctc"), "current_ctc_lpa", "current_ctc_lpa"),
             (("total experience", "overall experience"), "total_experience_years", "total_experience_years"),
             (("current location", "currently located"), "current_location", "current_location"),
             (("willing to relocate",), "willing_to_relocate", "willing_to_relocate"),

@@ -122,6 +122,8 @@ def _resume_engine(**settings_overrides):
         "How many years of experience do you have in Large Language Model(s)?",
         "How many years of experience do you have in LLMs?",
         "Years of experience with C++",
+        # "integrations" is a word no skills list repeats.
+        "How many years of experience do you have in LLM integrations (in Years)?",
     ],
 )
 def test_a_listed_skill_answers_with_total_experience_when_chosen(question):
@@ -171,6 +173,8 @@ def _own_resume_engine():
         "How many years of experience do you have in CI/CD?",
         "How many years of experience do you have in React?",
         "Years of experience with C++",
+        # Two names joined by "with": both are on this resume under other wordings.
+        "How many years of experience do you have in Gen AI with Machine Learning?",
     ],
 )
 def test_the_resumes_own_skills_answer_under_the_names_recruiters_use(question):
@@ -189,6 +193,7 @@ def test_the_resumes_own_skills_answer_under_the_names_recruiters_use(question):
         "How many years of experience do you have in Django?",
         # One listed skill and one not: a single number would claim years in the missing one.
         "How many years of experience do you have in Python and Kubernetes?",
+        "How many years of experience do you have in Python with Django?",
         "How many years of experience do you have in Machine Learning?",  # ML is not LLM work
     ],
 )
@@ -211,6 +216,8 @@ def _salary_engine():
     ("What is your present salary?", "16"),
     ("Expected annual salary in LPA", "20"),
     ("What is your expected compensation?", "20"),
+    ("Please share your ECTC in INR?", "20"),
+    ("What is your CCTC?", "16"),
 ])
 def test_salary_asked_with_a_word_in_between_is_still_answered_from_the_facts(question, answer):
     """Hirist asks 'current annual salary'; the plain 'current salary' phrase missed it."""
