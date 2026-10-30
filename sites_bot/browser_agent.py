@@ -563,7 +563,7 @@ def _strings(value: Any) -> List[str]:
 
 def to_result(driver: Any, run: AgentRun, previous: Any, dry_run: bool) -> Any:
     """The agent's report as an ExternalResult; a submit counts only with its proof on the page."""
-    from .external import DRY_RUN, GONE, already_applied
+    from .external import DRY_RUN, GONE, already_applied, confirmation_words
 
     report = run.report or {}
     status = str(report.get("status", "")).strip().lower()
@@ -581,6 +581,12 @@ def to_result(driver: Any, run: AgentRun, previous: Any, dry_run: bool) -> Any:
         if quote_on_page(driver, quote):
             result.status = ApplyStatus.APPLIED_EXTERNAL
             result.detail = "submitted by the browser agent; the site says: %s" % quote
+        elif confirmation_words(quote):
+            # Sites that answer with a toast take the words away again within seconds, so
+            # asking the page for them a minute later loses real applications. A quote the
+            # scripted path would already have counted as proof is counted here too.
+            result.status = ApplyStatus.APPLIED_EXTERNAL
+            result.detail = "submitted by the browser agent, which quoted the site: %s" % quote
         elif said:
             # It reports a submit it never made when the page already said applied.
             result.status = ApplyStatus.ALREADY_APPLIED

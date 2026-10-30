@@ -101,6 +101,8 @@ _FIELD_RULES = (
     (re.compile(r"\blast\s*name\b|\bsurname\b|\bfamily\s*name\b", re.I), "last_name"),
     (re.compile(r"\bfull\s*name\b|\blegal\s*name\b|\byour\s*name\b|^\W*name\W*$", re.I), "full_name"),
     (re.compile(r"e-?mail", re.I), "email"),
+    (re.compile(r"country\s*(/\s*region\s*)?(phone\s*)?code|dial(l?ing)?\s*code|\bisd\s*code\b"
+                r"|\bphone\s*code\b|\bcode\s*\(country\)", re.I), "country_code"),
     (re.compile(r"^(?!.*\b(extension|ext|country( phone)? code|device type)\b).*"
                 r"(\bphone|\bmobile|\bcontact\s*(number|no)|\btelephone|\bcell\b)", re.I), "phone"),
     (re.compile(r"linkedin", re.I), "linkedin_url"),
@@ -503,8 +505,20 @@ def known_values(profile: Profile) -> Dict[str, str]:
         "current_designation": _clean(extra.get("current_designation")),
         "current_location": _clean(profile.current_location),
         "country": _clean(extra.get("country")),
+        "country_code": dial_code(profile.phone) or _clean(extra.get("country")),
     }
     return {key: value for key, value in values.items() if value}
+
+
+def dial_code(phone: str) -> str:
+    """The country code a phone number carries: '+91 88789 50951' -> '+91'; "" when it has none.
+
+    Forms that keep the country in a list of its own left the phone short a code: the phone
+    rule skips those boxes on purpose, so that the whole number is not typed into one, and
+    nothing else answered them. Taken from the number itself rather than a country table.
+    """
+    found = re.match(r"\+\s*(\d{1,3})", _clean(phone))
+    return "+" + found.group(1) if found else ""
 
 
 def classify_label(question: str) -> Optional[str]:
@@ -774,6 +788,7 @@ def pick_from_combobox(driver: Any, element: Any, value: str, typed: bool = True
 
 
 def attach_file(driver: Any, element: Any, path: Path) -> bool:
+    path = paths.readable_upload(path)
     try:
         if not element.is_displayed():
             driver.execute_script(_UNHIDE_SCRIPT, element)
@@ -1597,13 +1612,18 @@ def next_page(driver: Any, step: Any) -> Tuple[bool, str]:
         time.sleep(POLL_S)
 
 
+def confirmation_words(text: str) -> str:
+    """The confirmation phrase a page or a quote of one holds, or "" when it holds none."""
+    lowered = _clean(text).lower()
+    return next((marker for marker in _CONFIRMED if marker in lowered), "")
+
+
 def wait_for_confirmation(driver: Any, timeout_s: float = CONFIRM_WAIT_S) -> Tuple[bool, str]:
     deadline = time.monotonic() + timeout_s
     while True:
-        body = _page_text(driver).lower()
-        for marker in _CONFIRMED:
-            if marker in body:
-                return True, "the site says: %s" % marker
+        marker = confirmation_words(_page_text(driver))
+        if marker:
+            return True, "the site says: %s" % marker
         try:
             errors = [
                 _clean(element.text)
@@ -1781,9 +1801,34 @@ def apply_here(
         result.status = ApplyStatus.APPLIED_EXTERNAL
         result.detail = detail
         return result
+    refused = _submit_refused(driver, detail)
+    if refused:
+        result.detail = "the site turned the Submit click down: %s" % refused
+        return result
     result.status = ApplyStatus.ERROR
     result.detail = "Submit was clicked but %s" % detail
     return result
+
+
+def _submit_refused(driver: Any, said: str) -> str:
+    """Why a clicked Submit sent nothing, or "" when a quiet success cannot be ruled out.
+
+    Both gates that decide what to try again refuse anything whose reason says the Submit
+    was clicked, because applying twice is worse than not applying. A site that answered
+    the click with an error of its own, or that is still showing the form with required
+    boxes empty, plainly has nothing on file, so those two are told apart here and left
+    open instead of being retired.
+    """
+    if said.startswith("the site reported"):
+        return said
+    blank = [
+        item.question or item.name
+        for item in application_fields(settled_fields(driver))
+        if item.required and not item.value
+    ]
+    if not blank:
+        return ""
+    return "the form is still on screen, unanswered: %s" % ", ".join(blank[:6])
 
 
 def _confirmed_by_brain(driver: Any, job: JobPosting, settings: Settings, answer_engine: Any) -> str:
@@ -1981,19 +2026,26 @@ _NEVER_AGAIN = re.compile(
 )
 
 
-# A form that marks its questions optional and keeps Next disabled until each one is
-# answered: the second, insisting pass answers those now, so these are worth a retry
-# on their own, without spending an agent task.
-_NOW_HANDLED = re.compile(r"stays disabled until every question is answered", re.I)
+# Walls that have since been taken down, so the stop they caused says nothing about what
+# another try would do. They are worth one on their own, ahead of every other rule here,
+# including the ones that otherwise retire a posting for good:
+#   - a form marking its questions optional while keeping Next disabled: the second,
+#     insisting pass answers those now;
+#   - an upload the browser itself refused (ERR_ACCESS_DENIED), which the employer's form
+#     reported as "Failed to fetch": the resume is now handed over from a folder this
+#     Chrome may read, so those forms can finish.
+_NOW_HANDLED = re.compile(r"stays disabled until every question is answered|ERR_ACCESS_DENIED", re.I)
 
 
 def retryable(entry: Dict[str, str], agent: bool = False) -> bool:
     """Whether another try can get further: the bot stopped on its own side, or the agent can clear the wall."""
     why = entry.get("why", "")
-    if not entry.get("site") or _NEVER_AGAIN.search(why):
+    if not entry.get("site"):
         return False
     if _NOW_HANDLED.search(why):
         return True
+    if _NEVER_AGAIN.search(why):
+        return False
     return not _WAITS_ON_YOU.search(why) or bool(agent and _FOR_THE_AGENT.search(why))
 
 

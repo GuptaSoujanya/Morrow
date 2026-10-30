@@ -324,7 +324,7 @@ def test_a_password_with_quotes_is_written_so_dotenv_reads_it_back(tmp_path):
 
 
 def test_a_submit_without_its_confirmation_on_the_page_is_never_retried(claude, settings, profile, job):
-    claude.report = {"status": "submitted", "why": "clicked Submit", "confirmation": THANKS}
+    claude.report = {"status": "submitted", "why": "clicked Submit", "confirmation": "the form closed itself"}
     result = agent.take_over(_Driver(), job, profile, settings, None, False, _stuck())
     assert result.status == ApplyStatus.ERROR
     assert result.detail.startswith("Submit was clicked by the browser agent")
@@ -490,3 +490,25 @@ def test_the_stop_reason_names_the_api_error_hidden_behind_a_success_subtype():
     assert agent._stop_reason({"subtype": "error_max_budget_usd", "result": "error_max_budget_usd"}) == \
         "error_max_budget_usd"
     assert agent._stop_reason({}) == "error"
+
+
+def test_a_confirmation_the_site_showed_and_took_away_still_counts(claude, settings, profile, job, monkeypatch):
+    _company_site(monkeypatch, _stuck())
+    claude.report = {"status": "submitted", "confirmation": "Application submitted successfully"}
+    driver = _Driver({"naukri": "Naukri", "site": "Careers at Acme | Open roles"})
+
+    result = ext.apply_on_company_site(driver, job, profile, None, settings)
+
+    assert result.status == ApplyStatus.APPLIED_EXTERNAL
+    assert result.detail == "submitted by the browser agent, which quoted the site: Application submitted successfully"
+
+
+def test_words_that_do_not_say_an_application_arrived_are_not_taken_on_trust(claude, settings, profile, job, monkeypatch):
+    _company_site(monkeypatch, _stuck())
+    claude.report = {"status": "submitted", "confirmation": "Message has been sent"}
+    driver = _Driver({"naukri": "Naukri", "site": "Careers at Acme | Open roles"})
+
+    result = ext.apply_on_company_site(driver, job, profile, None, settings)
+
+    assert result.status == ApplyStatus.ERROR
+    assert "confirmation is not on the page" in result.detail

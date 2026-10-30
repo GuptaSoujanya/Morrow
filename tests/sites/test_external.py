@@ -430,6 +430,10 @@ def _confirming_page(**kwargs):
         ("Surname", "last_name"),
         ("Email address", "email"),
         ("Mobile number", "phone"),
+        ("Country Phone Code", "country_code"),
+        ("Country/Region Code", "country_code"),
+        ("ISD Code", "country_code"),
+        ("Phone Extension", None),
         ("LinkedIn Profile", "linkedin_url"),
         ("GitHub", "github_url"),
         ("Current Location", "current_location"),
@@ -451,6 +455,41 @@ def test_known_values_split_the_full_name_and_read_the_extra_facts():
     assert values["linkedin_url"] == "https://linkedin.com/in/jane"
     assert values["country"] == "India"
     assert "github_url" not in values
+
+
+@pytest.mark.parametrize(
+    "phone, code",
+    [("+91 90000 00000", "+91"), ("+1-415-555-1234", "+1"), ("+44 20 7946 0958", "+44"), ("9000000000", ""), ("", "")],
+)
+def test_the_country_code_comes_from_the_number_itself(phone, code):
+    assert ext.dial_code(phone) == code
+
+
+def test_a_number_without_a_country_code_falls_back_to_the_country_on_file():
+    values = ext.known_values(replace(PROFILE, phone="9000000000"))
+
+    assert values["country_code"] == "India"
+
+
+@pytest.mark.parametrize(
+    "options, chosen",
+    [
+        (["Select...", "+91", "+1", "+44"], "+91"),
+        (["Select...", "India (+91)", "United States (+1)"], "India (+91)"),
+        (["Select...", "+1", "+44"], None),
+    ],
+)
+def test_a_country_code_list_of_its_own_is_answered_from_the_phone_number(tmp_path, options, chosen):
+    page = _Page(
+        GREENHOUSE,
+        fields=_form() + [_Control("select", "Country Phone Code", required=True, name="isd", options=options)],
+    )
+    page.buttons = [_Button("Submit application", kind="submit")]
+    field = _by_name(page, "isd")
+
+    ext.apply_here(_browser(page), JOB, PROFILE, _Engine(), _settings(), _resume(tmp_path), dry_run=True)
+
+    assert field.value == (chosen or "")
 
 
 @pytest.mark.parametrize(
@@ -667,7 +706,7 @@ def test_a_required_question_without_an_answer_stops_short_of_submitting(tmp_pat
     assert "First Name *" in result.filled
 
 
-def test_the_site_reporting_an_error_after_submit_is_not_counted(tmp_path):
+def test_the_site_reporting_an_error_after_submit_is_not_counted_and_stays_open(tmp_path):
     page = _Page(GREENHOUSE, fields=_form())
 
     def rejected():
@@ -677,9 +716,46 @@ def test_the_site_reporting_an_error_after_submit_is_not_counted(tmp_path):
 
     result = ext.apply_here(_browser(page), JOB, PROFILE, _Engine(), _settings(), _resume(tmp_path), dry_run=False)
 
+    assert result.status == ApplyStatus.EXTERNAL_MANUAL
+    assert result.detail == "the site turned the Submit click down: the site reported: Phone number is invalid"
+    assert result.to_apply_result(JOB).status == ApplyStatus.EXTERNAL_MANUAL
+    assert ext.retryable({"site": GREENHOUSE, "why": result.detail})
+    assert browser_agent.should_take_over(_settings(browser_agent=True), result)
+
+
+def test_a_form_still_asking_for_an_answer_after_submit_was_not_sent(tmp_path, monkeypatch):
+    monkeypatch.setattr(ext, "CONFIRM_WAIT_S", 0.0)
+    monkeypatch.setattr(ext, "SETTLE_S", 0.0)
+    page = _Page(GREENHOUSE, fields=_form())
+
+    def refused():
+        page.fields = [_Control("tel", "Phone Number *", required=True, name="phone2")]
+
+    page.buttons = [_Button("Submit application", refused, kind="submit")]
+
+    result = ext.apply_here(_browser(page), JOB, PROFILE, _Engine(), _settings(), _resume(tmp_path), dry_run=False)
+
+    assert result.status == ApplyStatus.EXTERNAL_MANUAL
+    assert result.detail == "the site turned the Submit click down: the form is still on screen, unanswered: Phone Number *"
+    assert ext.retryable({"site": GREENHOUSE, "why": result.detail})
+
+
+def test_a_submit_that_left_no_trace_is_still_held_back_in_case_it_went_through(tmp_path, monkeypatch):
+    monkeypatch.setattr(ext, "CONFIRM_WAIT_S", 0.0)
+    monkeypatch.setattr(ext, "SETTLE_S", 0.0)
+    page = _Page(GREENHOUSE, fields=_form())
+
+    def quiet():
+        page.fields = []
+
+    page.buttons = [_Button("Submit application", quiet, kind="submit")]
+
+    result = ext.apply_here(_browser(page), JOB, PROFILE, _Engine(), _settings(), _resume(tmp_path), dry_run=False)
+
     assert result.status == ApplyStatus.ERROR
-    assert result.detail == "Submit was clicked but the site reported: Phone number is invalid"
-    assert result.to_apply_result(JOB).status == ApplyStatus.ERROR
+    assert result.detail == "Submit was clicked but no confirmation within 0 seconds"
+    assert not ext.retryable({"site": GREENHOUSE, "why": result.detail})
+    assert not browser_agent.should_take_over(_settings(browser_agent=True), result)
 
 
 def test_silence_after_submit_is_not_a_confirmation():
@@ -2068,7 +2144,7 @@ def test_an_error_after_submit_is_never_sent_to_the_brain(tmp_path):
     result = ext.apply_here(_shooting(page), JOB, PROFILE, _BrainEngine(brain), _settings(screenshot_dir=str(tmp_path)),
                             _resume(tmp_path), dry_run=False)
 
-    assert result.status == ApplyStatus.ERROR and brain.calls == []
+    assert result.status == ApplyStatus.EXTERNAL_MANUAL and brain.calls == []
 
 
 # ---------------------------------------------------------------------------
@@ -2086,6 +2162,8 @@ def test_an_error_after_submit_is_never_sent_to_the_brain(tmp_path):
         ("needs you for: Password*", True),
         ("the site asks for an account: signing up on x needs a code it emails to me@x.com; sign up there once", False),
         ("the site shows a check only a person may answer (screenshot: s.png)", False),
+        ("the browser agent stopped (failed): the browser blocked the upload "
+         "(POST /api/upload failed with net::ERR_ACCESS_DENIED)", True),
     ],
 )
 def test_only_entries_stopped_on_the_bots_side_are_tried_again(why, again):
