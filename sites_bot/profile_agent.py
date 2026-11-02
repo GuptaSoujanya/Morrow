@@ -111,6 +111,7 @@ class Section:
     # The approved edit target survives agent reports and repair passes.
     target: str = ""
     fact_key: str = ""
+    project_dates: Dict[str, str] = field(default_factory=dict)
 
     @property
     def wanted(self) -> str:
@@ -707,6 +708,8 @@ def _claim_rank(outcome: Tuple[Optional[bool], List[str]]) -> Tuple[bool, int]:
 
 def confirm(section: "Section", page: str) -> Tuple[Optional[bool], List[str]]:
     """Verify the approved target; the report's shorter evidence cannot replace it."""
+    if section.project_dates:
+        return profile_contract.verify_project_dates(section.project_dates, page)
     if section.fact_key:
         return profile_contract.verify_fact(section.fact_key, section.wanted, page)
     heading, lead = _locate(section.name)
@@ -815,16 +818,19 @@ def add_planned(result: ProfileCheck, edits: Optional[List[Dict[str, str]]], pag
         for section in reported:
             section.target = target or section.target
             section.fact_key = edit.get('fact_key', '')
+            section.project_dates = edit.get('project_dates', {})
             if section.action in (UNSUPPORTED, EXCLUDED, 'skipped'):
                 section.action = action
         if reported:
             continue
-        section = Section(name=edit['name'], action=action, target=target, fact_key=edit.get('fact_key', ''))
+        section = Section(name=edit['name'], action=action, target=target, fact_key=edit.get('fact_key', ''),
+                          project_dates=edit.get('project_dates', {}))
         on_page, missing = confirm(section, page) if page and target else (None, [])
         done = on_page is True and not missing
         result.sections.append(Section(
             name=edit["name"], action=ALREADY_OK if done else action, before=edit.get("current", ""),
             target=target, fact_key=edit.get('fact_key', ''), on_page=on_page, missing=missing,
+            project_dates=edit.get('project_dates', {}),
             note="planned; the page shows it" if done else edit.get('why') or "planned, but the agent never reported it"))
 
 
@@ -1021,6 +1027,7 @@ def _merge(result: ProfileCheck, repaired: ProfileCheck) -> ProfileCheck:
             missing=list(fresh.missing),
             target=section.target or fresh.target,
             fact_key=section.fact_key or fresh.fact_key,
+            project_dates=section.project_dates or fresh.project_dates,
             note=" ".join(part for part in (section.note, fresh.note) if part).strip(),
         )
     result.completeness_after = repaired.completeness_after or result.completeness_after
@@ -1084,7 +1091,7 @@ def repair(driver: Any, board: Board, settings: Settings, result: ProfileCheck, 
         # The approved target must be verified again in a repair. Otherwise a
         # short new 'already_ok' report could erase an earlier failed target.
         repair_edits = [dict(name=s.name, action='update', target=s.wanted,
-                            current=s.before, fact_key=s.fact_key) for s in broken]
+                            current=s.before, fact_key=s.fact_key, project_dates=s.project_dates) for s in broken]
         repaired = check(driver, board, settings, agent.report, None, folder, repair_edits, profile=profile)
         result = _merge(result, repaired)
         page_path = folder / 'page-after.txt'
@@ -1374,7 +1381,7 @@ def run(driver: Any, board: Board, settings: Settings, profile: Optional[Profile
     if plan is not None and plan.ats is not None:
         notes += " (local resume heuristic %d/100)" % plan.ats.score
     for section in result.unverified:
-        logger.warning("%s: %s is still not on the reloaded profile (wanted: %s%s)", board.label, section.name,
+        logger.warning("%s: could not verify all requested fields for %s after reload (wanted: %s%s)", board.label, section.name,
                        section.wanted[:120],
                        "; missing: %s" % ", ".join(section.missing) if section.missing else "")
     if not result.saved:

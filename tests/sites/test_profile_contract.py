@@ -103,6 +103,58 @@ def test_decimal_experience_has_unambiguous_month_selectors():
     assert '2 years and 11 months' in experience['why']
 
 
+def test_matching_project_description_cannot_omit_supplied_dates():
+    profile = Profile(extra_facts={'projects_detail': [
+        dict(name='Morrow', start='2026-08', end='2026-10', status='Completed')]})
+    edits = contract.reconcile([dict(name='Project: Morrow', action='keep', current='Existing description', target='')],
+                               profile, 'linkedin', None)
+    dates = next(edit for edit in edits if edit['name'] == 'Project dates: Morrow')
+    assert dates['target'] == 'Aug 2026 - Oct 2026'
+    assert dates['project_dates'] == dict(name='Morrow', start='2026-08', end='2026-10')
+    result = agent.ProfileCheck(False, '')
+    agent.add_planned(result, [dates], '')
+    assert result.sections[0].project_dates == dates['project_dates']
+    assert not result.coverage['complete']
+
+
+@pytest.mark.parametrize('body,expected', [
+    ('Morrow Aug 2026 - Oct 2026 A description', True),
+    ('Morrow August 2026 – October 2026 A description', True),
+    ('Morrow Aug 2026 - Present A description', False),
+    ('Morrow Sep 2026 - Oct 2026 A description', False),
+    ('Morrow Description says Aug 2026 - Oct 2026', False),
+    ('Another project Aug 2026 - Oct 2026', None),
+    ('Morrow Description https://www.linkedin.com/in/me/details/projects/edit/forms/2/ Another project Aug 2026 - Oct 2026', False),
+])
+def test_project_dates_require_the_correct_entry_and_date_fields(body, expected):
+    dates = dict(name='Morrow', start='2026-08', end='2026-10')
+    section = agent.Section('Project dates: Morrow', 'updated', project_dates=dates,
+                            target='Aug 2026 - Oct 2026')
+    page = 'https://www.linkedin.com/in/me/details/projects/edit/forms/1/ ' + body
+    assert agent.confirm(section, page)[0] is expected
+
+
+def test_invalid_project_timeline_is_never_sent_to_an_editor():
+    profile = Profile(extra_facts={'projects_detail': [dict(name='RideMate', start='2025-11', end='2024-09')]})
+    edit = contract.project_date_edits(profile, 'linkedin')[0]
+    assert edit['action'] == 'skip' and edit['target'] == ''
+    assert 'needs review' in edit['why']
+
+
+def test_optional_missing_project_dates_do_not_get_invented():
+    profile = Profile(extra_facts={'projects_detail': [dict(name='Morrow', start='2026-08')]})
+    assert contract.project_date_edits(profile, 'linkedin') == []
+    assert contract.project_date_edits(profile, 'instahyre') == []
+
+
+def test_naukri_project_dates_are_scoped_to_the_card_header():
+    dates = dict(name='RideMate', start='2024-09', end='2024-09')
+    page = 'RideMate editOneTheme Self (Offsite) Sep 2024 to Sep 2024 ( Full Time ) A description'
+    assert contract.verify_project_dates(dates, page)[0] is True
+    page = 'RideMate editOneTheme Self (Offsite) A description. Another project editOneTheme Self (Offsite) Sep 2024 to Sep 2024'
+    assert contract.verify_project_dates(dates, page)[0] is False
+
+
 def test_duplicate_detection_uses_distinct_entry_ids_not_repeated_views():
     first = dict(kind='projects', id='123', name='RideMate')
     assert contract.duplicates([first, first]) == []

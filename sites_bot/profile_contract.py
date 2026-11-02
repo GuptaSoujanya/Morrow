@@ -8,6 +8,7 @@ import hashlib
 import json
 import re
 from decimal import Decimal, InvalidOperation
+from datetime import datetime
 from typing import Any, Dict, List
 
 
@@ -163,6 +164,61 @@ def verify_fact(field: str, target: str, page: str):
     return False, [target]
 
 
+def project_date_edits(profile: Any, board: str) -> List[Dict[str, Any]]:
+    """Dates need their own check even when a project's description already matches."""
+    if board not in ('linkedin', 'naukri') or profile is None:
+        return []
+    edits = []
+    for project in (getattr(profile, 'extra_facts', {}) or {}).get('projects_detail', []):
+        if not isinstance(project, dict) or not project.get('name'):
+            continue
+        start, end = str(project.get('start', '')), str(project.get('end', ''))
+        if not start or not end:
+            continue  # Never infer dates from a matching description.
+        name = str(project['name'])
+        try:
+            dates = [datetime.strptime(value, '%Y-%m') for value in (start, end)]
+            if any(date.strftime('%Y-%m') != value for date, value in zip(dates, (start, end))) or dates[1] < dates[0]:
+                raise ValueError('invalid timeline')
+        except ValueError:
+            edits.append(dict(name='Project dates: ' + name, action='skip', target='', current='',
+                              why='needs review: invalid project start/end dates in profile.yaml'))
+            continue
+        edits.append(dict(name='Project dates: ' + name, action='update', current='',
+                          target=' - '.join(date.strftime('%b %Y') for date in dates),
+                          project_dates=dict(name=name, start=start, end=end),
+                          why='Dates from the user-confirmed project facts. Edit the existing unique project in place, '
+                              'preserving its description, skills and links. A matching description does not prove the dates. '
+                              'If both dates already match, report already_ok without saving. Do not create another project.'))
+    return edits
+
+
+def verify_project_dates(project: Dict[str, str], page: str):
+    """Read dates from this project's own LinkedIn/Naukri card, never its prose."""
+    entries = re.split(r'https://(?:www\.)?linkedin\.com/in/[^/\s]+/details/projects/(?:edit/forms/\d+|\d+/edit)/\s*', page)
+    name = re.escape(project['name'])
+    month = r'(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)'
+    date_range = re.compile(r'^\s*' + month + r'\s+(\d{4})\s*(?:-|–|—|to)\s*' + month + r'\s+(\d{4})\b', re.I)
+    headers = []
+    for entry in entries[1:]:
+        title = re.match(name + r'(?=\s|$)', entry, re.I)
+        if title:
+            headers.append(entry[title.end():])
+    # Naukri renders personal projects as title, edit icon, Self, and date range.
+    for match in re.finditer(r'\b' + name + r'\s+editOneTheme\s+Self(?:\s*\((?:Offsite|Onsite)\))?\s+', page, re.I):
+        headers.append(page[match.end():])
+    outcomes = []
+    for header in headers:
+        match = date_range.match(header)
+        if not match:
+            outcomes.append(False)
+            continue
+        values = [datetime.strptime(match.group(m)[:3].title() + ' ' + match.group(y), '%b %Y').strftime('%Y-%m')
+                  for m, y in ((1, 2), (3, 4))]
+        outcomes.append(values == [project['start'], project['end']])
+    return (all(outcomes), [] if all(outcomes) else ['project start/end dates']) if outcomes else (None, [])
+
+
 def reconcile(edits: List[Dict[str, str]], profile: Any, board: str, plan: Any) -> List[Dict[str, str]]:
     """Keep factual targets and planned entities in the contract even if the LLM omits them."""
     result = [dict(e) for e in edits]
@@ -211,6 +267,9 @@ def reconcile(edits: List[Dict[str, str]], profile: Any, board: str, plan: Any) 
             result.append(dict(name='Education', target=profile.highest_qualification, current='',
                                action='update' if profile.highest_qualification else 'skip',
                                why='Verify education against the saved facts and resume.'))
+    for edit in project_date_edits(profile, board):
+        result = [previous for previous in result if key(previous['name']) != key(edit['name'])]
+        result.append(edit)
     # Stable identity for retries: two differently labelled planner rows for the
     # same field must not result in two independent writes.
     unique = {}
@@ -248,13 +307,13 @@ _ENTRIES_JS = r"""
 // Read identities, never infer duplicates from repeated page text/navigation.
 const records = [];
 for (const a of document.querySelectorAll('a[href]')) {
-  const match = a.getAttribute('href').match(/\/details\/(projects|certifications)\/(\d+)\/edit(?:\/|\?|$)/);
+  const match = a.getAttribute('href').match(/\/details\/(projects|certifications)\/(?:(\d+)\/edit|edit\/forms\/(\d+))(?:\/|\?|$)/);
   if (!match) continue;
   const card = a.closest('li') || a.closest('[data-view-name="profile-component-entity"]');
   if (!card || !card.getClientRects().length) continue;
   const lines = card.innerText.split('\n').map(x => x.trim()).filter(Boolean);
   const name = lines.find(x => !/^(edit|delete|remove)\b/i.test(x));
-  if (name) records.push({kind: match[1], id: match[2], name});
+  if (name) records.push({kind: match[1], id: match[2] || match[3], name});
 }
 return records;
 """
