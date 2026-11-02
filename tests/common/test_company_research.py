@@ -60,6 +60,22 @@ def test_ambiguous_or_wrong_company_does_not_gain_facts():
     assert research.validate(reply(), {'name':'Different Employer'}, page)['fields'] == {}
 
 
+def test_identity_quote_can_name_role_when_page_identifies_employer():
+    response=reply()
+    response['identity']['evidence']='Email careers@acme.com to apply'
+    assert research.validate(response, {'name':'Acme Labs'}, page)['fields']['email']
+
+
+def test_model_paraphrases_are_replaced_with_literal_source_excerpts():
+    response=reply()
+    response['identity']['evidence']='A paraphrase, not a quotation'
+    response['fields']['email'][0]['evidence']='Contact their hiring team'
+    result=research.validate(response, {'name':'Acme Labs'}, page)
+    evidence=result['fields']['email'][0]['evidence']
+    assert 'careers@acme.com' in evidence and evidence in page('https://acme.com')['text']
+    assert 'A paraphrase' not in result['identity']['evidence']
+
+
 def test_research_is_resumable_and_reuses_company_evidence(db):
     first = research.run(db, limit=1, ask=lambda _:reply(), fetch=page)
     assert first == dict(completed=1, failed=0, remaining=1)
