@@ -1612,6 +1612,28 @@ def next_page(driver: Any, step: Any) -> Tuple[bool, str]:
         time.sleep(POLL_S)
 
 
+def repair_refused(driver: Any, engine: Any, error: str) -> List[str]:
+    """Re-answer the text boxes the site marked invalid, in the shape its error asks; the questions changed."""
+    correct = getattr(engine, "correct", None)
+    if correct is None:
+        return []
+    fixed = []  # type: List[str]
+    for item in discover_fields(driver):
+        if item.kind not in ("text", "number", "textarea") or item.is_combobox or not item.value:
+            continue
+        try:
+            invalid = (item.element.get_attribute("aria-invalid") or "").lower() == "true"
+        except WebDriverException:
+            continue
+        label = item.question or item.name
+        if not invalid or not label or HONEYPOT.search(label) or _ACCOUNT.search(label):
+            continue
+        value = correct(label, item.value, error)
+        if value and set_text(driver, item.element, value):
+            fixed.append(label)
+    return fixed
+
+
 def confirmation_words(text: str) -> str:
     """The confirmation phrase a page or a quote of one holds, or "" when it holds none."""
     lowered = _clean(text).lower()
@@ -1678,6 +1700,13 @@ def apply_here(
     if said:
         result.status = ApplyStatus.ALREADY_APPLIED
         result.detail = "this one is already in; the page says: %s" % said
+        return result
+    # Intercept explicit email-application links before a generic Apply click can
+    # hand them to the operating system's mail app. The agent opens the configured Gmail.
+    from .application_brain import mailbox
+    recipient = mailbox(driver)
+    if recipient:
+        result.detail = 'this employer takes applications by email only: %s' % recipient
         return result
     waiting = site_already_waiting(settings, url, settings.browser_agent)
     if waiting:
@@ -1764,6 +1793,8 @@ def apply_here(
             result.detail = "dry run: page %d filled (%d fields), the next page was not opened" % (page, len(result.filled))
             return result
         moved, problem = next_page(driver, step)
+        if not moved and problem.startswith("the site reported") and repair_refused(driver, answer_engine, problem):
+            moved, problem = next_page(driver, step)
         if not moved:
             result.detail = "page %d did not move on: %s" % (page, problem)
             return result

@@ -464,6 +464,8 @@ def answer_form(
         if step is None:
             break
         moved, problem = ext.next_page(driver, step)
+        if not moved and problem.startswith("the site reported") and ext.repair_refused(driver, engine, problem):
+            moved, problem = ext.next_page(driver, step)
         if not moved:
             return False, filled, ["the form did not move on (%s)" % problem]
     held = ext.disabled_step(driver)

@@ -469,7 +469,7 @@ def score_jobs(
     results: Dict[str, Dict[str, Any]] = {}
     schema = (
         '{"jobs": [{"job_id": "...", "score": 0, '
-        '"verdict": "strong|possible|weak", "reasons": ["..."]}]}'
+        '"verdict": "strong|possible|weak", "reasons": ["..."], "gaps": ["..."]}]}'
     )
     # score_jobs takes no settings; the client carries them.
     client_settings = getattr(client, "settings", None)
@@ -494,6 +494,7 @@ def _score_batch(
 ) -> Dict[str, Dict[str, Any]]:
     results: Dict[str, Dict[str, Any]] = {}
     allowed_ids = {job.job_id for job in batch}
+    skills = json.loads(candidate_json).get("skills") or []
     payload = [
         {
             "job_id": job.job_id,
@@ -517,11 +518,11 @@ def _score_batch(
         "where work_authorization does not let them work, or that says it needs "
         "visa sponsorship or citizenship they do not have. Reward LLM, "
         "AI, ML, agent, evaluation, and RAG roles. Return one entry per job.\n"
-        "Candidate: %s\nJobs: %s"
         "gaps: up to 3 things the job explicitly requires that the candidate's "
         "facts and resume do not show, each a short noun phrase such as "
         "\"Kubernetes\" or \"5+ years of Java\". Never list something the "
         "candidate has; empty when nothing is missing.\n"
+        "Candidate: %s\nJobs: %s"
     ) % (candidate_json, json.dumps(payload, ensure_ascii=True))
     response = complete_checked(client, prompt, schema, lambda r: _batch_problems(r, sorted(allowed_ids)))
     if response is None:
@@ -554,12 +555,11 @@ def _score_batch(
             "score": max(0.0, min(100.0, score)),
             "verdict": verdict,
             "reasons": reasons,
-        }
             "gaps": real_gaps(entry.get("gaps"), skills),
+        }
     return results
 
 
-def _normalise_space(value: str) -> str:
 def _skill_key(text: str) -> str:
     # "APIs" and "API", "Node.js" and "nodejs": case, punctuation and a plural s do not make two skills.
     words = re.findall(r"[a-z0-9+#]+", text.casefold())
@@ -587,6 +587,7 @@ def real_gaps(raw: Any, skills: List[str]) -> List[str]:
     return gaps[:3]
 
 
+def _normalise_space(value: str) -> str:
     return " ".join(value.split()).casefold()
 
 
@@ -694,6 +695,7 @@ def resolve_answer(
     options: Optional[List[str]] = None,
     prior: Optional[Dict[str, str]] = None,
     job_context: Optional[Dict[str, str]] = None,
+    rejected: Optional[Dict[str, str]] = None,
 ) -> AnswerResolution:
     if not client.available():
         return _abstain(question, "llm_unavailable")
@@ -727,10 +729,10 @@ def resolve_answer(
         request["options"] = usable_options
     if prior:
         request["prior_answers"] = prior
-    prompt = (
-        "Answer ONLY from the supplied facts. If the facts do not contain what "
     if rejected:
         request["site_rejected"] = rejected
+    prompt = (
+        "Answer ONLY from the supplied facts. If the facts do not contain what "
         "is needed, you MUST abstain. Never estimate, never infer, never use a "
         "typical or common value. grounded_in must name the exact supplied fact "
         "key supporting the answer. For options, copy one option exactly.\n"
@@ -741,8 +743,6 @@ def resolve_answer(
         "interview or walk-in with no city named is at job_location. Never "
         "treat job_ facts as statements about the candidate, and never answer "
         "a question about the candidate from them alone.\n"
-        # These answers go into a chat box, not a cover letter. A yes/no question
-        # answered in 192 characters was rejected outright: the drawer closed
         "prior_answers, when present, are this form's earlier questions and "
         "the answers already typed: use them only to tell what a follow-up such "
         "as \"If yes, which city?\" refers to, and still ground the answer in a fact.\n"
@@ -751,6 +751,8 @@ def resolve_answer(
         "site_rejected, when present, is the answer the site refused and its "
         "error message: give the same fact in the shape the error asks for, "
         "such as a bare whole number, or abstain if no fact fits.\n"
+        # These answers go into a chat box, not a cover letter. A yes/no question
+        # answered in 192 characters was rejected outright: the drawer closed
         # without submitting and the application was lost. Four of thirty-eight
         # attempts failed this way in one run, all of them long answers, while
         # every short answer went through.
@@ -972,8 +974,8 @@ __all__ = [
     "NullClient",
     "build_client",
     "claims_nothing",
+    "complete_checked",
     "judge_answer",
     "resolve_answer",
     "score_jobs",
 ]
-    "complete_checked",

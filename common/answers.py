@@ -378,6 +378,15 @@ class AnswerBook:
         return True
 
 
+#: How many of this form's earlier answers a follow-up question is shown.
+_FORM_MEMORY = 8
+#: "If yes, ...", "If so", "If not, why?", "Please specify", "mentioned above": the answer depends on an earlier one.
+_FOLLOW_UP = re.compile(
+    r"^\s*if\b|\bif (?:yes|no|so|not|applicable)\b|\b(?:please )?specify\b|\b(?:above|previous|earlier) (?:question|answer)\b",
+    re.IGNORECASE,
+)
+
+
 def _is_per_job(answer: str) -> bool:
     return " ".join(answer.split()).casefold() == PER_JOB.casefold()
 
@@ -600,6 +609,8 @@ class AnswerEngine:
         self.job_context: Dict[str, str] = {}
         self.job = None  # type: Any
         self.book = install_answer_book(settings)
+        # This form's answers so far, so "If yes, which city?" can read what "yes" was about.
+        self.form_answers = {}  # type: Dict[str, str]
 
     def _refresh_fingerprint(self):
         # Manual edits invalidate old learned answers; adding learned entries
@@ -617,6 +628,7 @@ class AnswerEngine:
         nothing to resolve it against and abstains, which skips the job.
         """
         self.job = job
+        self.form_answers = {}
         self.job_context = {
             key: value
             for key, value in (
@@ -644,7 +656,12 @@ class AnswerEngine:
         identity = hashlib.sha256(request.encode()).hexdigest()
         path = Path(self.book.path).parent / ".answer_requests" / identity
         with locked_file(path):
-            return self._resolve_unlocked(question, options, field_type)
+            resolution = self._resolve_unlocked(question, options, field_type)
+        if not resolution.abstained and resolution.answer is not None:
+            self.form_answers[" ".join(question.split())[:200]] = resolution.answer.text[:200]
+            while len(self.form_answers) > _FORM_MEMORY:
+                self.form_answers.pop(next(iter(self.form_answers)))
+        return resolution
 
     def _resolve_unlocked(
         self,
@@ -681,12 +698,16 @@ class AnswerEngine:
             return self._accept(question, direct, field_type, persist=True)
 
         requested_fingerprint = self.profile_fingerprint
+        # From beatwad/LinkedIn-AI-Job-Applier-Ultimate: a follow-up is read with the
+        # questions before it. Only a follow-up gets them, so ordinary answers stay cacheable.
+        follow_up = bool(_FOLLOW_UP.search(question))
         llm_resolution = llm.resolve_answer(
             self.client,
             self.profile,
             question,
             options=options,
             job_context=self.job_context,
+            prior=dict(self.form_answers) if follow_up and self.form_answers else None,
         )
         self._refresh_fingerprint()
         if self.profile_fingerprint != requested_fingerprint:
@@ -707,7 +728,7 @@ class AnswerEngine:
         # Cached, "Yes" to a walk-in at a Noida employer would be replayed to a
         # Chennai one, since the cache is keyed on the question text and the
         # profile fingerprint -- neither of which changes between jobs.
-        persist = not _used_job_context(llm_resolution) and not is_job_dependent(question)
+        persist = not _used_job_context(llm_resolution) and not is_job_dependent(question) and not follow_up
         if not persist:
             logger.info(
                 "Not caching the answer to %r: it depends on this posting (%s)",
@@ -718,6 +739,21 @@ class AnswerEngine:
         if persist and not accepted.abstained:
             self._save_learned(question, accepted.answer.text, accepted.answer.grounded_in, options)
         return accepted
+
+    def correct(self, question: str, refused: str, error: str) -> Optional[str]:
+        """The same fact in the shape the site's error asks for, or None. Never cached.
+
+        From beatwad/LinkedIn-AI-Job-Applier-Ultimate: "Enter a whole number between
+        0 and 30" says what "30 days" should have been.
+        """
+        resolution = llm.resolve_answer(
+            self.client, self.profile, question, job_context=self.job_context,
+            rejected={"answer": refused[:200], "error": error[:300]},
+        )
+        if resolution.abstained or resolution.answer is None:
+            return None
+        text = resolution.answer.text.strip()
+        return text if text and text != refused.strip() else None
 
     def _save_learned(self, question, answer, grounding, options=None, multi=False):
         if self.settings.answer_mode != AnswerMode.AUTO or is_job_dependent(question):
