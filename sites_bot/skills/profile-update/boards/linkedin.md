@@ -13,7 +13,9 @@ in step with her resume so recruiters using LinkedIn Recruiter find her for her 
 ## Sections, in the order to work through them
 
 1. **Intro card** (pencil on the top card): the **Headline** (max 220 characters) is the planned headline.
-   Do not change her name, pronouns, location or contact info.
+   Set current location from the explicit current-location fact when the edit plan requests it.
+   Do not change her name, pronouns or contact info. Do not substitute the employer's location
+   or a preferred location for the user's current location.
 2. **About** (max 2600 characters): the planned About text, short paragraphs, first person.
 3. **Experience**: the current position's title and company must match the facts; when its description is
    empty or thinner than the plan, enter the planned job profile for that role (max 2000 characters, the

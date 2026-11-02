@@ -756,8 +756,8 @@ def _count(summary: RunSummary, result: ApplyResult) -> None:
 _PROFILE_TASK = (
     "You start on the candidate's own profile page (if this page is not the profile, find the profile or "
     "edit-profile link). Bring every section in line with the planned profile and the facts, using only "
-    "them; never invent anything. Save at least once even if nothing needed fixing, so the board records "
-    "an update today. Do not apply to any job and do not change the password, email or phone number."
+    "them; never invent anything. Leave already correct values unchanged and verify them after reload. "
+    "Do not apply to any job and do not change the password, email or phone number."
 )
 
 
@@ -874,7 +874,8 @@ def update_profile(driver: Any, board: Board, settings: Settings, profile: Profi
         logger.info("%s: dry run, opened %s and changed nothing.", board.label, board.profile_url)
         return True
     files = (resume_pdf,) if resume_pdf else ()
-    instruction = _PROFILE_TASK + (" If the profile has a resume upload, replace the resume with the file given."
+    instruction = _PROFILE_TASK + (" If the profile has a resume upload, replace the resume with the file given. "
+                                   "This is the user's selected resume regardless of its filename, including onboarding.pdf."
                                    if files else "") + (" " + extra if extra else "")
     plan = profile_plan.plan_for(profile, settings)
     if plan is None and profile is not None:

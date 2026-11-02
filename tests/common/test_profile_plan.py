@@ -91,6 +91,31 @@ def test_ats_report_scores_keywords_and_structure():
     assert bare.structure_score < 50 and any("email" in issue for issue in bare.issues)
 
 
+def test_small_caps_pdf_headings_are_recognized_without_hiding_missing_sections():
+    small_caps = RESUME.replace("Experience\n", "P ROFESSIONAL E XPERIENCE\n").replace(
+        "Education\n", "E DUCATION & C ERTIFICATIONS\n").replace("Skills\n", "S KILLS\n")
+    report = profile_plan.ats_report(small_caps, ["Python", "Spark"])
+    assert report.structure_score == 100
+    assert not any("section heading" in issue for issue in report.issues)
+    missing = profile_plan.ats_report(small_caps.replace("S KILLS\n", ""), ["Python", "Spark"])
+    assert "No 'Skills' section heading." in missing.issues
+
+
+def test_cached_plan_recalculates_old_score_without_an_llm_call(tmp_path):
+    path = tmp_path / "plan.json"
+    client = FakeClient(GOOD)
+    plan = profile_plan.build_plan(_profile(), Settings(), facts=RESUME, client=client, path=path)
+    old = json.loads(path.read_text())
+    old["plan"]["ats"]["structure_score"] = 57
+    old["plan"]["ats"]["score"] = 1
+    path.write_text(json.dumps(old))
+    count = len(client.prompts)
+    again = profile_plan.build_plan(_profile(), Settings(), facts=RESUME, client=client, path=path)
+    assert len(client.prompts) == count
+    assert again.ats == plan.ats
+    assert json.loads(path.read_text())["plan"]["ats"]["structure_score"] == 100
+
+
 def test_plan_drops_invented_skills_and_numbers_and_is_cached(tmp_path):
     client = FakeClient(BAD)
     path = tmp_path / "plan.json"
@@ -251,10 +276,12 @@ def test_a_changed_answer_does_not_trade_the_better_plan_for_a_worse_draft(tmp_p
     path = tmp_path / "plan.json"
     first = profile_plan.build_plan(_profile(), Settings(), facts=RESUME, client=FakeClient(GOOD), path=path)
     weaker = dict(GOOD, headline="Data Engineer | Spark, Kafka, AWS, Airflow, Python | 5 yrs | Lakehouse platforms",
-                  target_keywords=["Spark", "Kafka", "dbt", "Snowflake"])
+                  target_keywords=["Spark", "Kafka", "dbt", "Snowflake"],
+                  suggestions=["Advice from the current facts, after correcting the answers"])
     facts = RESUME + "\nnotice_period_days: 30"
     again = profile_plan.build_plan(_profile(), Settings(), facts=facts, client=FakeClient(weaker), path=path)
     assert again.headline == first.headline and again.ats.score == first.ats.score
+    assert again.suggestions == weaker["suggestions"], "keeping stronger wording must not restore stale advice"
     assert json.loads(path.read_text())["key"] == profile_plan._key(facts), "the kept plan is cached for the new facts"
     assert profile_plan.build_plan(_profile(), Settings(), facts=facts, client=FakeClient(BAD), path=path) is not None
     assert json.loads(path.read_text())["plan"]["headline"] == first.headline, "no LLM call, the cache answers"

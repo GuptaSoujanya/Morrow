@@ -495,7 +495,9 @@ def review_profile(driver: Any, settings: Settings, profile: Any, dry_run: bool 
     """The Playwright agent checks the whole profile against the facts and saves it."""
     from sites_bot import platforms
 
-    return platforms.update_profile(driver, PROFILE_BOARD, settings, profile, dry_run=dry_run,
+    selected = Path(settings.resume_path) if settings.resume_path else None
+    resume_pdf = selected if selected and selected.suffix.lower() == '.pdf' and selected.is_file() else None
+    return platforms.update_profile(driver, PROFILE_BOARD, settings, profile, resume_pdf=resume_pdf, dry_run=dry_run,
                                     extra=_REVIEW_EXTRA)
 
 
@@ -722,11 +724,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     for attempt in range(1, MAX_ATTEMPTS + 1):
         try:
             result = run_once(settings, dry_run=args.dry_run, resume_pdf=resume_pdf, profile=profile)
-        except _LoginUnavailable as exc:
-            logger.error("Naukri sign-in could not be verified: %s", exc)
         except BrowserProfileLocked as exc:
             logger.error("Naukri profile blocked: %s", exc)
             return EXIT_BROWSER_LOCKED
+        except _LoginUnavailable as exc:
+            logger.error("Naukri sign-in could not be verified: %s", exc)
             send_alert(settings, "Naukri profile update: sign-in could not be verified (%s)" % exc)
             return EXIT_LOGIN
         except _NeedsHuman as exc:
@@ -757,7 +759,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             _remember_profile()
         logger.info(
             "%s (%d -> %d characters).",
-            "Profile updated" if result.saved else "Dry run finished; nothing was changed",
+            "Headline updated" if result.saved else "Dry run finished; nothing was changed",
             len(result.before),
             len(result.after),
         )

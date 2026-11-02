@@ -23,6 +23,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from . import paths
+from .shared_files import atomic_write_text, locked_file
 
 logger = logging.getLogger(__name__)
 
@@ -60,8 +61,8 @@ def digest(board_name: str, label: str, result: Any, plan: Any = None, report: O
     sections = []
     for section in result.sections:
         row = {"name": section.name, "action": section.action, "confirmed": section.on_page}
-        if section.action in ("updated", "filled", "checked"):
-            row["after"] = _short(section.after, 300)
+        if section.wanted:
+            row["after"] = _short(section.wanted, 300)
         if section.missing:
             row["missing"] = list(section.missing)
         if section.note:
@@ -81,6 +82,11 @@ def digest(board_name: str, label: str, result: Any, plan: Any = None, report: O
         "kind": kind,
         "at": (at or datetime.now()).isoformat(timespec="seconds"),
         "saved": bool(result.saved),
+        "coverage": result.coverage,
+        "status": ("complete" if result.saved and result.coverage['complete'] else
+                   "needs_input" if result.needs_input else "incomplete"),
+        "changes_saved": bool(result.changed) and len(result.confirmed) == len(result.changed),
+        "facts_digest": result.facts_digest,
         "why": _short(result.why),
         "changed": len(checked),
         "confirmed": len(shown),
@@ -101,11 +107,12 @@ def save(record: Dict[str, Any], folder: Path = INDEX_DIR) -> Path:
     """Put the digest in latest.json under its board and append it to history.jsonl."""
     folder.mkdir(parents=True, exist_ok=True)
     path = folder / LATEST
-    latest = load(folder)
-    latest[record["board"]] = record
-    path.write_text(json.dumps(latest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-    with (folder / HISTORY).open("a", encoding="utf-8") as log:
-        log.write(json.dumps(record, ensure_ascii=False) + "\n")
+    with locked_file(path):
+        latest = load(folder)
+        latest[record["board"]] = record
+        atomic_write_text(path, json.dumps(latest, indent=2, ensure_ascii=False) + "\n")
+        with (folder / HISTORY).open("a", encoding="utf-8") as log:
+            log.write(json.dumps(record, ensure_ascii=False) + "\n")
     return path
 
 
@@ -138,6 +145,8 @@ def verdict(record: Dict[str, Any]) -> str:
     """One word for a record: a run saved or not; a score matching the resume plan or showing gaps."""
     if record.get("kind") == SCORE:
         return "MATCHES RESUME" if record.get("saved") else "GAPS"
+    if record.get('status'):
+        return str(record['status']).upper().replace('_', ' ')
     return "saved" if record.get("saved") else "NOT SAVED"
 
 
@@ -145,7 +154,7 @@ def table(latest: Dict[str, Dict[str, Any]]) -> str:
     """The index as a table short enough to read in a terminal."""
     if not latest:
         return "No profile update has been recorded yet. Run one: python3 -m naukri_bot.update_profile"
-    rows = [("BOARD", "WHEN", "RESULT", "SECTIONS", "COMPLETE", "ATS", "NOT ON PAGE")]
+    rows = [("BOARD", "WHEN", "RESULT", "CHANGES", "WEBSITE", "RESUME", "NOT ON PAGE")]
     for record in sorted(latest.values(), key=lambda item: str(item.get("at")), reverse=True):
         absent = ", ".join(record.get("unconfirmed") or []) or ", ".join(record.get("missing") or [])
         rows.append((
@@ -169,8 +178,13 @@ def detail(record: Dict[str, Any]) -> str:
                                          verdict(record), record.get("at")),
              record.get("why") or ""]
     if record.get("completeness_after"):
-        lines.append("Completeness %s -> %s" % (record.get("completeness_before") or "?",
+        lines.append("Website completeness %s -> %s" % (record.get("completeness_before") or "?",
                                                 record.get("completeness_after")))
+    coverage = record.get('coverage') or {}
+    if coverage:
+        lines.append('Verified coverage: %s/%s required sections (%s%%)' % (
+            coverage['verified'], coverage['total'], coverage['percent']))
+        lines.extend('Needs review: ' + issue for issue in coverage.get('issues', []))
     if record.get("ats_score") is not None:
         lines.append("Resume ATS %s/100" % record["ats_score"])
     lines.append("")

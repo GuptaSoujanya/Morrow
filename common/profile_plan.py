@@ -43,7 +43,7 @@ logger = logging.getLogger(__name__)
 
 PLAN_FILE = paths.memory_dir() / "profile-plan.json"
 #: Bump when the prompt or the plan's shape changes: cached plans are then written again.
-PLAN_VERSION = 3
+PLAN_VERSION = 4  # refresh advice retained by older versions after input corrections
 HEADLINE_CHARS = 220        # LinkedIn's limit; Naukri allows 250
 HEADLINE_MIN_CHARS = 60
 SUMMARY_CHARS = 1000        # Naukri's profile summary limit
@@ -145,8 +145,14 @@ def ats_report(resume_text: str, keywords: List[str]) -> AtsReport:
         issues.append("No email address the parser can read.")
     if not _PHONE.search(text):
         issues.append("No phone number the parser can read.")
+    # Small-caps PDF headings can extract as "P ROFESSIONAL E XPERIENCE".
+    # Normalize only uppercase heading-like lines, leaving ordinary prose/keywords intact.
+    heading_text = "\n".join(
+        re.sub(r"\b([A-Z])[ \t]+(?=[A-Z]{2,}\b)", r"\1", line)
+        if len(line) <= 100 and line.isupper() else line
+        for line in text.splitlines())
     for name, pattern in _SECTIONS.items():
-        if not re.search(pattern, text, re.IGNORECASE):
+        if not re.search(pattern, heading_text, re.IGNORECASE):
             issues.append("No '%s' section heading." % name.title())
     words = len(text.split())
     if words < 300:
@@ -577,17 +583,21 @@ def _keep_better(path: Path, fresh: ProfilePlan, profile: Profile, known: str) -
     old.ats = ats_report(profile.resume_text, old.target_keywords or profile.skills)
     if _rank(old) < _rank(fresh):
         return fresh
-    logger.info("Keeping the saved profile plan: ATS %d/100 with %d reviewer note(s), against the new draft's "
+    # Keep stronger profile wording, but advice must reflect the current inputs.
+    old.suggestions = fresh.suggestions
+    logger.info("Keeping the saved profile plan: local resume score %d/100 with %d reviewer note(s), against the new draft's "
                 "%d/100 with %d.", old.ats.score, len(old.review), fresh.ats.score if fresh.ats else -1,
                 len(fresh.review))
     return old
 
 
 def _save(path: Path, key: str, plan: ProfilePlan) -> None:
+    from .shared_files import atomic_write_text, locked_file
+
     try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps({"key": key, "made": datetime.now().isoformat(timespec="seconds"),
-                                    "plan": asdict(plan)}, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        with locked_file(path) as target:
+            atomic_write_text(target, json.dumps({"key": key, "made": datetime.now().isoformat(timespec="seconds"),
+                                                 "plan": asdict(plan)}, indent=2, ensure_ascii=False) + "\n")
     except OSError as exc:
         logger.warning("Could not save the profile plan to %s: %s", path, exc)
 
@@ -627,6 +637,12 @@ def build_plan(profile: Profile, settings: Settings, facts: Optional[str] = None
     if not fresh:
         cached = _load_cached(path, key)
         if cached is not None:
+            # The generated writing stays reusable when deterministic scoring improves.
+            report = ats_report(profile.resume_text, cached.target_keywords or profile.skills)
+            if cached.ats != report:
+                cached.ats = report
+                _save(path, key, cached)
+            logger.info("Reusing the saved profile plan; recalculated the local resume score.")
             return cached
     if client is None:
         from .llm import build_client
@@ -757,7 +773,7 @@ def ats_text(plan: ProfilePlan) -> str:
     report = plan.ats
     if report is None:
         return "No ATS report."
-    lines = ["ATS score %d/100 (keywords %d, structure %d)." % (report.score, report.keyword_score,
+    lines = ["Local resume heuristic %d/100 (keywords %d, structure %d; not a job-board ATS score)." % (report.score, report.keyword_score,
                                                                report.structure_score)]
     lines += ["- " + issue for issue in report.issues]
     lines += ["- Suggestion: " + tip for tip in plan.suggestions]
@@ -766,7 +782,7 @@ def ats_text(plan: ProfilePlan) -> str:
 
 def review_text(plan: ProfilePlan) -> str:
     if not plan.review:
-        return "Reviewer: the plan passes every check (hook, figures, stack, ask, no filler, lengths)."
+        return "Generated profile text passes the local writing checks (hook, figures, stack, ask, no filler, lengths)."
     return "Reviewer's notes still open:\n" + "\n".join("- " + note for note in plan.review)
 
 

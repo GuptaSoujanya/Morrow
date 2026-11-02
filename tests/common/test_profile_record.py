@@ -86,7 +86,7 @@ def test_the_table_names_a_value_that_did_not_land_when_every_section_is_there(t
                                              missing=["AWS Bedrock"])])
     profile_record.save(profile_record.digest("naukri", "Naukri", partial, _plan()), tmp_path)
     table = profile_record.table(profile_record.load(tmp_path))
-    assert "saved" in table and "AWS Bedrock" in table
+    assert "INCOMPLETE" in table and "AWS Bedrock" in table
 
 
 def test_the_cli_prints_the_table_a_board_and_json(tmp_path, capsys):
@@ -140,7 +140,7 @@ def test_the_table_and_detail_call_a_score_by_its_name():
     assert "NO  Projects" in detail and "not on the page: FastAPI" in detail
     full = dict(record, saved=True)
     assert "MATCHES RESUME" in profile_record.table({"naukri": full})
-    assert profile_record.detail(_result_record()).startswith("Naukri profile - saved (")
+    assert profile_record.detail(_result_record()).startswith("Naukri profile - INCOMPLETE (")
 
 
 def _result_record():

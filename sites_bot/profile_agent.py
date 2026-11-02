@@ -38,6 +38,7 @@ every run also appends its flat record to one index shared by all the boards
 """
 
 import base64
+import hashlib
 import json
 import logging
 import re
@@ -49,7 +50,7 @@ from urllib.parse import urlsplit
 
 from common.models import Profile, Settings
 
-from . import browser_agent
+from . import browser_agent, profile_contract
 from .board import Board
 
 logger = logging.getLogger(__name__)
@@ -58,8 +59,8 @@ SKILL_DIR = Path(__file__).resolve().parent / "skills" / "profile-update"
 SKILL_FILE = SKILL_DIR / "SKILL.md"
 BOARD_PROMPTS = SKILL_DIR / "boards"
 #: Live profile text and facts given to the edit planner.
-_PAGE_CHARS = 10000
-_FACTS_CHARS = 12000
+_PAGE_CHARS = 40000
+_FACTS_CHARS = 24000
 EDIT_ACTIONS = ("update", "fill", "keep", "skip")
 CHANGED = ("updated", "filled")
 ALREADY_OK = "already_ok"
@@ -70,10 +71,10 @@ PENDING = "pending"
 FAILED = "failed"
 NEEDS_INPUT = "needs_input"
 UNSUPPORTED = "unsupported"
-#: Share of a changed section's phrases (or list items) that must be on the reloaded page to count as there.
-WORD_MATCH = 0.7
-#: Below this share of changed sections found on the page, the run is not counted as saved.
-SECTIONS_FOUND = 0.5
+EXCLUDED = "excluded"
+NEEDS_REVIEW = "needs_review"
+#: Every phrase must be present; a partial match is not a saved field.
+WORD_MATCH = 1.0
 #: Words per phrase compared against the page. Long enough that word order matters, short
 #: enough to survive the board's own line breaks and "...see more" truncation.
 _PHRASE = 4
@@ -107,10 +108,13 @@ class Section:
     #: The list items (or the whole value) that were not on the reloaded page.
     missing: List[str] = field(default_factory=list)
     note: str = ""
+    # The approved edit target survives agent reports and repair passes.
+    target: str = ""
+    fact_key: str = ""
 
     @property
     def wanted(self) -> str:
-        return self.after or self.evidence
+        return self.target or self.after or self.evidence or (self.before if self.action == ALREADY_OK else "")
 
 
 @dataclass
@@ -125,6 +129,27 @@ class ProfileCheck:
     screenshots: List[str] = field(default_factory=list)
     #: False when the profile page could not be re-read after the run (network gone, browser dead).
     page_read: bool = True
+    issues: List[str] = field(default_factory=list)
+    facts_digest: str = ""
+
+    @property
+    def required(self) -> List[Section]:
+        return [s for s in self.sections if s.action not in (UNSUPPORTED, EXCLUDED)]
+
+    @property
+    def verified(self) -> List[Section]:
+        return [s for s in self.required if s.on_page is True and not s.missing
+                and s.action in (*CHANGED, ALREADY_OK, "checked")]
+
+    @property
+    def coverage(self) -> Dict[str, Any]:
+        total, verified = len(self.required), len(self.verified) if self.page_read else 0
+        complete = bool(total and verified == total and not self.issues and self.page_read)
+        percent = int(100 * verified / total) if total else 0
+        return {"verified": verified, "total": total, "percent": percent if complete else min(99, percent),
+                "complete": complete, "blocked": [s.name for s in self.required if s not in self.verified],
+                "excluded": [{"name": s.name, "reason": s.note} for s in self.sections
+                             if s.action in (UNSUPPORTED, EXCLUDED)], "issues": list(self.issues)}
 
     @property
     def changed(self) -> List[Section]:
@@ -136,7 +161,7 @@ class ProfileCheck:
 
     @property
     def confirmed(self) -> List[Section]:
-        return [section for section in self.changed if section.on_page is True]
+        return [section for section in self.changed if section.on_page is True and not section.missing]
 
     @property
     def partial(self) -> List[Section]:
@@ -162,7 +187,8 @@ class ProfileCheck:
     def needs_repair(self) -> List[Section]:
         if not self.page_read:
             return []
-        return self.unverified + self.partial + self.undone
+        return [s for s in self.required if s.action not in (NEEDS_INPUT, NEEDS_REVIEW, "skipped")
+                and s.wanted and (s.on_page is not True or s.missing or s.action in (FAILED, PENDING))]
 
     @property
     def completeness(self) -> str:
@@ -176,6 +202,11 @@ class ProfileCheck:
             return "the page could not be re-read; unconfirmed: %s" % ", ".join(
                 section.name for section in self.changed + self.undone)
         parts = ["%d/%d changed sections confirmed" % (len(self.confirmed), len(self.changed))]
+        coverage = self.coverage
+        parts.append("%d/%d required sections verified (%d%%)" % (
+            coverage["verified"], coverage["total"], coverage["percent"]))
+        if self.issues:
+            parts.append("needs review: %s" % "; ".join(self.issues))
         if self.completeness:
             parts.append("completeness %s" % self.completeness)
         if self.unverified:
@@ -236,7 +267,7 @@ def edits_text(edits: List[Dict[str, str]]) -> str:
         line = "%d. %s - %s" % (number, edit["name"], edit["action"])
         if edit.get("current"):
             line += "\n   now: %s" % edit["current"]
-        if edit.get("target") and edit["action"] in ("update", "fill"):
+        if edit.get("target"):
             line += "\n   write: %s" % edit["target"]
         if edit.get("why"):
             line += "\n   why: %s" % edit["why"]
@@ -288,9 +319,12 @@ def unsupported_section(board: Board, name: str) -> bool:
     name = name.casefold()
     if board.name == 'instahyre':
         return bool(re.search(r'expected (?:ctc|salary)|willing to relocate|summary|about|headline|'
-                              r'preferred / desired roles|target roles|work mode|job type|projects?|'
+                              r'preferred / desired roles|preferred roles|target roles|work mode|job type|projects?|'
                               r'it skills|certifications?|job profile|description|\bdates\b|'
+                              r'^employment:|'
                               r'work experience: (?!total|current (?:job title|company)|years|role type|industry|previous companies)', name))
+    if board.name == 'hirist' and 'headline' in name:
+        return True
     if board.name == 'hirist' and re.search(r'employment|work experience', name):
         return bool(re.search(r'description|job profile|skills used', name))
     return False
@@ -333,7 +367,7 @@ def edit_plan(settings: Settings, board: Board, plan: Any, facts: str, current: 
         target = profile_plan._grounded_numbers(" ".join(str(item.get("target") or "").split()), known)
         if action not in EDIT_ACTIONS or (action in ("update", "fill") and not target):
             action = "skip"
-        edits.append({"name": _text(item.get("name")), "action": action, "current": _text(item.get("current"))[:300],
+        edits.append({"name": _text(item.get("name")), "action": action, "current": _text(item.get("current")),
                       "target": target, "why": _text(item.get("why"))})
     return edits
 
@@ -421,6 +455,14 @@ var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_ELEMENT | 
 while ((node = walker.nextNode())) {
   if (node.nodeType === 1) {
     var kind = node.tagName, value = '';
+    if (kind === 'A' && node.getClientRects().length) {
+      // Icon-only profile links have no text node. Keep their public destination
+      // next to the section so the verifier can check saved portfolio URLs.
+      try {
+        var link = new URL(node.href);
+        if (link.protocol === 'https:' && !link.search && !link.hash) parts.push(link.href);
+      } catch (e) {}
+    }
     if (kind !== 'INPUT' && kind !== 'TEXTAREA' && kind !== 'SELECT') continue;
     if (!node.getClientRects().length) continue;
     if (kind === 'SELECT') {
@@ -552,7 +594,7 @@ def _compare(expected: str, page: str) -> Tuple[Optional[bool], List[str]]:
     if items:
         missing = [item for item in items
                    if not any(_run_of(_words(form), have) for form in _forms(item))]
-        return (len(items) - len(missing)) / len(items) >= WORD_MATCH, missing
+        return not missing, missing
     words = _words(expected)
     if not words:
         return None, []
@@ -650,13 +692,11 @@ def _quoted(text: str) -> str:
 
 
 def claims(section: "Section") -> List[str]:
-    """What the page should show for a section: the value typed, the text read back, and the quoted
-    parts of either, for an agent that wrote a sentence around the value instead of the value."""
-    found: List[str] = []
-    for text in (section.after, section.evidence, _quoted(section.after), _quoted(section.evidence)):
-        if text and text not in found:
-            found.append(text)
-    return found
+    """Evidence cannot weaken the approved target or a claimed saved value."""
+    wanted = section.wanted
+    if not wanted:
+        return []
+    return [wanted]
 
 
 def _claim_rank(outcome: Tuple[Optional[bool], List[str]]) -> Tuple[bool, int]:
@@ -666,11 +706,9 @@ def _claim_rank(outcome: Tuple[Optional[bool], List[str]]) -> Tuple[bool, int]:
 
 
 def confirm(section: "Section", page: str) -> Tuple[Optional[bool], List[str]]:
-    """verify() over every claim the section makes, best outcome first.
-
-    "After reload, My Profile shows 'Software Engineer - Ethara AI'" is true of the page and wrong
-    as a field value; the quoted part is what the page can be asked for.
-    """
+    """Verify the approved target; the report's shorter evidence cannot replace it."""
+    if section.fact_key:
+        return profile_contract.verify_fact(section.fact_key, section.wanted, page)
     heading, lead = _locate(section.name)
     best: Optional[Tuple[Optional[bool], List[str]]] = None
     for claim in claims(section):
@@ -740,6 +778,9 @@ def _vision_check(settings: Settings, image: Optional[Path], plan: Any) -> Dict[
 
 
 def _section_key(name: str) -> str:
+    fact = profile_contract.fact_key(name)
+    if fact:
+        return 'fact ' + fact
     name = re.sub(r'^(?:employment|work experience|job profile)\s*:', 'experience:', name, flags=re.I)
     return re.sub(r"[^a-z0-9]+", " ", name.casefold()).strip()
 
@@ -757,20 +798,34 @@ def add_planned(result: ProfileCheck, edits: Optional[List[Dict[str, str]]], pag
     edit the page already shows is done; one it does not show is pending and gets redone.
     """
     for edit in edits or []:
-        if edit.get("action") not in ("update", "fill") or not edit.get("target"):
+        if profile_contract.protected(edit.get('name', '')):
             continue
-        reported = [section for section in result.sections if _same_section(edit["name"], section.name)]
+        target = edit.get('target') or (edit.get('current', '') if edit.get('action') == 'keep' else '')
+        if edit.get('action') == 'skip':
+            action = NEEDS_REVIEW if 'needs review' in edit.get('why', '') else NEEDS_INPUT
+        else:
+            action = PENDING
+        reported = [section for section in result.sections if _section_key(edit['name']) == _section_key(section.name)]
+        if not reported:
+            reported = [section for section in result.sections if _same_section(edit["name"], section.name)]
+        if len(reported) > 1:
+            result.issues.append('Ambiguous section match: ' + edit['name'])
+            # Never apply one job/project target to multiple existing entries.
+            continue
         for section in reported:
-            if section.action == FAILED and not section.wanted:
-                section.after = edit["target"]
+            section.target = target or section.target
+            section.fact_key = edit.get('fact_key', '')
+            if section.action in (UNSUPPORTED, EXCLUDED, 'skipped'):
+                section.action = action
         if reported:
             continue
-        on_page, missing = verify(edit["target"], page, *_locate(edit["name"])) if page else (None, [])
+        section = Section(name=edit['name'], action=action, target=target, fact_key=edit.get('fact_key', ''))
+        on_page, missing = confirm(section, page) if page and target else (None, [])
         done = on_page is True and not missing
         result.sections.append(Section(
-            name=edit["name"], action="already_ok" if done else PENDING, before=edit.get("current", ""),
-            after=edit["target"], on_page=on_page, missing=missing,
-            note="planned; the page shows it" if done else "planned, but the agent never reported it"))
+            name=edit["name"], action=ALREADY_OK if done else action, before=edit.get("current", ""),
+            target=target, fact_key=edit.get('fact_key', ''), on_page=on_page, missing=missing,
+            note="planned; the page shows it" if done else edit.get('why') or "planned, but the agent never reported it"))
 
 
 _PROFILE_WAIT_S = 20
@@ -810,17 +865,19 @@ def _read_profile(driver: Any, board: Board) -> str:
     if not text:
         return ""
     parts = [text]
+    entries = profile_contract.read_entries(driver)
     pages = list(board.profile_pages)
     if board.name == 'linkedin':
         # LinkedIn's overview only shows two skills, and draws its Experience, Education and
-        # Projects cards late or not at all, so a run that changed a position had nothing to be
+        # Projects cards late or not at all, so a run that changed a position/project had nothing to be
         # checked against. The candidate's own detail pages are at fixed paths under the profile
         # the overview redirected to: read those, never somebody else's profile or an editor.
         current = urlsplit(str(getattr(driver, 'current_url', '')))
         own = re.match(r'^/in/[^/]+/', current.path + '/')
         if own and current.scheme == 'https' and current.hostname in ('linkedin.com', 'www.linkedin.com'):
             base = 'https://%s%s' % (current.netloc, own.group())
-            for detail in ('details/skills/', 'details/experience/'):
+            for detail in ('details/skills/', 'details/experience/', 'details/projects/',
+                           'details/certifications/', 'details/education/'):
                 if base + detail not in pages:
                     pages.append(base + detail)
     for url in pages:
@@ -831,6 +888,7 @@ def _read_profile(driver: Any, board: Board) -> str:
             logger.warning("%s: could not read %s: %s", board.label, url, exc)
         if extra:
             parts.append(extra)
+            entries.extend(profile_contract.read_entries(driver))
         else:
             logger.warning("%s: %s could not be read; what it holds cannot be confirmed.", board.label, url)
     if board.name == 'linkedin' and pages:
@@ -840,11 +898,13 @@ def _read_profile(driver: Any, board: Board) -> str:
             _read_page(driver, board.profile_url)
         except Exception as exc:
             logger.warning('%s: could not return to the profile overview: %s', board.label, exc)
+    driver._profile_entries = entries
     return "\n\n".join(parts)
 
 
 def check(driver: Any, board: Board, settings: Settings, report: Dict[str, Any], plan: Any,
-          workdir: Path, edits: Optional[List[Dict[str, str]]] = None) -> ProfileCheck:
+          workdir: Path, edits: Optional[List[Dict[str, str]]] = None,
+          profile: Optional[Profile] = None) -> ProfileCheck:
     """Reload the profile and confirm on the page what the agent says it changed, and what the plan wanted."""
     result = ProfileCheck(
         saved=False, why="",
@@ -852,10 +912,17 @@ def check(driver: Any, board: Board, settings: Settings, report: Dict[str, Any],
         completeness_before=_text(report.get("completeness_before")),
         completeness_after=_text(report.get("completeness_after")),
         confirmation=_text(report.get("board_confirmation")),
+        issues=profile_contract.report_issues(report),
     )
     for section in result.sections:
-        if section.action in (FAILED, PENDING) and unsupported_section(board, section.name):
+        if unsupported_section(board, section.name):
             section.action = UNSUPPORTED
+        elif section.action in ('skipped', UNSUPPORTED, EXCLUDED) and profile_contract.protected(section.name):
+            section.action = EXCLUDED
+        elif section.action in ('skipped', UNSUPPORTED, EXCLUDED):
+            section.action = NEEDS_INPUT
+        if section.action == FAILED and re.search(r'needs? (?:salary breakdown|client|start date|course dates|institute)|missing (?:facts|dates)', section.note, re.I):
+            section.action = NEEDS_INPUT
     page = _read_profile(driver, board)
     if not page:
         logger.warning("%s: the profile page could not be read after the run; trying once more in %ds.",
@@ -863,6 +930,7 @@ def check(driver: Any, board: Board, settings: Settings, report: Dict[str, Any],
         time.sleep(_RETRY_READ_S)
         page = _read_profile(driver, board)
     result.page_read = bool(page)
+    result.issues.extend(profile_contract.duplicates(getattr(driver, '_profile_entries', [])))
     if page:
         (workdir / "page-after.txt").write_text(page, encoding="utf-8")
     after = screenshot(driver, workdir / "after.png") if page else None
@@ -871,12 +939,21 @@ def check(driver: Any, board: Board, settings: Settings, report: Dict[str, Any],
     # The LLM that looks at the page cannot decode a full-page capture of a long profile; the top of
     # the page, where the headline, designation and completeness sit, is what it is asked about.
     view = _viewport(driver, workdir / "after-view.png") if page else None
+    add_planned(result, [edit for edit in edits or [] if not unsupported_section(board, edit.get('name', ''))
+                        and not profile_contract.exclusion_reason(profile, edit.get('name', ''))], page)
     for section in result.sections:
+        excluded = profile_contract.exclusion_reason(profile, section.name)
+        if excluded:
+            section.action = EXCLUDED
+            section.note = excluded
+            section.on_page, section.missing = None, []
+            continue
         # What the agent says it changed, and what it says was already there: both are claims about
         # the page, and a repair pass that finds a section "already_ok" must leave page evidence too.
-        if page and section.wanted and (section.action in CHANGED or section.action == ALREADY_OK):
+        if page and section.wanted and section.action in (*CHANGED, ALREADY_OK, 'checked', PENDING):
             section.on_page, section.missing = confirm(section, page)
-    add_planned(result, [edit for edit in edits or [] if not unsupported_section(board, edit.get('name', ''))], page)
+            if section.action == PENDING and section.on_page is True and not section.missing:
+                section.action = ALREADY_OK
     if page and plan is not None and plan.headline and not unsupported_section(board, 'Headline') and not any("headline" in s.name.casefold()
                                                                for s in result.sections):
         on_page, missing = verify(plan.headline, page)
@@ -888,6 +965,16 @@ def check(driver: Any, board: Board, settings: Settings, report: Dict[str, Any],
         logger.warning("%s: the screenshot check failed: %s", board.label, exc)
     if result.vision.get("completeness") and not result.completeness_after:
         result.completeness_after = _text(result.vision["completeness"])
+    # A board meter is a separate observation, not the verifier's coverage.
+    observed = completeness_on(page)
+    if observed:
+        result.completeness_after = observed
+    preferences = (getattr(profile, 'extra_facts', {}) or {}).get('profile_update_preferences', {})
+    user_limited_scope = isinstance(preferences, dict) and any(
+        preferences.get(k) is True for k in ('skip_profile_photo', 'skip_school_education'))
+    if not user_limited_scope and result.completeness_after and re.fullmatch(r'\d+%', result.completeness_after):
+        if int(result.completeness_after[:-1]) < 100:
+            result.issues.append('Website completeness is %s; review its missing-details prompts' % result.completeness_after)
 
     result.saved, result.why = _verdict(result)
     return result
@@ -929,14 +1016,19 @@ def _merge(result: ProfileCheck, repaired: ProfileCheck) -> ProfileCheck:
             continue
         result.sections[index] = replace(
             fresh,
-            action=fresh.action if fresh.action in (*CHANGED, NEEDS_INPUT, UNSUPPORTED) or section.action in (PENDING, FAILED) else section.action,
+            action=fresh.action if fresh.action in (*CHANGED, NEEDS_INPUT, UNSUPPORTED, EXCLUDED, NEEDS_REVIEW) or section.action in (PENDING, FAILED) else section.action,
             before=fresh.before or section.before,
             missing=list(fresh.missing),
+            target=section.target or fresh.target,
+            fact_key=section.fact_key or fresh.fact_key,
             note=" ".join(part for part in (section.note, fresh.note) if part).strip(),
         )
     result.completeness_after = repaired.completeness_after or result.completeness_after
     result.confirmation = repaired.confirmation or result.confirmation
     result.vision = repaired.vision or result.vision
+    result.page_read = repaired.page_read
+    result.issues = list(dict.fromkeys([i for i in result.issues if not i.startswith('Website completeness')]
+                                    + repaired.issues))
     for shot in repaired.screenshots:
         if shot not in result.screenshots:
             result.screenshots.append(shot)
@@ -945,37 +1037,28 @@ def _merge(result: ProfileCheck, repaired: ProfileCheck) -> ProfileCheck:
 
 
 def _verdict(result: ProfileCheck) -> Tuple[bool, str]:
-    """(saved, why). A section the board wants facts for that the facts file lacks ("needs your
-    input") is not a failure: the agent asked rather than invented, the profile is intact, and a
-    retry would ask the same question. It is reported in the verdict so the user can add the facts.
-    """
-    changed = result.changed
-    undone = result.undone
-    asks = "; needs your input: %s" % ", ".join(section.name for section in result.needs_input) \
-        if result.needs_input else ""
-    if not changed and not undone:
-        return True, "nothing needed changing" + asks
+    """Completion requires positive evidence for every applicable section."""
     if not result.page_read:
         return False, "the profile page could not be re-read after the run; unconfirmed: %s" % ", ".join(
-            section.name for section in changed + undone)
-    checked = [section for section in changed if section.on_page is not None]
-    if not checked and not undone:
-        return True, "the agent reports it saved; the bot could not re-read the page to confirm" + asks
-    found = [section for section in checked if section.on_page]
-    if checked and len(found) < SECTIONS_FOUND * len(checked):
-        return False, "only %d of %d checked sections are on the reloaded page" % (len(found), len(checked))
+            section.name for section in result.required)
+    if not result.required:
+        return False, "no applicable profile sections were verified"
+    if result.issues:
+        return False, "needs review: " + "; ".join(result.issues)
+    if result.undone:
+        return False, "not done: %s" % ", ".join(s.name for s in result.undone)
+    if result.needs_input:
+        return False, "needs your input: %s" % ", ".join(s.name for s in result.needs_input)
     if result.unverified:
         return False, "%s still not on the reloaded page" % ", ".join(s.name for s in result.unverified)
-    if undone:
-        return False, "not done: %s" % ", ".join(s.name for s in undone)
-    if result.partial:
-        return True, "confirmed on the reloaded page, except: %s%s" % (", ".join(
-            item for section in result.partial for item in section.missing), asks)
-    return True, "confirmed on the reloaded page" + asks
+    gaps = [s for s in result.required if s not in result.verified]
+    if gaps:
+        return False, "unconfirmed: %s" % ", ".join(s.name for s in gaps)
+    return True, "all applicable sections confirmed on the reloaded page"
 
 
 def repair(driver: Any, board: Board, settings: Settings, result: ProfileCheck, plan: Any, facts: str,
-           email: str, files: Tuple[Path, ...], workdir: Path) -> ProfileCheck:
+           email: str, files: Tuple[Path, ...], workdir: Path, profile: Optional[Profile] = None) -> ProfileCheck:
     """Send the agent back for the sections the page did not show, then check the page again."""
     passes = max(0, int(getattr(settings, "profile_repair_passes", 0) or 0))
     for attempt in range(1, passes + 1):
@@ -998,7 +1081,19 @@ def repair(driver: Any, board: Board, settings: Settings, result: ProfileCheck, 
             logger.warning("%s: repair pass %d gave nothing back: %s", board.label, attempt,
                            agent.problem or "no report")
             break
-        result = _merge(result, check(driver, board, settings, agent.report, plan, folder))
+        # The approved target must be verified again in a repair. Otherwise a
+        # short new 'already_ok' report could erase an earlier failed target.
+        repair_edits = [dict(name=s.name, action='update', target=s.wanted,
+                            current=s.before, fact_key=s.fact_key) for s in broken]
+        repaired = check(driver, board, settings, agent.report, None, folder, repair_edits, profile=profile)
+        result = _merge(result, repaired)
+        page_path = folder / 'page-after.txt'
+        if result.page_read and page_path.exists():
+            fresh_page = page_path.read_text(encoding='utf-8')
+            for section in result.required:
+                if section.wanted and section.action in (*CHANGED, ALREADY_OK, 'checked'):
+                    section.on_page, section.missing = confirm(section, fresh_page)
+            result.saved, result.why = _verdict(result)
     return result
 
 
@@ -1018,14 +1113,14 @@ def write_report(path: Path, board: Board, result: ProfileCheck, plan: Any,
     (workdir / "profile-report.json").write_text(json.dumps(full, indent=2, ensure_ascii=False) + "\n",
                                                  encoding="utf-8")
 
-    head = "%s - %s" % ("saved" if result.saved else "NOT confirmed", result.why)
+    head = "%s - %s" % ("complete" if result.saved else "INCOMPLETE", result.why)
     lines = ["# %s profile: %s" % (board.label, head), "", result.summary()]
     if plan is not None and plan.ats is not None:
-        lines[-1] += "; resume ATS %d/100" % plan.ats.score
+        lines[-1] += "; local resume heuristic %d/100" % plan.ats.score
     lines += ["", "| Section | Action | On page | Value |", "|---|---|---|---|"]
     for section in result.sections:
         mark = "-" if section.on_page is None else ("yes" if section.on_page else "**NO**")
-        value = _cell(section.after or section.before)
+        value = _cell(section.wanted or section.before)
         if section.missing:
             value = "%s<br>missing: %s" % (value, _cell(", ".join(section.missing), 60))
         lines.append("| %s | %s | %s | %s |" % (_cell(section.name, 40), section.action, mark, value))
@@ -1116,7 +1211,7 @@ def score(driver: Any, board: Board, plan: Any, workdir: Path) -> ProfileCheck:
     shown = [section for section in result.sections if section.on_page is True]
     absent = [section for section in result.sections if section.on_page is False]
     partial = [section for section in shown if section.missing]
-    result.saved = not absent and not partial
+    result.saved = bool(result.sections) and len(shown) == len(result.sections) and not partial
     result.why = "%d of %d planned sections are on the profile" % (len(shown), len(result.sections))
     if absent:
         result.why += "; not on it: %s" % ", ".join(section.name for section in absent)
@@ -1182,20 +1277,67 @@ def run(driver: Any, board: Board, settings: Settings, profile: Optional[Profile
     files = browser_agent.stage_files(workdir, files)
     screenshot(driver, workdir / "before.png")
     facts = browser_agent.facts_text(profile, settings)
-    _load_all(driver)
-    current = page_text(driver)
+    facts_digest = hashlib.sha256(facts.encode('utf-8')).hexdigest()
+    current = _read_profile(driver, board)
     (workdir / "before.txt").write_text(current, encoding="utf-8")
+    if not current:
+        result = ProfileCheck(False, 'Could not read the profile before editing', page_read=False)
+        _finish(workdir, board, result, plan, settings)
+        return False, result.why
     try:
         edits = edit_plan(settings, board, plan, facts, current)
     except Exception as exc:  # the agent still has the plan and audits the page itself
         logger.warning("%s: could not plan the edits for the live profile: %s", board.label, exc)
         edits = []
+    if profile is not None:
+        edits = profile_contract.reconcile(edits, profile, board.name, plan)
+        edits = [e for e in edits if not unsupported_section(board, e['name'])]
+        from common import profile_record
+        previous = profile_record.load(profile_record.index_dir(settings)).get(board.name, {})
+        if previous.get('facts_digest') == facts_digest:
+            blocked = [s for s in previous.get('sections', []) if s.get('action') == NEEDS_INPUT]
+            for edit in edits:
+                matches = [s for s in blocked if _same_section(s.get('name', ''), edit['name'])]
+                if matches:
+                    edit.update(action='skip', why='needs input (facts unchanged; do not reopen this form): '
+                                + '; '.join(s.get('note', '') for s in matches))
+    if files:
+        # Upload eligibility comes from the selected file, not the LLM's guess
+        # about whether a filename such as onboarding.pdf sounds like a resume.
+        resumes = [e for e in edits if re.fullmatch(r'(?:attach |uploaded )?resume(?: attached)?', e['name'], re.I)]
+        if not resumes:
+            resumes = [dict(name='Resume', current='')]
+            edits.extend(resumes)
+        for edit in resumes:
+            edit.update(action='update', target=Path(files[0]).name,
+                        why='The supplied file is the resume selected by the user. Upload it and verify the saved attachment.')
+    before_entries = getattr(driver, '_profile_entries', [])
+    duplicate_issues = profile_contract.duplicates(before_entries)
+    journal = [{"operation_id": profile_contract.operation_id(board.name, e), **e, "state": "planned"}
+               for e in edits]
+    (workdir / 'operations.json').write_text(json.dumps(journal, indent=2, ensure_ascii=False) + '\n', encoding='utf-8')
+    (workdir / 'entries-before.json').write_text(json.dumps(before_entries, indent=2) + '\n', encoding='utf-8')
     if edits:
         (workdir / "edit-plan.json").write_text(json.dumps(edits, indent=2, ensure_ascii=False) + "\n",
                                                 encoding="utf-8")
         logger.info("%s edit plan: %s", board.label, ", ".join("%s (%s)" % (e["name"], e["action"]) for e in edits))
     text = prompt(task, board.profile_url or board.home, facts, account_email(settings), files,
                   bool(settings.company_site_password), edits)
+    text += ('\n\nAccuracy contract: atomic values from profile.yaml in the edit plan override any conflicting '
+             'old profile or generated prose. Re-read existing entries before each Add, and after any interrupted '
+             'Save. Edit a uniquely matching entry in place. If multiple matches exist, report needs_review; '
+             'do not add or delete. Every keep field also requires evidence after reload. Unknown mandatory '
+             'facts are needs_input, never guessed. A skipped field does not count as verified.\n'
+             'Existing entry identities: ' + json.dumps(before_entries, ensure_ascii=False))
+    preferences = (getattr(profile, 'extra_facts', {}) or {}).get('profile_update_preferences', {})
+    if preferences:
+        text += ('\nUser-selected scope takes priority: ' + json.dumps(preferences) +
+                 '\nSkip school education (Class X/XII) and the profile photo when requested above. '
+                 'Do not open or save those editors, ask for their details, or treat them as missing. '
+                 'College education remains in scope. Report the website meter honestly even if these '
+                 'exclusions keep it below 100%.')
+    if duplicate_issues:
+        text += '\nExisting duplicate groups: ' + '; '.join(duplicate_issues)
     agent = browser_agent.run_agent(driver, settings, text, workdir, files, system=system_prompt(board))
     report = agent.report or {}
     status = str(report.get("status", "")).strip().lower()
@@ -1206,16 +1348,23 @@ def run(driver: Any, board: Board, settings: Settings, profile: Optional[Profile
         if not report and not edits:
             _finish(workdir, board, ProfileCheck(saved=False, why=reason), plan, settings)
             return False, reason
-    result = check(driver, board, settings, report, plan, workdir, edits)
+    result = check(driver, board, settings, report, plan, workdir, edits, profile=profile)
+    result.facts_digest = facts_digest
     if status == "needs_you":
         # A captcha, a code or a question only they can answer: a second pass would hit the same wall.
         result.saved, result.why = False, reason
         _finish(workdir, board, result, plan, settings)
         return False, reason
-    result = repair(driver, board, settings, result, plan, facts, account_email(settings), files, workdir)
+    result = repair(driver, board, settings, result, plan, facts, account_email(settings), files, workdir, profile=profile)
+    result.issues = list(dict.fromkeys(result.issues + duplicate_issues))
+    result.saved, result.why = _verdict(result)
     if reason and not result.saved:
         result.why = "%s (the agent: %s)" % (result.why, reason)
     path = _finish(workdir, board, result, plan, settings)
+    for operation in journal:
+        matches = [s for s in result.sections if _same_section(s.name, operation['name'])]
+        operation['state'] = 'verified' if matches and all(s in result.verified for s in matches) else 'unresolved'
+    (workdir / 'operations.json').write_text(json.dumps(journal, indent=2, ensure_ascii=False) + '\n', encoding='utf-8')
     if result.needs_input:
         logger.warning("%s asks for facts the facts file does not have; add them to profile.yaml and the next "
                        "run fills them in: %s", board.label,
@@ -1223,7 +1372,7 @@ def run(driver: Any, board: Board, settings: Settings, profile: Optional[Profile
                                  for section in result.needs_input))
     notes = "%s. %s. Report: %s" % (_text(report.get("notes") or report.get("why")), result.summary(), path)
     if plan is not None and plan.ats is not None:
-        notes += " (resume ATS score %d/100)" % plan.ats.score
+        notes += " (local resume heuristic %d/100)" % plan.ats.score
     for section in result.unverified:
         logger.warning("%s: %s is still not on the reloaded profile (wanted: %s%s)", board.label, section.name,
                        section.wanted[:120],

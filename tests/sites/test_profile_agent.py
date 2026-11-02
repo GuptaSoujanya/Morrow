@@ -42,7 +42,6 @@ def _report(**extra):
                    "after": "AI Engineer | LLM Evaluation | LangChain | Python", "verified": True},
                   {"name": "Key skills", "action": "filled", "after": "LangChain, FastAPI, AWS Bedrock",
                    "verified": True},
-                  {"name": "Education", "action": "already_ok", "before": "B.Tech"},
               ]}
     report.update(extra)
     return report
@@ -89,7 +88,7 @@ def test_a_value_only_counts_where_its_own_section_is():
             "Key skills LangChain FastAPI Education B.Tech")
     assert profile_agent.verify("LangChain, FastAPI, AWS Bedrock, Go", page, "Key skills") \
         == (False, ["AWS Bedrock", "Go"])
-    assert profile_agent.verify("LangChain, FastAPI, AWS Bedrock, Go", page)[0] is True
+    assert profile_agent.verify("LangChain, FastAPI, AWS Bedrock, Go", page)[0] is False
 
 
 def test_a_short_sentence_with_a_comma_is_prose_not_two_things_to_find_word_for_word():
@@ -205,7 +204,7 @@ def test_a_run_counts_only_what_the_reloaded_page_shows(monkeypatch, tmp_path):
     saved, notes = _run(monkeypatch, tmp_path, page, _report())
     assert saved and "2/2 changed sections confirmed" in notes and "82% -> 100%" in notes
     data = json.loads((tmp_path / "run" / "profile-report.json").read_text())
-    assert [s["confirmed"] for s in data["sections"]] == [True, True, None]
+    assert [s["confirmed"] for s in data["sections"]] == [True, True]
     assert (tmp_path / "run" / "before.png").exists() and (tmp_path / "run" / "after.png").exists()
     assert "Key skills LangChain" in (tmp_path / "run" / "before.txt").read_text()
     assert json.loads((tmp_path / "run" / "edit-plan.json").read_text())[0]["action"] == "update"
@@ -296,10 +295,10 @@ def test_a_skill_that_did_not_land_is_redone_even_though_the_section_is_there(mo
 
     assert len(asked) == 2 and "AWS Bedrock" in asked[1], "the skill that did not land must be redone"
     assert "Resume headline" not in asked[1]
-    assert saved and "not seen: AWS Bedrock" in notes
+    assert not saved and "NOT on the page: Key skills" in notes
     latest = json.loads((tmp_path / "reports" / "profile" / "latest.json").read_text())
     assert latest["naukri"]["missing"] == ["AWS Bedrock"]
-    assert latest["naukri"]["why"] == "confirmed on the reloaded page, except: AWS Bedrock"
+    assert latest["naukri"]["why"] == "Key skills still not on the reloaded page"
 
 
 def test_sections_the_bot_could_not_check_do_not_count_as_missing():
@@ -307,7 +306,7 @@ def test_sections_the_bot_could_not_check_do_not_count_as_missing():
     sections = [Section(name="Headline", action="updated", after="x", on_page=True)]
     sections += [Section(name=name, action="updated") for name in ("Summary", "Skills", "Projects")]
     result = profile_agent.ProfileCheck(saved=False, why="", sections=sections)
-    assert profile_agent._verdict(result) == (True, "confirmed on the reloaded page")
+    assert profile_agent._verdict(result) == (False, "unconfirmed: Summary, Skills, Projects")
     result.sections[1].on_page = False
     assert profile_agent._verdict(result) == (False, "Summary still not on the reloaded page")
 
@@ -342,7 +341,7 @@ def test_repair_passes_can_be_turned_off(monkeypatch, tmp_path):
 
 
 def test_needs_you_is_reported_with_its_sections(monkeypatch, tmp_path):
-    saved, reason = _run(monkeypatch, tmp_path, "", _report(status="needs_you", why="OTP asked"))
+    saved, reason = _run(monkeypatch, tmp_path, "Existing profile", _report(status="needs_you", why="OTP asked"))
     assert not saved and reason == "OTP asked"
     assert "OTP asked" in (tmp_path / "run" / "profile-report.md").read_text()
 
@@ -386,7 +385,7 @@ HEADLINE = "AI Engineer | LLM Evaluation | LangChain | Python"
 _EDITS = [{"name": "Resume headline", "action": "update", "current": "old", "target": HEADLINE, "why": ""},
           {"name": "Key skills", "action": "update", "current": "Python", "target": "LangChain, FastAPI, AWS Bedrock",
            "why": "adds the planned skills"},
-          {"name": "Education", "action": "keep", "current": "B.Tech", "target": "", "why": ""}]
+          ]
 _HEADLINE_ONLY = {"status": "done", "why": "saved", "sections": [
     {"name": "Resume headline", "action": "updated", "after": HEADLINE, "verified": True}]}
 _SKILLS_DONE = {"status": "done", "why": "saved", "sections": [
@@ -484,7 +483,7 @@ def test_a_failed_section_the_repair_pass_skips_stops_being_counted(monkeypatch,
     saved, notes, asked = _staged(
         monkeypatch, tmp_path, ["Resume headline " + HEADLINE, "Resume headline " + HEADLINE],
         [first, skipped], _EDITS)
-    assert saved and "1/1 changed sections confirmed" in notes
+    assert not saved and "1/1 changed sections confirmed" in notes
 
 
 def test_a_run_the_agent_could_not_start_is_still_recorded(monkeypatch, tmp_path):
@@ -607,9 +606,9 @@ def test_the_score_names_what_the_profile_lacks_and_reads_the_completeness(monke
     result = profile_agent.score(FakeDriver(page), BOARD, _full_plan(), tmp_path)
     assert result.completeness_after == "85%"
     assert not result.saved
-    assert result.why.startswith("4 of 9 planned sections are on the profile; not on it: Profile summary, "
+    assert result.why.startswith("3 of 9 planned sections are on the profile; not on it: Key skills, Profile summary, "
                                  "Job profile: Ethara AI, Project: EvalAgentFlow, IT skill: Python, Online profiles")
-    assert "partly: Key skills (AWS Bedrock)" in result.why
+    assert "AWS Bedrock" in next(s for s in result.sections if s.name == 'Key skills').missing
     assert (tmp_path / "page.txt").read_text() == page and (tmp_path / "profile.png").exists()
     text = profile_agent.score_text(BOARD, result, _full_plan())
     assert "Completeness shown by Naukri: 85%" in text and "NO  Profile summary" in text
@@ -687,8 +686,12 @@ def test_the_page_is_read_only_once_its_sections_have_rendered(monkeypatch):
 
 def test_an_unreadable_page_after_the_run_is_said_so_and_not_sent_to_repair(monkeypatch, tmp_path):
     """The network dropped right after the agent: nothing on the page can be confirmed or denied."""
+    calls = []
+    def opens(d, url):
+        calls.append(url)
+        return len(calls) == 1  # the initial audit succeeds, later reloads fail
     saved, notes, asked = _staged(monkeypatch, tmp_path, ["Resume headline old Key skills Python"],
-                                  [_HEADLINE_ONLY], _EDITS, opens=lambda d, url: False)
+                                  [_HEADLINE_ONLY], _EDITS, opens=opens)
     assert not saved
     assert "the page could not be re-read; unconfirmed: Resume headline, Key skills" in notes
     assert "not done" not in notes, "absence from a page the bot never read is not evidence"
@@ -705,11 +708,11 @@ def test_the_page_is_read_once_more_before_giving_up_on_it(monkeypatch, tmp_path
 
     def opens(driver, url):
         attempts.append(url)
-        return len(attempts) > 1
+        return len(attempts) != 2
 
     page = "Resume headline " + HEADLINE + " Key skills Python LangChain FastAPI AWS Bedrock"
     saved, notes, asked = _staged(monkeypatch, tmp_path, [page], [_report()], _EDITS, opens=opens)
-    assert saved and len(attempts) == 2 and len(asked) == 1
+    assert saved and len(attempts) == 3 and len(asked) == 1
     assert "2/2 changed sections confirmed" in notes
 
 
@@ -830,7 +833,7 @@ def test_headings_match_in_the_singular_or_the_plural_and_links_are_checked_one_
     links = "https://soujanyalab.in, https://github.com/GuptaSoujanya, https://linkedin.com/in/soujanya-gupta-0224621ba"
     assert profile_agent._items(links) == links.split(", ")
     assert profile_agent.verify(links, page, "Online profiles") == (True, [])
-    assert profile_agent.verify(links + ", https://x.dev/me", page, "Online profiles") == (True, ["https://x.dev/me"])
+    assert profile_agent.verify(links + ", https://x.dev/me", page, "Online profiles") == (False, ["https://x.dev/me"])
     assert profile_agent.verify("AWS Academy Cloud Architecting, AWS Academy Cloud Foundations", page,
                                 "Certifications") == (True, [])
     assert profile_agent._windows("Key skills", "Key skill Python") and not profile_agent._windows("Key skills",
@@ -886,16 +889,16 @@ def test_a_sentence_written_around_the_value_is_checked_by_its_quoted_part():
             "Skills Used Python LangChain")
     told = "After reload, My Profile shows 'B Tech / BE (Full Time) — Medi-Caps University, Indore — 2020 - 2024'"
     assert profile_agent.verify(told, page)[0] is False
-    assert profile_agent.confirm(Section(name="Education", action="already_ok", evidence=told), page) == (True, [])
+    assert profile_agent.confirm(Section(name="Education", action="already_ok", evidence=told), page)[0] is False
     assert profile_agent._quoted("Hirist's rows couldn't hold it; she said \"fine\" and 'ok go'") == "fine, ok go"
     projects = Section(name="AI Projects", action="already_ok",
                        evidence="My Profile lists all three projects ending 'Role: Developer.' and 'Open project'")
-    assert profile_agent.confirm(projects, page + " EvalAgentFlow ... Role: Developer. Python Open project") == (True, [])
+    assert profile_agent.confirm(projects, page + " EvalAgentFlow ... Role: Developer. Python Open project")[0] is False
 
     skills = Section(name="Key skills (Skills Used)", action="already_ok",
                      after="Skills Used chips on registration/addWorkExperience: Python, LangChain, RAG",
                      evidence="Python, LangChain, RAG")
-    assert profile_agent.confirm(skills, page) == (False, ["RAG"]), "the claim that names its gaps wins"
+    assert profile_agent.confirm(skills, page)[0] is False, "shorter evidence cannot replace the saved value"
     assert profile_agent.confirm(Section(name="Resume", action="updated"), page) == (None, [])
 
 
@@ -946,7 +949,7 @@ def test_unsupported_fields_and_missing_required_facts_are_not_repaired():
     ])
     assert result.needs_repair == []
     saved, why = profile_agent._verdict(result)
-    assert saved and 'needs your input' in why
+    assert not saved and 'needs your input' in why
     assert 'Certification' in why
 
 
@@ -959,11 +962,11 @@ def test_facts_the_board_wants_but_the_file_lacks_are_reported_not_failed():
              Section('Project: EvalAgentFlow', 'needs_input', note='needs client and start date')]
     untouched = ProfileCheck(False, '', sections=asked + [Section('Key skills', 'already_ok')])
     assert verdict(untouched) == (
-        True, 'nothing needed changing; needs your input: Employment: Ethara AI, Project: EvalAgentFlow')
+        False, 'needs your input: Employment: Ethara AI, Project: EvalAgentFlow')
 
     confirmed = ProfileCheck(False, '', sections=asked[:1] + [
         Section('About', 'updated', after='A saved summary', on_page=True)])
-    assert verdict(confirmed) == (True, 'confirmed on the reloaded page; needs your input: Employment: Ethara AI')
+    assert verdict(confirmed) == (False, 'needs your input: Employment: Ethara AI')
 
     # A section the agent tried and could not save is still a failure, whatever else it asked for.
     broken = ProfileCheck(False, '', sections=asked[:1] + [Section('About', 'failed')])
@@ -993,7 +996,10 @@ def test_linkedin_reads_only_own_profile_detail_links(monkeypatch):
     monkeypatch.setattr(profile_agent, '_read_page', read)
     profile_agent._read_profile(Driver(), board)
     assert calls == [board.profile_url, 'https://www.linkedin.com/in/example-person/details/skills/',
-                     'https://www.linkedin.com/in/example-person/details/experience/', board.profile_url]
+                     'https://www.linkedin.com/in/example-person/details/experience/',
+                     'https://www.linkedin.com/in/example-person/details/projects/',
+                     'https://www.linkedin.com/in/example-person/details/certifications/',
+                     'https://www.linkedin.com/in/example-person/details/education/', board.profile_url]
 
 
 def test_repair_matches_the_exact_employment_field_before_a_general_label():
@@ -1038,10 +1044,38 @@ def test_linkedin_detail_pages_are_read_even_when_the_overview_shows_no_link_to_
     monkeypatch.setattr(profile_agent, '_read_page', read)
     profile_agent._read_profile(Driver(), board)
     assert calls == [board.profile_url, 'https://www.linkedin.com/in/example-person/details/skills/',
-                     'https://www.linkedin.com/in/example-person/details/experience/', board.profile_url]
+                     'https://www.linkedin.com/in/example-person/details/experience/',
+                     'https://www.linkedin.com/in/example-person/details/projects/',
+                     'https://www.linkedin.com/in/example-person/details/certifications/',
+                     'https://www.linkedin.com/in/example-person/details/education/', board.profile_url]
 
     class Elsewhere(Driver):
         current_url = 'https://www.linkedin.com/feed/'
     calls.clear()
     profile_agent._read_profile(Elsewhere(), board)
     assert calls == [board.profile_url], "no own profile, no detail pages to guess at"
+
+
+def test_linkedin_projects_are_verified_on_their_detail_page(monkeypatch):
+    from sites_bot.board import Board
+    board = Board('linkedin', 'LinkedIn', 'https://www.linkedin.com/in/me/', (), '', '', '', '', '',
+                  profile_url='https://www.linkedin.com/in/me/')
+    class Driver:
+        current_url = 'https://www.linkedin.com/in/example-person/'
+
+    description = 'A local career workspace with specialist agents and a study plan.'
+    def read(driver, url):
+        if url.endswith('details/projects/'):
+            return 'Projects Morrow ' + description
+        if url.endswith('details/certifications/'):
+            return 'Licenses & certifications AWS Academy Cloud Architecting'
+        if url.endswith('details/education/'):
+            return 'Education B.Tech Computer Science Example University'
+        return 'Profile Headline'
+    monkeypatch.setattr(profile_agent, '_read_page', read)
+    page = profile_agent._read_profile(Driver(), board)
+    assert profile_agent.verify(description, page, *profile_agent._locate('Project: Morrow'))[0] is True
+    assert profile_agent.verify('AWS Academy Cloud Architecting', page)[0] is True
+    assert profile_agent.verify('B.Tech Computer Science Example University', page)[0] is True
+    assert profile_agent.verify('A completely different trading platform with automated market analysis.',
+                                page, *profile_agent._locate('Project: Morrow'))[0] is False

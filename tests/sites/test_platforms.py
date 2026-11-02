@@ -409,20 +409,23 @@ def test_cutshorts_second_apply_is_clicked_and_checked_on_its_own_job_view(board
 
 
 def test_update_profile_needs_the_agent_to_say_done(monkeypatch):
-    from sites_bot import browser_agent, platforms
+    from sites_bot import browser_agent, platforms, profile_agent
 
     board = platforms.BOARDS["hirist"]
     monkeypatch.setattr(platforms, "safe_get", lambda driver, url: True)
     monkeypatch.setattr(platforms, "signed_out", lambda driver, b: False)
     monkeypatch.setattr(platforms.time, "sleep", lambda s: None)
     monkeypatch.setattr(browser_agent, "facts_text", lambda profile, settings: "facts")
+    monkeypatch.setattr(profile_agent, '_read_profile', lambda driver, board: 'About Verified profile')
     prompts, systems = [], []
 
     def agent(status):
         def run_agent(driver, settings, prompt, workdir, files=(), system=""):
             prompts.append(prompt)
             systems.append(system)
-            return browser_agent.AgentRun(report={"status": status, "why": "w", "notes": "n"},
+            return browser_agent.AgentRun(report={"status": status, "why": "w", "notes": "n",
+                                                  "sections": [{"name": "About", "action": "already_ok",
+                                                                "after": "Verified profile"}]},
                                           workdir=workdir, seconds=1.0)
         return run_agent
 
@@ -452,7 +455,7 @@ def test_update_profile_needs_the_agent_to_say_done(monkeypatch):
 
 def test_a_signed_out_board_gets_its_profile_created_and_tracked_in_memory(monkeypatch):
     from common import memory
-    from sites_bot import browser_agent, platforms
+    from sites_bot import browser_agent, platforms, profile_agent
 
     board = platforms.BOARDS["hirist"]
     sessions = iter([True, True, False])  # signed out twice, signed in once the agent has run
@@ -460,12 +463,15 @@ def test_a_signed_out_board_gets_its_profile_created_and_tracked_in_memory(monke
     monkeypatch.setattr(platforms, "signed_out", lambda driver, b: next(sessions))
     monkeypatch.setattr(platforms.time, "sleep", lambda s: None)
     monkeypatch.setattr(browser_agent, "facts_text", lambda profile, settings: "facts")
+    monkeypatch.setattr(profile_agent, '_read_profile', lambda driver, board: 'About Verified profile')
     prompts = []
 
     def run_agent(driver, settings, prompt, workdir, files=(), system=""):
         prompts.append(prompt)
         notes = "Account created. Profile at https://www.hirist.tech/profile/me" if len(prompts) == 1 else "saved"
-        return browser_agent.AgentRun(report={"status": "done", "why": "", "notes": notes},
+        return browser_agent.AgentRun(report={"status": "done", "why": "", "notes": notes,
+                                              "sections": [{"name": "About", "action": "already_ok",
+                                                            "after": "Verified profile"}]},
                                       workdir=workdir, seconds=1.0)
 
     monkeypatch.setattr(browser_agent, "run_agent", run_agent)
