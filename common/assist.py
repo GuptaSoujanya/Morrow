@@ -311,6 +311,29 @@ def _number(text: str) -> Optional[float]:
     return float(match.group()) if match else None
 
 
+_NUMERIC_LABELS = re.compile(
+    r"\b(?P<notice>notice(?:\s+period)?|np)\b|"
+    r"\b(?P<current>current)(?:\s+(?:annual\s+)?(?:ctc|salary|compensation))?\b|"
+    r"\b(?P<expected>expected)(?:\s+(?:annual\s+)?(?:ctc|salary|compensation))?\b", re.I)
+_FACT_LABELS = {"notice_period_days": "notice", "current_ctc_lpa": "current",
+                "expected_ctc_lpa": "expected"}
+
+
+def _numeric_answer(answer: str, attribute: str) -> Optional[str]:
+    """Select the relevant value in a combined salary/notice-period answer."""
+    wanted = _FACT_LABELS.get(attribute)
+    labels = list(_NUMERIC_LABELS.finditer(answer)) if wanted else []
+    if not labels:
+        return answer
+    for index, label in enumerate(labels):
+        if label.lastgroup == wanted:
+            end = labels[index + 1].start() if index + 1 < len(labels) else len(answer)
+            value = answer[label.end():end].strip(" :=,-;")
+            return value if _number(value) is not None or len(labels) > 1 else answer
+    # A labelled salary is not evidence about an omitted notice period (or vice versa).
+    return None
+
+
 _NUMBER_RE = r"(\d+(?:\.\d+)?)"
 _RANGE = re.compile(_NUMBER_RE + r"\s*(?:-|–|to)\s*" + _NUMBER_RE, re.I)
 _CEILING = re.compile(r"(?:\bless than|\bunder|\bbelow|\bup ?to|<)\s*" + _NUMBER_RE, re.I)
@@ -388,7 +411,8 @@ def disagreements(profile: Profile, book: AnswerBook) -> List[Disagreement]:
             if value is None:
                 break
             if kind == "number":
-                if _number_disagrees(answer, float(value)):
+                numeric = _numeric_answer(answer, attribute)
+                if numeric is not None and _number_disagrees(numeric, float(value)):
                     found.append(Disagreement(name, question, answer, "%s: %g" % (attribute, float(value))))
             else:
                 said_bool = _yes_no(answer)

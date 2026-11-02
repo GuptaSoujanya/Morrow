@@ -231,3 +231,22 @@ def test_a_range_the_profile_number_falls_in_is_not_a_disagreement(tmp_path):
         ("total experience", "10+"),
         ("notice period", "up to 30 days"),
     ]
+
+
+def test_combined_compensation_answer_compares_notice_period_not_salary(tmp_path):
+    answers = (
+        "Q: What is your Current CTC, Expected CTC, Notice period?\n"
+        "A: Current CTC 16 LPA, Expected CTC 20 LPA, Notice period 15 days\n\n"
+        "Q: Please share current and expected compensation along with the notice period.\n"
+        "A: Current 16 LPA, Expected 20 LPA, Notice period 15 days\n\n"
+        "Q: Current CTC and notice period?\nA: Notice period 30 days, Current CTC 16 LPA\n\n"
+        "Q: Notice period?\nA: 30 days notice period\n\n"
+        "Q: Notice period and salary?\nA: Current CTC 16 LPA\n"
+    )
+    _setup(tmp_path, answers=answers)
+    profile = Profile(current_ctc_lpa=16, expected_ctc_lpa=20, notice_period_days=15)
+    found = assist.disagreements(profile, AnswerBook(str(tmp_path / "user/inputs/answers.txt")))
+    assert [(x.topic, x.in_answers) for x in found] == [
+        ("notice period", "Notice period 30 days, Current CTC 16 LPA"),
+        ("notice period", "30 days notice period"),
+    ]
