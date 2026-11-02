@@ -60,6 +60,16 @@ def test_redirect_account_and_verification_states():
     assert brain.observe('https://jobs.acme.com/apply', 'Attach resume')[0] == 'inspect'
 
 
+def test_email_authorization_requires_explicit_posting_instruction_and_one_recipient():
+    def driver(links):return SimpleNamespace(execute_script=lambda _:links)
+    footer={'href':'mailto:careers@acme.com','text':'Careers contact','around':'careers@acme.com'}
+    assert not brain.mailbox(driver([footer]))
+    application={**footer,'text':'Apply by email','around':'Send your resume to careers@acme.com'}
+    assert brain.mailbox(driver([application]))=='careers@acme.com'
+    assert not brain.mailbox(driver([{**application,'href':'mailto:a@acme.com,b@acme.com'}]))
+    assert not brain.mailbox(driver([application,{**application,'href':'mailto:other@acme.com'}]))
+
+
 class Gmail:
     current_window_handle = 'mail'
     window_handles = ['mail']

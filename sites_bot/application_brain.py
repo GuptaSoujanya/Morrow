@@ -67,13 +67,29 @@ def observe(url, text):
 
 
 def mailbox(driver):
-    from .external import apply_by_email
+    from .external import _MAILTO_SCRIPT
     try:
-        value = apply_by_email(driver)
+        links = driver.execute_script(_MAILTO_SCRIPT) or []
     except Exception:
         return ''
-    # One explicit application recipient only; never use a mailto's cc/bcc/body payload.
-    return value if re.fullmatch(r'[A-Za-z0-9.!#$%&\'*+/=?^_`{|}~-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}', value or '') else ''
+    addresses = set()
+    for link in links:
+        if not isinstance(link, dict):
+            continue
+        # A careers mailbox in the footer is not enough. Visible surrounding text
+        # must explicitly request an application or CV; the address itself is not evidence.
+        context = str(link.get('text', '')) + ' ' + str(link.get('around', ''))
+        context = re.sub(r'\S+@\S+', '', context)
+        if not re.search(r'\b(apply|application|resume|cv)\b', context, re.I):
+            continue
+        href = str(link.get('href', ''))
+        if not href.casefold().startswith('mailto:'):
+            continue
+        value = href.split(':', 1)[1].split('?', 1)[0].strip()
+        # Never use a mailto's CC/BCC/body payload, an encoded payload or several recipients.
+        if re.fullmatch(r'[A-Za-z0-9.!#$&\'*+/=?^_`{|}~-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}', value):
+            addresses.add(value)
+    return next(iter(addresses)) if len(addresses) == 1 else ''
 
 
 def verify_sent_email(driver, report):
