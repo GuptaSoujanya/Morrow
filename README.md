@@ -236,6 +236,42 @@ Applications sent across Naukri, job boards and company sites, the jobs found an
 | 📊 | **Report** | One daily report with what was applied, what was tried, what's left for you, and every run's log |
 | 🖥️ | **Dashboard** | Every bot as a button, live logs, a live view of each bot's browser, a Stop button, the application ledger and insights |
 
+### Application intelligence and company knowledge
+
+**Bot Crew → Application intelligence** shows the configured AI limits and recent attempts.
+The browser agent uses the shared application policy and a board-specific playbook in
+[`sites_bot/skills/application`](sites_bot/skills/application). It follows the job's ATS redirects,
+checks the selected Google account and permissions, reads matching verification mail, and stops
+for missing facts or human checks. For an explicit application mailbox on the posting it can
+prepare and send a factual email with the supplied resume; unrelated recruiter outreach stays drafts-only.
+Success requires page evidence or a matching message in Gmail Sent. Interrupted or uncertain
+AI attempts remain blocked across restarts. After checking the actual outcome, use the panel's
+review buttons to mark it sent or permit a retry. Dry runs never send.
+
+**Knowledge & Data → Companies** is a searchable database of employers from discovered jobs.
+It shows website, careers, public business email/phone, CEO, CTO, hiring contact, location,
+industry, description, LinkedIn and size when supporting evidence can be checked. Each finding
+has a direct source and quote; missing fields remain visible. Application rows link to the same
+company record with Pending, Researching, Found, Partial, Not found or Failed status.
+These local automation records are available only to the local workspace or its explicit owner.
+
+The final daily stage, `research:companies`, researches up to 10 remaining employers after all
+application lanes finish. A remaining backlog keeps the stage pending for the next continuation.
+Previously researched employers are reused; failed research backs off and stops automatic retries
+after three attempts. Use **Research this company** to refresh a partial, missing or failed record.
+Research uses the configured Claude/Kiro CLI with web tools only and never sends messages.
+
+```bash
+venv/bin/python -m common.company_research --limit 10       # next pending employers
+venv/bin/python -m common.company_research --dry-run        # count only; no AI/web calls or writes
+venv/bin/python -m pipeline continue --only research:companies
+```
+
+Application assistance respects `BROWSER_AGENT`, `BROWSER_AGENT_LIMIT`,
+`BROWSER_AGENT_TIMEOUT_S` and `BROWSER_AGENT_BUDGET_USD`. A fresh website layout, inaccessible
+source, MFA or CAPTCHA can still require review; neither a model report nor missing public data
+is presented as a verified success.
+
 ### Supported job boards
 
 ![Naukri](https://img.shields.io/badge/Naukri-0A66C2?style=flat-square)

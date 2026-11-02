@@ -21,7 +21,7 @@ from .answer_notifications import PREFIX as ANSWER_EVENT_PREFIX, MAX_EVENT_BYTES
 _ANSI = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07]*\x07")
 READ_GRACE_S = 1.0
 BOARDS = ("naukri", "hirist", "instahyre", "cutshort", "wellfound")
-STAGES = ("learn", "research:resume", "profile:linkedin",
+STAGES = ("learn", "research:resume", "research:companies", "profile:linkedin",
           *(f"{group}:{board}" for group in ("profile", "apply") for board in BOARDS),
           *(f"brief:{name}" for name in ("goal", "system-design", "papers", "tech-news", "companies", "repositories")))
 STUDY_STAGES = frozenset(('learn', 'brief:papers', 'brief:tech-news', 'brief:repositories'))
@@ -40,6 +40,8 @@ def resources_for(command: Command, action: str) -> frozenset[str]:
     args = command.argv
     site = board_site(command, action)
     resources = {f"action:boards:{site}" if site else f"action:{action or command.shown}"}
+    if action == 'company_research':
+        resources.add('stage:research:companies')
     if action in ("install", "tests"):
         return frozenset({"workspace"})
     if action in ("naukri", "profile", "external", "assist", "google"):

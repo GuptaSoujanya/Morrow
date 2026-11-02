@@ -76,6 +76,20 @@ class Stage(NamedTuple):
     parallel: bool = False  # an AI agent: runs in the pool, next to the browser stages
     outputs: Sequence[Path] = ()  # files the stage writes; a done stage whose file is gone runs again
     command: Sequence[str] = ()  # the same work as `python3 -m <command>`, for --bots N (pipeline/lanes.py)
+    final: bool = False  # runs after all browser and research workers have finished
+
+
+def _company_research(args):
+    from common import company_research, config
+    result = company_research.run(config.load_settings(args.env).db_path,
+                                  cli=args.cli, dry_run=args.dry_run)
+    return EXIT_FAILED if result['failed'] else EXIT_OK
+
+
+def _companies_left(args):
+    from common import company_store, config
+    return sum(row['status'] in ('pending', 'researching', 'failed')
+               for row in company_store.catalog(config.load_settings(args.env).db_path))
 
 
 def _bot(name: str, module: str, flags: List[str], work: Callable[[], int]) -> Stage:
@@ -178,6 +192,7 @@ def build_stages(args: argparse.Namespace, boards: List[str]) -> List[Stage]:
             "brief:%s" % agent.key,
             lambda agent=agent: _ai_stage(lambda: briefing.run_agent(agent, team, day, briefing.context(day))),
             True, (briefing.output_of(agent, day),)))
+    stages.append(Stage('research:companies', lambda: _company_research(args), final=True))
     return stages
 
 
@@ -263,6 +278,10 @@ def run_day(args: argparse.Namespace, stages: List[Stage], mem: memory_module.Me
             # Run these stages again; the rest of the day's checkpoint stays as it is.
             for stage in stages:
                 mem.mark(stage.name, memory_module.PENDING, "redo")
+        # New jobs can appear after an earlier company batch completed on the same day.
+        if any(s.name == 'research:companies' for s in stages) and (
+                _companies_left(args) or any(s.name.startswith('apply:') and not mem.is_done(s.name) for s in stages)):
+            mem.mark('research:companies', memory_module.PENDING, 'Research remaining employers after applications')
         if all(mem.is_done(s.name) for s in stages):
             if mem.day_status() == memory_module.DAY_DONE:
                 logger.info("[pipeline] today is already done (finished %s); nothing to run. "
@@ -303,8 +322,9 @@ def run_day(args: argparse.Namespace, stages: List[Stage], mem: memory_module.Me
     # The browser lanes start at once. `learn` runs next to them; only the agents wait for
     # it (they are told today's topics), then run in their pool next to the browser stages.
     first = [s for s in stages if s.name == "learn"]
-    browser = [s for s in stages if not s.parallel and s.name != "learn"]
-    agents = [s for s in stages if s.parallel]
+    browser = [s for s in stages if not s.parallel and not s.final and s.name != "learn"]
+    agents = [s for s in stages if s.parallel and not s.final]
+    final = [s for s in stages if s.final]
     learned = threading.Event()
 
     def learn() -> None:
@@ -349,6 +369,12 @@ def run_day(args: argparse.Namespace, stages: List[Stage], mem: memory_module.Me
         futures += [pool.submit(agent, stage) for stage in agents]
         for future in futures:
             future.result()
+    for stage in final:
+        one(stage)
+        if not args.dry_run and stage.name == 'research:companies' and mem.is_done(stage.name):
+            left = _companies_left(args)
+            if left:
+                mem.mark(stage.name, memory_module.PENDING, '%d employers left; each continuation researches up to 10. Failed research can be retried in Companies.' % left)
     if args.dry_run:
         return EXIT_OK
     if agents:
