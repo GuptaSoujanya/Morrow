@@ -11,17 +11,17 @@ from datetime import date
 COURSE_ID = 'interview-90'
 COURSE_VERSION = 1
 # Teaching style can improve without changing the syllabus or resetting progress.
-TEACHING_VERSION = 2
+TEACHING_VERSION = 4
 COURSE_TITLE = '90-day interview course'
 TOTAL_DAYS = 90
 
 SUBJECTS = ('AI & machine learning', 'System design', 'Full-stack development', 'DSA & interviews')
 DAILY_SESSION = (
-    ('ai_ml', 'AI & machine learning', 25),
-    ('system_design', 'System design', 25),
-    ('full_stack', 'Full-stack development', 25),
-    ('dsa', 'DSA practice', 35),
-    ('recall', 'Explain it in your own words', 10),
+    ('ai_ml', 'AI & machine learning', 55),
+    ('system_design', 'System design', 55),
+    ('full_stack', 'Full-stack development', 55),
+    ('dsa', 'DSA practice', 60),
+    ('recall', 'Explain it in your own words', 15),
 )
 PHASES = (
     ('Build your foundations', 1, 28),
@@ -200,8 +200,12 @@ _INTRODUCTIONS = (
 def course_info():
     return {
         'id': COURSE_ID, 'version': COURSE_VERSION, 'title': COURSE_TITLE,
-        'description': 'One shared path through AI/ML, system design, full-stack development and DSA, explained in simple language.',
-        'shared': True, 'total_days': TOTAL_DAYS, 'daily_minutes': 120,
+        'description': 'For developers with around three years of experience: technical explanations, system flows, implementation cases and interview practice in simple English.',
+        'shared': True, 'total_days': TOTAL_DAYS, 'daily_minutes': 240,
+        'audience': 'Working developers with around 3 years of experience',
+        'engineering_notebooks': 13,
+        'interview_questions': 540, 'project_assessments': 13,
+        'study_note': 'Allow around 3–4 hours for detailed reading and practice. This is a guide, not a limit. Split a lesson across sessions when needed; projects and mocks can take longer.',
         'subjects': list(SUBJECTS),
         'phases': [{'title': title, 'start_day': start, 'end_day': end} for title, start, end in PHASES],
         'daily_session': [{'key': key, 'title': title, 'minutes': minutes} for key, title, minutes in DAILY_SESSION],

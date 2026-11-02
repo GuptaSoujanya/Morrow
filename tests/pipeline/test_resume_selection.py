@@ -77,8 +77,20 @@ def test_selected_resume_overrides_stale_onboarding_areas_and_prompt_facts(tmp_p
 
 
 def _day(day, label):
+    depth = ('\n\n#### How it works\nValidate the input before computing a result.\n'
+             '\n#### System flow\nFollow the request through validation and calculation.\n'
+             '```mermaid\nflowchart TD\nA[Request] --> B[Validate]\nB --> C[Calculate]\n```\n'
+             '\n#### Trade-offs and failure cases\nReject invalid inputs and handle repeated requests explicitly.\n')
     small = '\n\n'.join('### ' + title + '\nA worked example.' for title in
-                         ('Words you need', 'The idea', 'A small example', 'Your turn', 'Check your answer')) + '\n\n---'
+                         ('Words you need', 'The idea', 'A small example', 'Your turn', 'Check your answer'))
+    small = small.replace('### The idea\nA worked example.', '### The idea\nA worked example.' + depth)
+    small += '\n\n### Interview practice\nExplain the implementation and its failure cases.\n'
+    for number in (1, 2):
+        small += (f'\n#### Question {number}\nHow should invalid input be handled?\n'
+                  '##### Show answer\nValidate before changing state and return an explicit error.\n'
+                  '##### Follow-up\nWhat if the request is repeated?\n'
+                  '###### Show follow-up answer\nCheck a stable operation identifier before repeating a write.\n')
+    small += '\n\n---'
     return '## Day %d: %s\n\n' % (day, label) + '\n\n'.join(
         '**%s: %s**\n%s' % (part, label, small)
         for part in ('System Design', 'ML / GenAI', 'Full-stack', 'DSA')) + (

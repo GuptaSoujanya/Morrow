@@ -23,12 +23,24 @@ def _args(**kw):
 
 def _week(week):
     days = learning.days_of(week)
+    depth = ('\n\n#### How it works\nValidate the input before computing a result.\n'
+             '\n#### System flow\nFollow the request through validation and calculation.\n'
+             '```mermaid\nflowchart TD\nA[Request] --> B[Validate]\nB --> C[Calculate]\n```\n'
+             '\n#### Trade-offs and failure cases\nReject invalid inputs and handle repeated requests explicitly.\n')
     small = '\n\n'.join('### ' + title + '\nA worked example.' for title in
-                         ('Words you need', 'The idea', 'A small example', 'Your turn', 'Check your answer')) + '\n\n---\n\n'
+                         ('Words you need', 'The idea', 'A small example', 'Your turn', 'Check your answer'))
+    small = small.replace('### The idea\nA worked example.', '### The idea\nA worked example.' + depth)
+    small += '\n\n### Interview practice\nExplain the implementation and its failure cases.\n'
+    for number in (1, 2):
+        small += (f'\n#### Question {number}\nHow should invalid input be handled?\n'
+                  '##### Show answer\nValidate before changing state and return an explicit error.\n'
+                  '##### Follow-up\nWhat if the request is repeated?\n'
+                  '###### Show follow-up answer\nCheck a stable operation identifier before repeating a write.\n')
+    small += '\n\n---\n\n'
     return "# Week %d: t\n\nintro\n\n" % week + "".join(
-        f"## Day {d}: d{d}\n\n**System Design: sd{d}** (25 min)\n{small}**ML / GenAI: ml{d}** (25 min)\n{small}"
-        f"**Full-stack: web** (25 min)\n{small}**DSA: arrays** (35 min)\n{small}"
-        "**Recall** (10 min)\n- q\n\n**Go deeper**\n- [a](http://a)\n\n" for d in days)
+        f"## Day {d}: d{d}\n\n**System Design: sd{d}**\n{small}**ML / GenAI: ml{d}**\n{small}"
+        f"**Full-stack: web**\n{small}**DSA: arrays**\n{small}"
+        "**Recall**\n- q\n\n**Go deeper**\n- [a](http://a)\n\n" for d in days)
 
 
 def test_memory_marks_and_reloads(tmp_path):

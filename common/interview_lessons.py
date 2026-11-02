@@ -11,7 +11,7 @@ from functools import lru_cache
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from . import interview_course, interview_ai_basics, interview_system_basics, interview_fullstack_basics
+from . import interview_course, interview_ai_basics, interview_system_basics, interview_fullstack_basics, interview_practice, interview_engineering
 
 
 _TRACKS = (
@@ -327,53 +327,106 @@ def _reading(spec, key, folder, course_root):
 
 
 def lesson(day, course_root):
-    """Teach each topic in small steps; reference chapters are optional links."""
+    """Join daily teaching with visible technical reading and weekly cases."""
     spec = interview_course.day_spec(day)
     subjects = (
         ('ai_ml', 'AI and machine learning', interview_ai_basics.lesson(day)),
         ('system_design', 'System design', interview_system_basics.lesson(day)),
         ('full_stack', 'Full-stack development', interview_fullstack_basics.lesson(day)),
     )
-    parts = [f"# Day {day}: {spec['title']}", '',
-             '## Start here', '',
-             'Read one part at a time. Read the example, try the small task, then open “Check your answer”. '
-             'You can take a break and come back to the same lesson.', '',
-             '**Today you will practise:**', '',
-             *[f"{index}. {entry['title']}" for index, (_, _, entry) in enumerate(subjects, 1)],
-             '4. Solve a small coding problem in DSA practice. DSA means ways to store information and solve problems.', '']
-    for index, (key, label, entry) in enumerate(subjects, 1):
-        parts += [f"## {index}. {entry['title']}", '', f'**Subject: {label}**', '',
-                  '### Words you need', '',
-                  *[f'- **{word}:** {meaning}' for word, meaning in entry['words'].items()], '',
-                  '### The idea', '', entry['idea'], '',
-                  '### A small example', '', entry['example'], '',
-                  *[f'{step}. {instruction}' for step, instruction in enumerate(entry['steps'], 1)], '',
-                  '### Your turn', '', entry['task'], '',
-                  '### Check your answer', '', entry['answer'], '']
     readings = []
     for key, label, folder in _TRACKS:
         try:
-            reading = _reading(spec, key, folder, course_root)
+            readings.append({'track': key, **_reading(spec, key, folder, course_root)})
         except (OSError, ValueError):
-            # The small lesson is self-contained. Missing optional references
-            # must not prevent a learner from reading or completing it.
+            # The authored daily material and notebook remain self-contained.
             continue
-        readings.append({'track': key, **reading})
+    parts = [f"# Day {day}: {spec['title']}", '',
+             '## Start here', '',
+             'This course is for working developers with around three years of experience. '
+             'Read the technical explanation and system flow, trace the examples, implement the task, then defend your decisions in an interview. '
+             'Keep the answers closed until you have tried. '
+             'Allow around 3–4 hours for reading and practice, or split the lesson across sessions. There is no daily reading limit.', '',
+             '**Today you will practise:**', '',
+             *[f"{index}. {entry['title']}" for index, (_, _, entry) in enumerate(subjects, 1)],
+             '4. Solve DSA problems, explain why the algorithm works, and compare its time and memory costs.', '']
+    for index, (key, label, entry) in enumerate(subjects, 1):
+        practice = interview_practice.subject(day, key)
+        notebook = interview_engineering.notebook(day, key)
+        reference = next((item for item in readings if item['track'] == key and item['match'] == 'topic'), None)
+        # Keep broad interview lists in the question bank. Embed only actual
+        # technical sections, never a fallback chapter under the day's title.
+        technical = []
+        if reference and not re.search(r'interview-(?:framework-and-)?questions', reference['path']):
+            from pipeline.course import _demote
+            technical = ['#### Technical detail', '',
+                         f"This reference develops **{reference['title']}**, which supports today’s topic.", '',
+                         _demote(reference['text'], 5), '',
+                         f"[Open the full chapter: {reference['title']}]({reference['route']})", '']
+        parts += [f"## {index}. {entry['title']}", '', f'**Subject: {label}**', '',
+                  '### Words you need', '',
+                  *[f'- **{word}:** {meaning}' for word, meaning in entry['words'].items()], '',
+                  '### The idea', '', entry['idea'], '', practice['explanation'], '',
+                  *technical,
+                  f"#### Engineering notebook · Week {notebook['week']}", '',
+                  f"**{notebook['title']}**", '',
+                  'This case connects the week’s topics. Reuse the same system as you study each new part. '
+                  f"Today, focus on **{notebook['focus']}** and explain where it affects the flow.", '',
+                  notebook['text'], '',
+                  '### A small example', '', entry['example'], '',
+                  *[f'{step}. {instruction}' for step, instruction in enumerate(entry['steps'], 1)], '',
+                  '#### A real-world case', '', practice['scenario'], '',
+                  '### Your turn', '', practice['drill'], '',
+                  'Use the system flow above to trace a successful request and one failure. '
+                  'Write down the inputs, state changes, expected output and the reason for your design choice.', '',
+                  '### Check your answer', '',
+                  'Check the result against these criteria. Keep evidence such as a trace, test output or a measured comparison.', '',
+                  *['- ' + item for item in practice['checks']], '',
+                  '#### Quick foundation check', '', entry['task'], '', entry['answer'], '',
+                  '### Interview practice', '',
+                  'Say your answer out loud before opening the guide. Explain your choice, give an example, and name a limit.', '']
+        for number, question in enumerate(practice['questions'], 1):
+            parts += [f'#### Question {number}', '', question['question'], '',
+                      '##### Show answer', '', question['answer'], '',
+                      '##### Follow-up', '', question['follow_up'], '',
+                      '###### Show follow-up answer', '', question['follow_up_answer'], '']
+        parts += ['#### Common mistake', '', practice['mistake'], '']
     parts += ['## Try it yourself', '',
-              'Choose one example above. Change one number or one input. '
-              'Write what you think will happen. Then follow the steps to check it.', '',
+              'Implement the daily task, then use the engineering notebook to test a failure path. '
+              'Record the input, expected result, actual result and the trade-off you chose. '
+              'Explain one condition under which your design would need to change.', '',
               '## DSA practice', '',
-              'Now practise solving a coding problem. Start with the short explanation. '
-              'Follow the small example before trying a question on your own.', '',
+              f"**Course practice focus:** {spec['dsa']}", '',
+              'Continue through Learn, Worked example, Practice and Review. '
+              'Study the invariant, trace the changing values, then solve the assigned problems before reviewing.', '',
+              '### Use an interview routine', '',
+              '1. Ask what the input and output mean. Check the size limit and whether values can repeat.',
+              '2. Work one tiny example by hand. Explain a simple correct solution before improving it.',
+              '3. Say why your steps work. Then write the code and trace the changing values.',
+              '4. Test an empty input, one item and a repeated value when those inputs are allowed.',
+              '5. Explain time cost (how work grows with input size) and space cost (extra memory used).', '',
               '[Continue DSA practice](#/learning/dsa)', '',
               'Your next DSA topic follows your saved practice. If it feels hard, stay on that topic and try again.', '',
               '## Explain it back', '',
               'Close the notes. Say these answers out loud. Simple words are enough.', '',
               '1. What did you learn? Give one example.',
-              '2. How did you solve the small task?',
-              '3. Which part would you like to practise again?', '',
+              '2. Why does your solution work, and where can it fail?',
+              '3. Which alternative did you reject, and what evidence would change your choice?', '',
+              'Write down one question you needed help with. Try it again tomorrow without the answer.', '']
+    if spec['review']:
+        assessment = interview_practice.weekly_assessment(spec['week'])
+        parts += ['## Weekly project and mock interview', '',
+                  f"### {assessment['title']}", '', assessment['brief'], '',
+                  '### Your project is ready when', '', *['- ' + check for check in assessment['checks']], '',
+                  '### Timed interview', '', assessment['timing'], '', assessment['mock_question'], '',
+                  '#### Show answer', '', assessment['mock_answer'], '',
+                  '### Review your performance', '', 'Use this self-check for your reasoning, example, tests and trade-off. It is practice feedback, not a hiring score.', '',
+                  *['- ' + item for item in assessment['rubric']], '']
+    parts += ['## Interview question bank', '',
+              'Revise one subject or search for a weak topic. Questions include answer guides and follow-ups.', '',
+              '[Open the interview question bank](#/learning/weekly?view=questions)', '',
               '## Extra reading (optional)', '',
-              'The full chapters have more technical detail. Open them when the small examples feel clear.', '',
+              'The main lesson already includes technical reading and a system flow. These full chapters provide further context.', '',
               *[f"- [{entry['title']}]({entry['route']})" for entry in readings], '',
               'Discover has research papers, GitHub projects, and tech news. '
               'You do not need to read them to finish this lesson.', '',
@@ -404,8 +457,8 @@ def _saved_enrichment(spec, learning_root):
             if text:
                 sources = meta.get('day_sources', {})
                 source = sources.get(str(day), {}) if isinstance(sources, dict) else {}
-                # Old dense text remains in the saved files. The reader shows
-                # the simple public lesson until a new-style lesson is ready.
+                # Preserve saved files. Until fresh enrichment is ready, show
+                # the current public lesson with its technical notebook.
                 if not isinstance(source, dict) or source.get('teaching_version') != interview_course.TEACHING_VERSION:
                     return None
                 if source.get('source') == 'bundled':
@@ -484,11 +537,13 @@ def render(text):
                 closing = Token('html_block', '', 0); closing.content = '</details>\n'
                 rendered.append(closing); disclosure_level = None
             title = tokens[index + 1].content.strip().lower()
-            if title in ('check your answer', 'extra reading (optional)'):
+            labels = {'check your answer': 'Check your answer', 'extra reading (optional)': 'Extra reading (optional)',
+                      'show answer': 'Show answer', 'show follow-up answer': 'Show follow-up answer'}
+            if title in labels:
                 if disclosure_level is not None:
                     closing = Token('html_block', '', 0); closing.content = '</details>\n'
                     rendered.append(closing)
-                label = 'Check your answer' if title == 'check your answer' else 'Extra reading (optional)'
+                label = labels[title]
                 opening = Token('html_block', '', 0)
                 opening.content = f'<details><summary>{label}</summary>\n'
                 rendered.append(opening); disclosure_level = level

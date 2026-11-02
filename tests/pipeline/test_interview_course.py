@@ -11,8 +11,24 @@ from pipeline import briefing, content, learning
 
 
 def day_text(day, label='An explained example'):
-    small = '\n\n'.join('### ' + title + '\n' + label for title in
-                          ('Words you need', 'The idea', 'A small example', 'Your turn', 'Check your answer')) + '\n\n---'
+    depth = (
+        '\n\n#### How it works\n'
+        'Validate the input before reading shared state, then compute and return the result.\n'
+        '\n#### System flow\n'
+        'The caller sends an input to validation; accepted input reaches the calculation.\n'
+        '```mermaid\nflowchart TD\n    A[Receive input] --> B[Validate input]\n'
+        '    B --> C[Compute result]\n```\n'
+        'Follow the arrows from the request to the checked result.\n'
+        '\n#### Trade-offs and failure cases\n'
+        'Early checks reject invalid input; repeated requests still need a duplicate-handling policy.\n'
+    )
+    small = '\n\n'.join('### ' + title + '\n' + label + (depth if title == 'The idea' else '')
+                          for title in ('Words you need', 'The idea', 'A small example', 'Your turn', 'Check your answer'))
+    small += '\n\n### Interview practice\n' + label
+    for number in (1, 2):
+        small += f'\n\n#### Question {number}\nWhat changes when an input fails?\n##### Show answer\n{label}\n'
+        small += f'##### Follow-up\nWhat if it happens twice?\n###### Show follow-up answer\n{label}\n'
+    small += '\n\n---'
     return ('## Day %d: %s\n\n' % (day, course.day_spec(day)['title'])
             + '\n\n'.join('**%s: topic**\n%s' % (part, small)
                           for part in ('ML / GenAI', 'System Design', 'Full-stack', 'DSA'))
@@ -23,12 +39,141 @@ def week_text(week, label='An explained example'):
     return '# Week %d: course\n\n' % week + '\n'.join(day_text(day, label) for day in learning.days_of(week))
 
 
+def test_long_completed_lessons_keep_all_studied_subjects_in_generation_context():
+    text = day_text(1, 'Long explanation. ' * 400)
+    excerpt = learning._context_excerpt(text, 1)
+    assert len(excerpt) < 4500
+    assert all(label in excerpt for label in ('**ML / GenAI:', '**System Design:', '**Full-stack:', '**DSA:'))
+    assert 'Long explanation.' in excerpt
+
+
+@pytest.mark.parametrize('broken', [
+    lambda text: text.replace('### Interview practice', '### Notes'),
+    lambda text: text.replace('#### Question 2', '#### Extra question'),
+    lambda text: text.replace('###### Show follow-up answer', '###### Missing guide'),
+    lambda text: text.replace('What changes when an input fails?', ''),
+    lambda text: text.replace('###### Show follow-up answer\nAn explained example',
+                              '###### Show follow-up answer\n\n#### Common mistake\nThis must not count as the answer.'),
+])
+def test_generated_lessons_cannot_drop_interview_practice(broken):
+    with pytest.raises(ai_cli.AIError):
+        learning._checked_sections(broken(day_text(1)), [1])
+
+
+@pytest.mark.parametrize('title,expected_level,wrong_level', [
+    (title, expected_level, wrong_level)
+    for title, expected_level in (('Question 1', 4), ('Question 2', 4),
+                                  ('Show answer', 5), ('Follow-up', 5),
+                                  ('Show follow-up answer', 6))
+    for wrong_level in (3, 4, 5, 6) if wrong_level != expected_level
+])
+def test_generated_interview_headings_require_disclosure_safe_levels(title, expected_level, wrong_level):
+    text = day_text(1).replace('#' * expected_level + ' ' + title,
+                               '#' * wrong_level + ' ' + title)
+    with pytest.raises(ai_cli.AIError, match='interview heading level'):
+        learning._checked_sections(text, [1])
+
+
+def test_valid_generated_interview_questions_stay_outside_closed_answers():
+    from bs4 import BeautifulSoup
+    from common.interview_lessons import render
+
+    text = day_text(1)
+    learning._checked_sections(text, [1])
+    soup = BeautifulSoup(render(text), 'html.parser')
+    questions = [heading for heading in soup.find_all('h4')
+                 if heading.text in ('Question 1', 'Question 2')]
+    followups = [heading for heading in soup.find_all('h5') if heading.text == 'Follow-up']
+    assert len(questions) == len(followups) == 8
+    assert all(heading.find_parent('details') is None for heading in questions + followups)
+    answers = [details for details in soup.find_all('details')
+               if details.summary.text in ('Show answer', 'Show follow-up answer')]
+    assert len(answers) == 16 and all(not details.has_attr('open') for details in answers)
+
+
+@pytest.mark.parametrize('title', ['How it works', 'System flow', 'Trade-offs and failure cases'])
+def test_generated_lessons_require_each_depth_section_inside_the_idea(title):
+    text = day_text(1).replace('#### ' + title, '#### Removed depth section', 1)
+    with pytest.raises(ai_cli.AIError, match='depth sections'):
+        learning._checked_sections(text, [1])
+
+
+@pytest.mark.parametrize('title', ['How it works', 'System flow', 'Trade-offs and failure cases'])
+def test_generated_depth_sections_require_level_four_headings(title):
+    text = day_text(1).replace('#### ' + title, '##### ' + title, 1)
+    with pytest.raises(ai_cli.AIError, match='depth sections'):
+        learning._checked_sections(text, [1])
+
+
+@pytest.mark.parametrize('replacement', ['', 'TODO', '##### Implementation details',
+                                         '```python\nvalidate(request)\n```', '`validate(request)`'])
+def test_depth_headings_or_code_cannot_replace_an_explanation(replacement):
+    text = day_text(1).replace(
+        'Validate the input before reading shared state, then compute and return the result.', replacement, 1)
+    with pytest.raises(ai_cli.AIError, match='empty depth explanation'):
+        learning._checked_sections(text, [1])
+
+
+@pytest.mark.parametrize('replacement', [
+    '',
+    '```mermaid\n\n```',
+    '```mermaid\nflowchart TD\n```',
+    '```python\nflowchart TD\nA --> B\n```',
+    '````text\n```mermaid\nflowchart TD\nA --> B\n```\n````',
+    'Use the words ```mermaid and flowchart TD here.',
+])
+def test_system_flow_requires_an_actual_nonempty_mermaid_fence(replacement):
+    original = ('```mermaid\nflowchart TD\n    A[Receive input] --> B[Validate input]\n'
+                '    B --> C[Compute result]\n```')
+    text = day_text(1).replace(original, replacement, 1)
+    with pytest.raises(ai_cli.AIError, match='fenced mermaid'):
+        learning._checked_sections(text, [1])
+
+
+def test_system_flow_needs_explanation_even_with_a_valid_diagram():
+    text = day_text(1).replace(
+        'The caller sends an input to validation; accepted input reaches the calculation.', '', 1).replace(
+        'Follow the arrows from the request to the checked result.', '', 1)
+    with pytest.raises(ai_cli.AIError, match='empty depth explanation'):
+        learning._checked_sections(text, [1])
+
+
+def test_mermaid_under_another_step_cannot_stand_in_for_system_flow():
+    original = ('```mermaid\nflowchart TD\n    A[Receive input] --> B[Validate input]\n'
+                '    B --> C[Compute result]\n```')
+    text = day_text(1).replace(original, '', 1).replace('### A small example',
+                                                     '### A small example\n' + original, 1)
+    with pytest.raises(ai_cli.AIError, match='fenced mermaid'):
+        learning._checked_sections(text, [1])
+
+
+def test_sequence_diagram_is_valid_depth_without_a_hard_lesson_length_rule():
+    original = ('```mermaid\nflowchart TD\n    A[Receive input] --> B[Validate input]\n'
+                '    B --> C[Compute result]\n```')
+    sequence = ('~~~mermaid\nsequenceDiagram\nparticipant Caller\nparticipant Service\n'
+                'Caller->>Service: Send input\nService-->>Caller: Return checked result\n~~~')
+    text = day_text(1).replace(original, sequence)
+    assert learning._checked_sections(text, [1])[1] == text
+
+
+def test_generation_prompt_requires_deep_teaching_in_simple_english(tmp_path):
+    prompt = learning.day_prompt(1, tmp_path)
+    assert 'VERY SIMPLE ENGLISH' in prompt and 'three years of experience' in prompt
+    assert '800 to 1400' in prompt and 'not a hard word-count rule' in prompt
+    assert '3 to 4 hours' in prompt and 'split the work across sessions' in prompt
+    assert all('#### ' + title in prompt for title in
+               ('How it works', 'System flow', 'Trade-offs and failure cases'))
+    assert '```mermaid' in prompt and 'boundary checks' in prompt
+    assert 'under 10 lines' not in prompt and '400 to 600' not in prompt
+    assert '120 minutes' not in prompt and 'first course' not in prompt
+
+
 def test_syllabus_has_exactly_90_complete_days_and_no_account_input():
     weeks = course.syllabus()
     days = [day for week in weeks for day in week['days']]
     assert [day['day'] for day in days] == list(range(1, 91))
     assert len(weeks) == 13 and len(weeks[-1]['days']) == 6
-    assert sum(part['minutes'] for part in course.course_info()['daily_session']) == 120
+    assert sum(part['minutes'] for part in course.course_info()['daily_session']) == 240
     assert all(len(day['topics']) == 4 and day['practice'] and day['explanation'] and day['example'] for day in days)
     root = Path(__file__).parents[2] / 'database/course'
     assert all((root / path).is_file() for day in days for path in day['reading_paths'].values())
@@ -78,6 +223,7 @@ def test_daily_fetch_is_one_next_day_and_does_not_skip_missed_dates(tmp_path, mo
         return day_text(1)
     day, path = learning.write_today(ask, tmp_path, date(2026, 11, 2))
     assert day == 1 and path == tmp_path / 'interview-90/daily/2026-11-02.md'
+    assert '3–4 hours' in path.read_text() and 'About 2 hours' not in path.read_text()
     assert set(learning.split_days(learning.week_path(1, tmp_path).read_text())) == {1}
     assert 'simple, clear English' in prompts[0] and 'same fixed course for everyone' in prompts[0]
     assert not learning.load_progress(tmp_path)['done']
@@ -103,11 +249,11 @@ def test_new_teaching_style_replaces_only_unfinished_old_lessons(tmp_path):
     assert learning._read_metadata(path)['day_sources']['2']['teaching_version'] == course.TEACHING_VERSION
 
 
-def test_dense_generated_chapter_cannot_replace_a_small_lesson(tmp_path):
+def test_incomplete_generated_chapter_cannot_replace_a_saved_lesson(tmp_path):
     path = learning.ensure_day(1, lambda prompt: day_text(1), tmp_path)
     before = path.read_text()
     dense = day_text(2).replace('### A small example', '**More terminology**')
-    with pytest.raises(ai_cli.AIError, match='beginner lesson steps'):
+    with pytest.raises(ai_cli.AIError, match='lesson steps'):
         learning.ensure_day(2, lambda prompt: dense, tmp_path)
     assert path.read_text() == before and not learning.load_progress(tmp_path)['done']
 
@@ -149,7 +295,9 @@ def test_completed_bundled_reading_is_used_when_no_generated_week_exists(tmp_pat
     learning.save_progress({'done': [1]}, tmp_path)
     prompt = learning.day_prompt(2, tmp_path)
     assert 'Completed earlier course days: 1' in prompt
-    assert 'Previously completed material' in prompt and 'Start here' in prompt
+    assert 'Previously completed material' in prompt and 'Words you need' in prompt
+    assert all(label in prompt for label in ('**Subject: AI and machine learning**',
+                                            '**Subject: System design**', '**Subject: Full-stack development**'))
     assert not learning.week_path(1, tmp_path).exists()
 
 

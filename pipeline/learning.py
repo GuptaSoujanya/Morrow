@@ -228,23 +228,39 @@ def mark_done(root: Path = LEARNING, today: Optional[date] = None) -> int:
 
 _LESSON_SHAPE = (
     "## Day N: <the canonical title>\n\n"
-    "**ML / GenAI: <canonical AI/ML topic>** (25 min)\n"
-    "<use the small lesson structure below>\n\n"
-    "**System Design: <canonical topic>** (25 min)\n"
-    "<use the small lesson structure below>\n\n"
-    "**Full-stack: <canonical topic>** (25 min)\n"
-    "<use the small lesson structure below; explain each code line>\n\n"
-    "**DSA: <canonical topic>** (35 min)\n"
-    "<use the small lesson structure below; trace each step on a list of at most five values>\n\n"
-    "**Recall** (10 min)\n- 3 to 5 self-check questions with short answers after the questions\n\n"
+    "**ML / GenAI: <canonical AI/ML topic>**\n"
+    "<use the detailed lesson structure below>\n\n"
+    "**System Design: <canonical topic>**\n"
+    "<use the detailed lesson structure below>\n\n"
+    "**Full-stack: <canonical topic>**\n"
+    "<use the detailed lesson structure below; explain each code line>\n\n"
+    "**DSA: <canonical topic>**\n"
+    "<use the detailed lesson structure below; trace a manageable input and explain scaling>\n\n"
+    "**Recall**\n- 3 to 5 self-check questions with short answers after the questions\n\n"
     "**Go deeper**\n- 2 to 4 verified primary-source links (optional)\n\n"
-    "Small lesson structure, repeated for each subject:\n"
-    "### Words you need\n<2 to 4 terms with plain meanings, before using them>\n"
-    "### The idea\n<2 to 4 short sentences about ONE idea>\n"
-    "### A small example\n<a familiar situation, exact input, 2 to 4 numbered steps, exact result>\n"
-    "### Your turn\n<one small task changing the worked example; include all needed information>\n"
+    "Detailed lesson structure, repeated for each subject:\n"
+    "### Words you need\n<plain meanings for the technical terms used in this lesson>\n"
+    "### The idea\n<the concept, the engineering problem it solves and its limits>\n"
+    "#### How it works\n<explain the technical mechanism, state or data changes, implementation details "
+    "and boundary checks; connect each step to its purpose>\n"
+    "#### System flow\n<explain the components or algorithm stages and how to read the flow>\n"
+    "```mermaid\n<one valid flowchart or sequence diagram showing the actual mechanism>\n```\n"
+    "<walk through the diagram with a concrete request, dataset or input>\n"
+    "#### Trade-offs and failure cases\n<compare practical alternatives, explain when the approach fails "
+    "and how to detect or handle those failures; include relevant boundary cases>\n"
+    "### A small example\n<a worked engineering case with exact input, a trace or calculation, "
+    "implementation details, checks and an exact result>\n"
+    "### Your turn\n<a runnable task changing the case or a constraint; include the setup, "
+    "expected output and boundary checks>\n"
     "### Check your answer\n<the actual answer and why it is correct; never just 'check your work'>\n"
-    "End each answer with a horizontal rule (---) before the next subject."
+    "### Interview practice\n<two interview questions specific to this day's topic, not generic study advice>\n"
+    "#### Question 1\n<question>\n##### Show answer\n<reasoned answer with an example and limitation>\n"
+    "##### Follow-up\n<a harder variation>\n###### Show follow-up answer\n<answer and reasoning>\n"
+    "#### Question 2\n<a practical debugging or design case>\n##### Show answer\n<reasoned answer>\n"
+    "##### Follow-up\n<a changed constraint>\n###### Show follow-up answer\n<answer and reasoning>\n"
+    "#### Common mistake\n<a specific mistake and why it fails>\n"
+    "#### Work on your own\n<a practical drill with clear checks>\n"
+    "End each subject with a horizontal rule (---) before the next subject."
 )
 
 
@@ -271,6 +287,29 @@ def _course_lock(root):
     with _generation_lock, (folder / '.generation.lock').open('a') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         yield
+
+
+def _context_excerpt(section, day):
+    """Keep each studied subject in context even when lessons become longer."""
+    from markdown_it import MarkdownIt
+    tokens, lines = MarkdownIt('commonmark').parse(section), section.splitlines(keepends=True)
+    boundaries = []
+    for index, token in enumerate(tokens[:-1]):
+        if token.type not in ('heading_open', 'paragraph_open') or token.map is None:
+            continue
+        text = tokens[index + 1].content
+        if ((token.type == 'heading_open' and re.match(r'^\d+\.\s', text))
+                or (token.type == 'paragraph_open' and re.match(r'^\*\*(ML / GenAI|System Design|Full-stack|DSA):', text))):
+            boundaries.append(token.map[0])
+    if not boundaries:
+        return section[:4200]
+    spec = interview_course.day_spec(day)
+    summary = f"Day {day}: {spec['title']}\n" + '\n'.join(item['title'] + ': ' + item['topic'] for item in spec['topics'])
+    excerpts = []
+    for index, start in enumerate(boundaries[:4]):
+        stop = boundaries[index + 1] if index + 1 < len(boundaries) else len(lines)
+        excerpts.append(''.join(lines[start:stop])[:900])
+    return summary + '\n\n' + '\n\n'.join(excerpts)
 
 
 def _prior_learning(day: int, root: Path) -> Tuple[str, List[int]]:
@@ -301,7 +340,7 @@ def _prior_learning(day: int, root: Path) -> Tuple[str, List[int]]:
                 section = ('Day %d: %s\n%s\n%s\n' %
                            (number, spec['title'], spec['explanation'], spec['example']))
                 section += '\n'.join(item['title'] + ': ' + item['topic'] for item in spec['topics'])
-        parts.append(section[:3500])
+        parts.append(_context_excerpt(section, number))
     summary = ('Completed earlier course days: ' + ', '.join(map(str, completed))
                if completed else 'No earlier course days are marked complete. Start with the basics.')
     summary += '\nCompletion records show reading, not proof of mastery. Begin with a brief recall check.'
@@ -323,18 +362,30 @@ def _teaching_rules():
         "Use the learner's completed reading only to connect ideas and choose a short recap. Never assume "
         "an unread or future lesson has been studied. Teach in simple, clear English: define each new term "
         "before using it, avoid unexplained jargon, show every important step, and use small concrete examples. "
-        "The learner has explicitly chosen VERY SIMPLE ENGLISH. Write as if this is their first course. "
-        "Use short sentences, usually under 15 words, and one idea per paragraph. "
-        "Say 'a place to save information' before saying 'database'. Explain an abbreviation before using it. "
-        "Do not replace one difficult word with another difficult word. Use examples such as a shopping list, "
-        "a food order or a study tracker, with small numbers and an actual result. "
+        "The learner has explicitly chosen VERY SIMPLE ENGLISH and is a working developer with about "
+        "three years of experience. Keep the language accessible while teaching real interview and engineering depth. "
+        "Use short, direct sentences and one connected idea per paragraph. Explain an abbreviation before using it. "
+        "Do not replace one difficult word with another difficult word. Use realistic engineering examples, "
+        "such as request handling, feature preparation or a study-tracker API, with traceable inputs and results. "
         "Do not paste a reference chapter, a wall of code, a list of tools, or a diagram without an explanation. "
-        "Keep each code example under 10 lines and explain every line in everyday words. "
+        "Use as much runnable code as the mechanism needs, organize it into explained sections, "
+        "and explain every line in everyday words. Do not truncate a working example to fit a line limit. "
         "Introduce a formula in words before showing symbols. Start with the smallest useful example, "
-        "then give one slightly changed task. Aim for 150 to 250 words per subject. "
+        "then show how the reasoning changes at a realistic scale or under a harder constraint. "
+        "Aim for 800 to 1400 useful words per subject as a guideline, not a hard word-count rule. "
+        "Use the space for mechanisms, implementation decisions, worked traces or calculations and boundary checks, "
+        "not repeated definitions or filler. Inside each subject's 'The idea', include exactly these level-four "
+        "headings: 'How it works', 'System flow', and 'Trade-offs and failure cases'. Give substantive explanatory "
+        "prose under each. Under 'System flow', include a valid fenced mermaid flowchart or sequence diagram "
+        "and explain its components, connections and one complete path. Use plain labels, an accTitle and "
+        "accDescr when helpful, and no HTML, external assets, links or configuration directives in diagrams. "
+        "Add a second worked real-world case, two specific interview questions, reasoned answers, harder follow-ups, "
+        "a common mistake and a practical drill. Simple English must not mean shallow content. "
         "Every explanation must say what it is, why it matters, how it works and how to explain it in an interview. "
         "Give runnable exercises with expected output, hints and a way to check the answer. "
-        "Keep the main session to about 120 minutes. News, research papers and GitHub exploration are "
+        "Plan a flexible 3 to 4 hours for reading, implementation, DSA and recall. Use the canonical session "
+        "estimates as guidance, not a time cap; the learner may split the work across sessions. "
+        "News, research papers and GitHub exploration are "
         "additional learning, never prerequisites for finishing this session. "
         "Search current official documentation and original papers; link only sources actually verified. "
         "Do not promise a job or claim the learner has mastered a topic merely by reading. "
@@ -389,6 +440,32 @@ def _check_teaching_steps(day, section):
     """Require four real lessons, excluding text that only appears in code."""
     from markdown_it import MarkdownIt
     tokens = MarkdownIt('commonmark').parse(section)
+
+    def has_explanation(start, stop):
+        # Heading text, fenced examples, image alt text and placeholders cannot
+        # stand in for an explanation. This is a presence check, not a word-count
+        # target or a claim to judge the technical quality of generated prose.
+        for index in range(start, stop):
+            token = tokens[index]
+            if token.type != 'inline' or index == 0 or tokens[index - 1].type != 'paragraph_open':
+                continue
+            text = ' '.join(child.content for child in token.children or [] if child.type == 'text').strip()
+            if (re.search(r'[^\W\d_]', text)
+                    and not re.fullmatch(r'(?:todo|tbd|n/?a|coming soon|to be written|see above|placeholder)[.!\s]*', text, re.I)):
+                return True
+        return False
+
+    def has_flow_diagram(start, stop):
+        for token in tokens[start:stop]:
+            if token.type != 'fence' or token.info.strip() != 'mermaid':
+                continue
+            source = '\n'.join(line for line in token.content.splitlines()
+                               if not line.lstrip().startswith('%%')).strip()
+            declaration = re.match(r'(?:(?:flowchart|graph)\s+(?:TB|TD|BT|LR|RL)\b|sequenceDiagram\b)', source)
+            if declaration and re.search(r'\w', source[declaration.end():]):
+                return True
+        return False
+
     subjects = {'ML / GenAI', 'System Design', 'Full-stack', 'DSA'}
     boundaries = []
     for index, token in enumerate(tokens[:-1]):
@@ -405,7 +482,7 @@ def _check_teaching_steps(day, section):
     names = [name for name, _ in boundaries if name]
     if len(names) != 4 or set(names) != subjects:
         raise ai_cli.AIError('day %d must contain exactly four subject lessons' % day)
-    needed = ['Words you need', 'The idea', 'A small example', 'Your turn', 'Check your answer']
+    needed = ['Words you need', 'The idea', 'A small example', 'Your turn', 'Check your answer', 'Interview practice']
     for position, (name, start) in enumerate(boundaries):
         if not name:
             continue
@@ -413,7 +490,7 @@ def _check_teaching_steps(day, section):
         headings = [(tokens[i + 1].content.strip(), i) for i in range(start, end - 1)
                     if tokens[i].type == 'heading_open' and tokens[i].tag == 'h3']
         if [title for title, _ in headings if title in needed] != needed:
-            raise ai_cli.AIError('day %d is missing or reorders the beginner lesson steps: words, idea, example, task and answer' % day)
+            raise ai_cli.AIError('day %d is missing or reorders the lesson steps: words, idea, example, task, answer and interview practice' % day)
         for i, (title, heading) in enumerate(headings):
             if title not in needed:
                 continue
@@ -421,7 +498,62 @@ def _check_teaching_steps(day, section):
             # Require explanatory text, not an empty heading or a bare code dump.
             if not any(t.type == 'inline' and re.search(r'\w', t.content)
                        for t in tokens[heading + 3:stop]):
-                raise ai_cli.AIError('day %d has empty beginner lesson steps: %s' % (day, title))
+                raise ai_cli.AIError('day %d has empty lesson steps: %s' % (day, title))
+        idea_start = next(i for title, i in headings if title == 'The idea')
+        idea_end = next(i for title, i in headings if i > idea_start)
+        depth_titles = ['How it works', 'System flow', 'Trade-offs and failure cases']
+        depth_heads = [(tokens[i + 1].content.strip(), i) for i in range(idea_start + 3, idea_end - 1)
+                       if tokens[i].type == 'heading_open']
+        required_depth = [(title, i) for title, i in depth_heads if title in depth_titles]
+        if ([title for title, _ in required_depth] != depth_titles
+                or any(tokens[i].tag != 'h4' for _, i in required_depth)):
+            raise ai_cli.AIError('day %d needs level-four depth sections inside The idea for %s: %s' %
+                                 (day, name, ', '.join(depth_titles)))
+        for title, depth_start in required_depth:
+            depth_end = next((i for _, i in depth_heads if i > depth_start and tokens[i].tag == 'h4'), idea_end)
+            if not has_explanation(depth_start + 3, depth_end):
+                raise ai_cli.AIError('day %d has an empty depth explanation for %s: %s' % (day, name, title))
+            if title == 'System flow' and not has_flow_diagram(depth_start + 3, depth_end):
+                raise ai_cli.AIError('day %d needs a nonempty fenced mermaid flowchart or sequence diagram in System flow for %s' %
+                                     (day, name))
+        interview_start = next(i for title, i in headings if title == 'Interview practice')
+        # The renderer closes answer disclosures at sibling or higher headings.
+        # A deeper Follow-up heading would hide its question inside Show answer.
+        interview_levels = {'Question 1': 'h4', 'Question 2': 'h4',
+                            'Show answer': 'h5', 'Follow-up': 'h5',
+                            'Show follow-up answer': 'h6'}
+        for heading in range(interview_start + 1, end - 1):
+            if tokens[heading].type != 'heading_open':
+                continue
+            title = tokens[heading + 1].content.strip()
+            expected_level = interview_levels.get(title)
+            if expected_level and tokens[heading].tag != expected_level:
+                raise ai_cli.AIError('day %d has an invalid interview heading level for %s: use %s' %
+                                     (day, title, expected_level))
+        question_heads = [i for i in range(interview_start, end - 1)
+                          if tokens[i].type == 'heading_open' and tokens[i].tag == 'h4'
+                          and tokens[i + 1].content.strip() in ('Question 1', 'Question 2')]
+        if [tokens[i + 1].content.strip() for i in question_heads] != ['Question 1', 'Question 2']:
+            raise ai_cli.AIError('day %d needs two interview questions per subject' % day)
+        for position, start_question in enumerate(question_heads):
+            stop = question_heads[position + 1] if position + 1 < len(question_heads) else end
+            required_answers = ['Show answer', 'Follow-up', 'Show follow-up answer']
+            all_heads = [i for i in range(start_question + 1, stop) if tokens[i].type == 'heading_open']
+            answer_heads = [(tokens[i + 1].content.strip(), i) for i in range(start_question, stop - 1)
+                            if tokens[i].type == 'heading_open' and tokens[i].tag in ('h5', 'h6')]
+            first_answer = all_heads[0] if all_heads else stop
+            if not any(t.type == 'inline' and re.search(r'\w', t.content)
+                       for t in tokens[start_question + 3:first_answer]):
+                raise ai_cli.AIError('day %d has an empty interview question' % day)
+            if [title for title, _ in answer_heads if title in required_answers] != required_answers:
+                raise ai_cli.AIError('day %d needs interview answers and follow-up reasoning' % day)
+            for title, answer_start in answer_heads:
+                if title not in required_answers:
+                    continue
+                answer_stop = next((i for i in all_heads if i > answer_start), stop)
+                if not any(t.type == 'inline' and re.search(r'\w', t.content)
+                           for t in tokens[answer_start + 3:answer_stop]):
+                    raise ai_cli.AIError('day %d has an empty interview answer' % day)
 
 
 def _source_valid(day, section, metadata, signature):
@@ -552,10 +684,13 @@ def write_today(ask: Ask, root: Path = LEARNING, today: Optional[date] = None) -
         week_file = ensure_day(day, ask, root)
         section = split_days(week_file.read_text(encoding='utf-8'))[day]
         source = _read_metadata(week_file).get('day_sources', {}).get(str(day), {})
-    head = ('# %s: Day %d of %d (week %d)\n\n%s\n\n'
-            'About 2 hours: AI/ML 25 min, system design 25 min, full-stack 25 min, '
-            'DSA 35 min, recall 10 min.\n\n') % (
-            today.isoformat(), day, LAST_DAY, week, interview_course.COURSE_TITLE)
+    course_info = interview_course.course_info()
+    session = ', '.join('%s %d min' % (part['title'], part['minutes'])
+                        for part in course_info['daily_session'])
+    head = ('# %s: Day %d of %d (week %d)\n\n%s\n\n%s\n\n'
+            'Suggested time by subject: %s.\n\n') % (
+            today.isoformat(), day, LAST_DAY, week, interview_course.COURSE_TITLE,
+            course_info['study_note'], session)
     tail = ("\nAdditional learning: today's research papers, tech news and GitHub discoveries. "
             'These do not change completion of your course lesson.\n')
     daily = content_root(root) / 'daily' / ('%s.md' % today.isoformat())
