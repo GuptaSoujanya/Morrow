@@ -9,7 +9,7 @@ import shutil
 import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from .models import (
     Answer,
@@ -351,6 +351,106 @@ def build_client(settings: Settings) -> LLMClient:
     return NullClient()
 
 
+def complete_checked(
+    client: LLMClient,
+    prompt: str,
+    schema_hint: str,
+    check: Callable[[Dict[str, Any]], List[str]],
+    tries: int = 2,
+) -> Optional[Dict[str, Any]]:
+    """complete_json, asked again with the exact problems when check refuses the reply.
+
+    The validate-then-reask loop of instructor (567-labs/instructor, MIT). A reply
+    in the wrong shape -- an option paraphrased, grounding naming no fact, a job
+    left out of a batch -- used to be dropped with no second chance, which skipped
+    the question or the job. check returns what is wrong with a reply, nothing
+    when it is usable. The last reply is returned either way, so the caller's own
+    checks still decide; this only buys the model one more look.
+    """
+    request = prompt
+    response = None  # type: Optional[Dict[str, Any]]
+    for attempt in range(max(1, tries)):
+        response = client.complete_json(request, schema_hint)
+        if response is None:
+            return None
+        problems = check(response)
+        if not problems:
+            return response
+        logger.info("Reply refused (attempt %d): %s", attempt + 1, "; ".join(problems))
+        request = (
+            "%s\n\nYour previous reply was refused. Correct it, based on these "
+            "errors: %s.\nPrevious reply: %s"
+        ) % (prompt, "; ".join(problems), json.dumps(response, ensure_ascii=True)[:2000])
+    return response
+
+
+def _confidence_problem(response: Dict[str, Any]) -> List[str]:
+    try:
+        if math.isfinite(float(response.get("confidence"))):
+            return []
+    except (TypeError, ValueError):
+        pass
+    return ["confidence must be a number from 0 to 1"]
+
+
+def _answer_problems(
+    response: Dict[str, Any], fact_keys: List[str], options: List[str]
+) -> List[str]:
+    """What makes a resolve_answer reply unusable. Abstaining is a usable reply."""
+    if response.get("can_answer") is not True:
+        return []
+    problems = []  # type: List[str]
+    answer = response.get("answer")
+    if not isinstance(answer, str) or not answer.strip():
+        problems.append("answer is empty")
+    elif options and _normalise_space(answer) not in {_normalise_space(o) for o in options}:
+        problems.append("answer must copy one of these options exactly: %s"
+                        % json.dumps(options, ensure_ascii=True))
+    grounded = response.get("grounded_in")
+    if not isinstance(grounded, str) or not _grounding_matches(grounded, fact_keys):
+        problems.append("grounded_in must name one of these fact keys: %s" % ", ".join(fact_keys))
+    return problems + _confidence_problem(response)
+
+
+def _selection_problems(
+    response: Dict[str, Any], fact_keys: List[str], options: List[str]
+) -> List[str]:
+    raw = response.get("selected")
+    if not isinstance(raw, list):
+        return ["selected must be a list of options"]
+    if not raw:
+        return []
+    problems = []  # type: List[str]
+    known = {_normalise_space(option) for option in options}
+    stray = [item for item in raw if not isinstance(item, str) or _normalise_space(item) not in known]
+    if stray:
+        problems.append("%s are not options; copy options exactly from: %s"
+                        % (json.dumps(stray, ensure_ascii=True), json.dumps(options, ensure_ascii=True)))
+    grounded = response.get("grounded_in")
+    if not isinstance(grounded, str) or not _grounding_matches(grounded, fact_keys):
+        problems.append("grounded_in must name one of these fact keys: %s" % ", ".join(fact_keys))
+    return problems
+
+
+def _batch_problems(response: Dict[str, Any], job_ids: List[str]) -> List[str]:
+    entries = response.get("jobs")
+    if not isinstance(entries, list):
+        return ["jobs must be a list with one entry per job"]
+    scored = set()
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        try:
+            if math.isfinite(float(entry.get("score"))):
+                scored.add(entry.get("job_id"))
+        except (TypeError, ValueError):
+            pass
+    missing = [job_id for job_id in job_ids if job_id not in scored]
+    if missing:
+        return ["these job_ids have no entry with a numeric score: %s" % ", ".join(missing)]
+    return []
+
+
 def score_jobs(
     client: LLMClient, profile: Profile, jobs: List[JobPosting]
 ) -> Dict[str, Dict[str, Any]]:
@@ -418,7 +518,7 @@ def _score_batch(
         "AI, ML, agent, evaluation, and RAG roles. Return one entry per job.\n"
         "Candidate: %s\nJobs: %s"
     ) % (candidate_json, json.dumps(payload, ensure_ascii=True))
-    response = client.complete_json(prompt, schema)
+    response = complete_checked(client, prompt, schema, lambda r: _batch_problems(r, sorted(allowed_ids)))
     if response is None:
         return results
     entries = response.get("jobs")
@@ -524,7 +624,7 @@ def resolve_selection(
         ensure_ascii=True,
     )
     schema = '{"selected": ["..."], "grounded_in": "", "confidence": 0.0}'
-    response = client.complete_json(prompt, schema)
+    response = complete_checked(client, prompt, schema, lambda r: _selection_problems(r, list(facts.keys()), options))
     if response is None:
         return None, "llm_no_response"
 
@@ -625,7 +725,7 @@ def resolve_answer(
         '{"can_answer": false, "answer": "", "grounded_in": "", '
         '"confidence": 0.0}'
     )
-    response = client.complete_json(prompt, schema)
+    response = complete_checked(client, prompt, schema, lambda r: _answer_problems(r, list(facts.keys()), usable_options))
     if response is None:
         return _abstain(question, "llm_no_response")
 
@@ -833,3 +933,4 @@ __all__ = [
     "resolve_answer",
     "score_jobs",
 ]
+    "complete_checked",
