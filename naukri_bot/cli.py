@@ -38,7 +38,8 @@ from common.models import (
     ScoredJob,
     Settings,
 )
-from common.run import EXIT_CONFIG, EXIT_FAILED, EXIT_LOGIN, EXIT_OK, configure_logging, keep_log
+from common.run import EXIT_BROWSER_LOCKED, EXIT_CONFIG, EXIT_FAILED, EXIT_LOGIN, EXIT_OK, configure_logging, keep_log
+from common.connections import BrowserProfileLocked
 
 logger = logging.getLogger(__name__)
 
@@ -1245,6 +1246,9 @@ def main(argv: Optional[List[str]] = None) -> int:
             early_access_limit=args.early_access_limit,
             early_access_only=args.early_access_only,
         )
+    except BrowserProfileLocked as exc:
+        logger.error("Naukri applications blocked: %s", exc)
+        return EXIT_BROWSER_LOCKED
     except _LoginUnavailable as exc:
         logger.error("Naukri sign-in could not be verified: %s", exc)
         return EXIT_LOGIN

@@ -152,6 +152,7 @@ def test_local_hostnames_collect_every_name_macos_can_write(monkeypatch):
     class Done:
         def __init__(self, stdout):
             self.stdout = stdout
+            self.returncode = 0
 
     answers = {"LocalHostName": "Soujanya-Mac\n", "ComputerName": "Soujanya Mac\n", "HostName": "HostName: not set\n"}
 
@@ -169,3 +170,23 @@ def test_local_hostnames_collect_every_name_macos_can_write(monkeypatch):
 
     monkeypatch.setattr(connections.subprocess, "run", broken)
     assert connections.local_hostnames() == {"macbookpro"}
+
+
+def test_failed_hostname_command_output_is_not_a_hostname(monkeypatch):
+    from subprocess import CompletedProcess
+
+    monkeypatch.setattr(connections.socket, "gethostname", lambda: "this-mac")
+    monkeypatch.setattr(connections.subprocess, "run", lambda *a, **k:
+                        CompletedProcess(a, 1, "AuthorizationCreate() failed: status = -60008", ""))
+    assert connections.local_hostnames() == {"this-mac"}
+
+
+def test_foreign_lock_error_does_not_claim_browser_is_running(profile, monkeypatch):
+    from common.models import Settings
+
+    add_lock(profile, "old-machine-7349")
+    with pytest.raises(connections.BrowserProfileLocked) as error:
+        connections.create_driver(Settings(browser_profile_dir=str(profile)))
+    assert "old-machine" in str(error.value)
+    assert "may be stale" in str(error.value)
+    assert "already open" not in str(error.value)

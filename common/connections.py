@@ -22,6 +22,10 @@ MARKER = ".morrow-managed.json"
 METADATA = ".morrow-connections.json"
 
 
+class BrowserProfileLocked(ValueError):
+    """The saved browser session cannot be opened until its ownership is resolved."""
+
+
 @dataclass(frozen=True)
 class Provider:
     id: str
@@ -121,10 +125,11 @@ def local_hostnames() -> set:
     names = {socket.gethostname()}
     for key in ("LocalHostName", "ComputerName", "HostName"):
         try:
-            value = subprocess.run(["scutil", "--get", key], capture_output=True, text=True, timeout=2).stdout.strip()
+            result = subprocess.run(["scutil", "--get", key], capture_output=True, text=True, timeout=2)
         except (OSError, subprocess.SubprocessError):
             continue
-        if value and not value.endswith("not set"):
+        value = result.stdout.strip()
+        if result.returncode == 0 and value and not value.endswith("not set"):
             names.update((value, value + ".local"))
     return {name.casefold() for name in names if name} | {name.casefold().removesuffix(".local") for name in names if name}
 
@@ -176,6 +181,22 @@ def chrome_binary() -> str:
     return next((str(path) for path in candidates if path and Path(path).is_file()), "")
 
 
+def profile_lock_message(base: Path) -> str:
+    """Describe uncertain ownership without claiming that a browser is running."""
+    try:
+        target = os.readlink(base / "chrome" / "SingletonLock")
+        owner = re.fullmatch(r"(.+)-([1-9][0-9]{0,9})", target)
+        if owner and owner[1].casefold() not in local_hostnames():
+            return ("Automation browser profile is locked by %s (PID %s). This hostname is not "
+                    "recognized on this computer; the lock may be stale after a hostname change. "
+                    "Verify its owner before recovering the lock. Profile: %s" % (owner[1], owner[2], base))
+    except OSError:
+        pass
+    return ("Automation browser profile is in use or its lock ownership cannot be verified. "
+            "Close any automation browser using this profile, or inspect its stale lock before "
+            "retrying. Profile: %s" % base)
+
+
 def create_driver(settings):
     """Chrome only, one persistent profile, no fallback to an anonymous session."""
     from selenium import webdriver
@@ -185,7 +206,7 @@ def create_driver(settings):
     if not settings.browser_profile_dir:
         raise ValueError("A private automation profile is required.")
     if profile_locked(base):
-        raise ValueError("This automation browser is already open. Close it before starting a run.")
+        raise BrowserProfileLocked(profile_lock_message(base))
     private_dir(base)
     private_dir(base / "chrome")
     options = browser._chrome_options(settings, str(base / "chrome"))

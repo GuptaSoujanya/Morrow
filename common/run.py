@@ -16,6 +16,7 @@ EXIT_OK = 0
 EXIT_CONFIG = 1
 EXIT_LOGIN = 2
 EXIT_FAILED = 3
+EXIT_BROWSER_LOCKED = 4
 
 
 _LOG_FORMAT = "%(asctime)s  %(levelname)-7s %(name)s  %(message)s"

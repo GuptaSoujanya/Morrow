@@ -102,7 +102,8 @@ class StageDiagnostics(logging.Handler):
         if messages:
             return sanitize_detail("\n".join(messages))
         hint = {1: "Check the required configuration and installed tools.",
-                2: "Sign in to this board again, then resume this stage."}.get(
+                2: "Sign in to this board again, then resume this stage.",
+                4: "Resolve the automation browser profile lock, then resume this stage."}.get(
                     code, "Open the run log for details, fix the reported issue, then resume this stage.")
         return "Stage exited with code %s. %s" % (code, hint)
 

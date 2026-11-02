@@ -432,3 +432,22 @@ def test_a_score_that_cannot_open_the_browser_fails_cleanly(monkeypatch, tmp_pat
 
     monkeypatch.setattr(up, "with_session", busy)
     assert up.score_profile(Settings(email="t@e.com", password="p")) == up.EXIT_FAILED
+
+
+def test_locked_browser_stops_without_retrying(monkeypatch):
+    from common import config
+    from common.connections import BrowserProfileLocked
+    from common.models import Settings
+
+    monkeypatch.setattr(config, "load_settings", lambda *a: Settings(email="t@e.com", password="p"))
+    monkeypatch.setattr(up, "_resume_to_upload", lambda *a: None)
+    monkeypatch.setattr(up.time, "sleep", lambda *a: pytest.fail("a browser lock must not be retried"))
+    calls = []
+
+    def blocked(*a, **kw):
+        calls.append(1)
+        raise BrowserProfileLocked("Profile ownership cannot be verified")
+
+    monkeypatch.setattr(up, "run_once", blocked)
+    assert up.main([]) == up.EXIT_BROWSER_LOCKED
+    assert calls == [1]

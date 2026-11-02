@@ -58,7 +58,7 @@ from typing import Callable, List, NamedTuple, Optional, Sequence, Tuple
 
 from common import memory as memory_module
 from common.pipeline_diagnostics import StageDiagnostics, sanitize_detail
-from common.run import EXIT_CONFIG, EXIT_FAILED, EXIT_OK, configure_logging
+from common.run import EXIT_BROWSER_LOCKED, EXIT_CONFIG, EXIT_FAILED, EXIT_OK, configure_logging
 
 from . import briefing, content, lanes as lanes_module, learning
 from common import paths
@@ -273,22 +273,23 @@ def run_day(args: argparse.Namespace, stages: List[Stage], mem: memory_module.Me
     failed = []
     lock = threading.Lock()
 
-    def one(stage: Stage) -> None:
+    def one(stage: Stage) -> int:
         if not args.dry_run and mem.is_done(stage.name):
             logger.info("[pipeline] %s already done today; skipping.", stage.name)
-            return
+            return EXIT_OK
         logger.info("[pipeline] %s ...", stage.name)
         if not args.dry_run:
             mem.mark(stage.name, memory_module.RUNNING, run_options=run_options)
         code, detail = _run(stage.name, stage.work)
         if args.dry_run:
             logger.info("[pipeline] %s (dry run): exit %s", stage.name, code)
-            return
+            return code
         if code == EXIT_OK and not all(Path(p).exists() for p in stage.outputs):
             code, detail = EXIT_FAILED, "exited 0 but wrote no %s" % ", ".join(str(p) for p in stage.outputs)
         mem.mark(stage.name, memory_module.DONE if code == EXIT_OK else memory_module.FAILED, detail,
                  stage.outputs, exit_code=code)
-        logger.info("[pipeline] %s: %s", stage.name, "done" if code == EXIT_OK else "FAILED (%s)" % detail)
+        logger.log(logging.INFO if code == EXIT_OK else logging.ERROR,
+                   "[pipeline] %s: %s", stage.name, "done" if code == EXIT_OK else "FAILED (%s)" % detail)
         with lock:
             if code != EXIT_OK:
                 failed.append(stage.name)
@@ -297,6 +298,7 @@ def run_day(args: argparse.Namespace, stages: List[Stage], mem: memory_module.Me
             if stage.parallel:
                 write_index(mem)
 
+        return code
     # The browser lanes start at once. `learn` runs next to them; only the agents wait for
     # it (they are told today's topics), then run in their pool next to the browser stages.
     first = [s for s in stages if s.name == "learn"]
@@ -327,7 +329,16 @@ def run_day(args: argparse.Namespace, stages: List[Stage], mem: memory_module.Me
 
     def lane(stages: List[Stage]) -> None:
         for stage in stages:
-            one(stage)
+        blocked_sites = set()
+            site = lanes_module.lane_of(stage.name)
+            if site in blocked_sites and not mem.is_done(stage.name):
+                detail = "Browser profile is locked; resolve the earlier %s browser error, then continue." % site
+                logger.warning("[pipeline] %s deferred: %s", stage.name, detail)
+                if not args.dry_run:
+                    mem.mark(stage.name, memory_module.PENDING, detail)
+                continue
+            if one(stage) == EXIT_BROWSER_LOCKED:
+                blocked_sites.add(site)
 
     with ThreadPoolExecutor(max_workers=max(1, args.agents) + 1, thread_name_prefix="agent") as pool, \
             ThreadPoolExecutor(max_workers=max(1, workers), thread_name_prefix="bot") as bots:

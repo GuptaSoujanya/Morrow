@@ -55,7 +55,8 @@ from selenium.webdriver.support.ui import WebDriverWait
 from common import report as report_module
 from common import resume as resume_module
 from common.browser import human_pause, safe_get
-from common.run import EXIT_CONFIG, EXIT_FAILED, EXIT_LOGIN, EXIT_OK, configure_logging, keep_log, send_alert
+from common.run import EXIT_BROWSER_LOCKED, EXIT_CONFIG, EXIT_FAILED, EXIT_LOGIN, EXIT_OK, configure_logging, keep_log, send_alert
+from common.connections import BrowserProfileLocked
 from common.models import LoginResult, Settings
 from common import paths
 
@@ -723,6 +724,9 @@ def main(argv: Optional[List[str]] = None) -> int:
             result = run_once(settings, dry_run=args.dry_run, resume_pdf=resume_pdf, profile=profile)
         except _LoginUnavailable as exc:
             logger.error("Naukri sign-in could not be verified: %s", exc)
+        except BrowserProfileLocked as exc:
+            logger.error("Naukri profile blocked: %s", exc)
+            return EXIT_BROWSER_LOCKED
             send_alert(settings, "Naukri profile update: sign-in could not be verified (%s)" % exc)
             return EXIT_LOGIN
         except _NeedsHuman as exc:

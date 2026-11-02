@@ -88,6 +88,28 @@ def test_run_day_continues_where_it_stopped(tmp_path):
 def test_a_done_stage_whose_file_is_gone_runs_again(tmp_path):
     out = tmp_path / "out.md"
     calls = []
+def test_browser_lock_defers_only_that_sites_remaining_work(tmp_path, caplog):
+    import logging
+
+    calls = []
+    stages = [
+        run.Stage("profile:naukri", lambda: run.EXIT_BROWSER_LOCKED),
+        run.Stage("apply:naukri", lambda: calls.append("naukri") or 0),
+        run.Stage("profile:hirist", lambda: run.EXIT_FAILED),
+        run.Stage("apply:hirist", lambda: calls.append("hirist") or 0),
+    ]
+    with caplog.at_level(logging.INFO):
+        assert run.run_day(_args(), stages, Memory(tmp_path, DAY)) == run.EXIT_FAILED
+    assert calls == ["hirist"]
+    mem = Memory(tmp_path, DAY)
+    assert mem.stage("apply:naukri")["status"] == "pending"
+    assert "locked" in mem.stage("apply:naukri")["detail"]
+    assert any(r.levelno == logging.ERROR and "profile:naukri: FAILED" in r.message for r in caplog.records)
+    stages[0] = run.Stage("profile:naukri", lambda: 0)
+    run.run_day(_args(), stages, mem)
+    assert calls == ["hirist", "naukri"]
+
+
 
     def work():
         calls.append(1)
