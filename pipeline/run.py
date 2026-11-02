@@ -114,6 +114,30 @@ def _naukri_apply(flags: List[str]) -> int:
     return cli.main(flags)
 
 
+def _startup_jobs_on(env: Optional[str]) -> bool:
+    from common import config
+
+    return config.load_settings(env).startup_jobs
+
+
+def _startup_jobs(flags: List[str]) -> int:
+    from sites_bot import startup_jobs
+
+    return startup_jobs.main(flags)
+
+
+def _replies_on(env: Optional[str]) -> bool:
+    from common import config
+
+    return bool(config.load_settings(env).gmail_app_password)
+
+
+def _employer_replies(flags: List[str]) -> int:
+    from sites_bot import replies
+
+    return replies.main(flags)
+
+
 def _board_bot(name: str, tool: str, flags: List[str]) -> int:
     """Run one board's own bot: <name>_bot.cli (apply) or <name>_bot.update_profile."""
     return importlib.import_module("%s_bot.%s" % (name, tool)).main(flags)
@@ -182,6 +206,9 @@ def build_stages(args: argparse.Namespace, boards: List[str]) -> List[Stage]:
     for name in boards:
         stages.append(_bot("profile:%s" % name, "%s_bot.update_profile" % name, board_flags,
                            lambda name=name: _board_bot(name, "update_profile", board_flags)))
+    if _startup_jobs_on(args.env):
+        # HTTP only, no browser: runs in the pool next to the browser lanes.
+        stages.append(Stage("find:startups", lambda: _startup_jobs(dry + common), True))
     stages.append(_bot("apply:naukri", "naukri_bot.cli", dry + common, lambda: _naukri_apply(dry + common)))
     for name in boards:
         stages.append(_bot("apply:%s" % name, "%s_bot.cli" % name, dry + common,
@@ -192,6 +219,9 @@ def build_stages(args: argparse.Namespace, boards: List[str]) -> List[Stage]:
             "brief:%s" % agent.key,
             lambda agent=agent: _ai_stage(lambda: briefing.run_agent(agent, team, day, briefing.context(day))),
             True, (briefing.output_of(agent, day),)))
+    if _replies_on(args.env):
+        # IMAP only, no browser; drafts answers to employers' mail and never sends.
+        stages.append(Stage("read:replies", lambda: _employer_replies(dry + common), True))
     stages.append(Stage('research:companies', lambda: _company_research(args), final=True))
     return stages
 

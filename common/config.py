@@ -189,6 +189,7 @@ def load_settings(
         "profile_review_days": _env_int("PROFILE_REVIEW_DAYS", defaults.profile_review_days),
         "platforms": os.getenv("PLATFORMS", defaults.platforms),
         "platform_limit": _env_int("PLATFORM_LIMIT", defaults.platform_limit),
+        "startup_jobs": _env_bool("STARTUP_JOBS", defaults.startup_jobs),
         "cold_email_from": os.getenv("COLD_EMAIL_FROM", defaults.cold_email_from),
         "gmail_app_password": os.getenv("GMAIL_APP_PASSWORD", defaults.gmail_app_password).replace(" ", ""),
         "cold_email_limit": _env_int("COLD_EMAIL_LIMIT", defaults.cold_email_limit),

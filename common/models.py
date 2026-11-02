@@ -444,6 +444,8 @@ class Settings:
     # on by default, and applications per board per run.
     platforms: str = "hirist,instahyre"
     platform_limit: int = 10
+    # Startup jobs (python3 -m sites_bot.startup_jobs): YC posts and HN "Who is hiring?".
+    startup_jobs: bool = False
     # Cold emails (python3 -m sites_bot.cold_email): drafts only, never sent.
     # The sender address (empty: GOOGLE_EMAIL, then NAUKRI_EMAIL), its Gmail app
     # password for putting drafts in Gmail (empty: .eml files only), drafts per run.
