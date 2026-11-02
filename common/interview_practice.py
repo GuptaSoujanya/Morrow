@@ -1,7 +1,9 @@
 """Shared interview cases and project assessments. No learner data or network IO."""
 from __future__ import annotations
 
+import json
 from functools import lru_cache
+from pathlib import Path
 from urllib.parse import urlencode
 
 from . import interview_course
@@ -27,6 +29,9 @@ def references():
         for row in module.SOURCES:
             if row['url'] not in seen:
                 rows.append(dict(row)); seen.add(row['url'])
+    react = {'title': 'sudheerj/reactjs-interview-questions (MIT)', 'url': 'https://github.com/sudheerj/reactjs-interview-questions'}
+    if react['url'] not in seen:
+        rows.append(react)
     return rows
 
 
@@ -42,7 +47,35 @@ def _questions():
                              'track': track, 'track_title': title, 'topic': spec[track],
                              'level': 'Foundations' if day <= 28 else 'Applied' if day <= 70 else 'Mock interview',
                              'part': part})
+    rows.extend(_react_rows())
     return rows
+
+
+# Curated from sudheerj/reactjs-interview-questions (MIT); see data/THIRD_PARTY_NOTICES.md.
+# Core questions sit with day 72 (core frontend), React 18/19 with day 78 (frontend state).
+_REACT_FILE = Path(__file__).parent / 'data' / 'react_interview_questions.json'
+_REACT_DAYS = {'core': 72, 'modern': 78}
+
+
+def _react_rows():
+    rows = []
+    for item in json.loads(_REACT_FILE.read_text(encoding='utf-8')):
+        day = _REACT_DAYS[item['section']]
+        rows.append({key: item[key] for key in ('question', 'answer', 'follow_up', 'follow_up_answer')}
+                    | {'id': item['id'], 'day': day, 'week': interview_course.day_spec(day)['week'],
+                       'track': 'full_stack', 'track_title': 'Full-stack', 'topic': item['topic'],
+                       'level': 'Mock interview', 'part': 'build', 'source_url': item['source_url']})
+    return rows
+
+
+def bank_rows():
+    """Every question in the bank, read-only, as question_bank searches it."""
+    return _questions()
+
+
+def day_question_ids(day):
+    """The ids of the interview questions taught on a course day, for review seeding."""
+    return [row['id'] for row in _questions() if row['day'] == day]
 
 
 def question_bank(query=None):

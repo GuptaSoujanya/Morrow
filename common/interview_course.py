@@ -320,5 +320,8 @@ def record_completion(data, day, done, at=None):
     marked = state.setdefault('marked', {})
     if done:
         marked[at[:10]] = day
+        # Today's interview questions come back for recall tomorrow, then on a spaced schedule.
+        from . import interview_practice, interview_review
+        interview_review.seed(data, interview_practice.day_question_ids(day), date.fromisoformat(at[:10]))
     else:
         state['marked'] = {date: number for date, number in marked.items() if number != day}

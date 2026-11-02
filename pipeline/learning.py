@@ -664,6 +664,23 @@ def ensure_day(day: int, ask: Ask, root: Path = LEARNING) -> Path:
     return _ensure_lessons(week_of(day), [day], ask, root, day_prompt(day, root))
 
 
+def due_reviews(root: Path = LEARNING, today: Optional[date] = None, limit: int = 5) -> str:
+    """A "## Due reviews" section for questions whose spaced review falls today; empty if none."""
+    if not _shared(root):
+        return ''
+    from common import interview_review, learning_memory
+    today = today or date.today()
+    items = interview_review.due(learning_memory.transact(_repo(root)), today, limit)
+    if not items:
+        return ''
+    lines = ['## Due reviews', '',
+             'Answer each from memory before opening any notes, then grade yourself: '
+             'again / hard / good / easy. Record it with '
+             '`python3 -m common.interview_review grade <id> <grade>`.', '']
+    lines += ['- `%s`: %s' % (item, interview_review.question_text(item)) for item in items]
+    return '\n'.join(lines) + '\n\n'
+
+
 def write_today(ask: Ask, root: Path = LEARNING, today: Optional[date] = None) -> Tuple[int, Path]:
     """Prepare the next unread course day; a missed date never skips a lesson."""
     today = today or date.today()
@@ -693,12 +710,13 @@ def write_today(ask: Ask, root: Path = LEARNING, today: Optional[date] = None) -
             course_info['study_note'], session)
     tail = ("\nAdditional learning: today's research papers, tech news and GitHub discoveries. "
             'These do not change completion of your course lesson.\n')
+    reviews = due_reviews(root, today)
     daily = content_root(root) / 'daily' / ('%s.md' % today.isoformat())
     for path in (daily, content_root(root) / 'today.md'):
         body = links.relink(section, week_file.parent, path.parent)
         quoted = ('## From the course\n\nRevisit the topics you found difficult.\n' if complete else
                   course.reading(day, section, week_file.parent, path.parent, content_root(root)))
-        content = head + body + '\n' + quoted + tail
+        content = head + reviews + body + '\n' + quoted + tail
         with _course_lock(root):
             if current_day(load_progress(root)) != day:
                 raise ai_cli.AIError('course progress changed before publishing today; retry to prepare the next day')

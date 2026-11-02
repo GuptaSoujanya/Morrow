@@ -64,6 +64,9 @@ def _validate(data):
     if 'interview_course' in data:
         from .interview_course import state_for
         state_for(data)
+    if 'reviews' in data or 'review_log' in data:
+        from .interview_review import validate
+        validate(data)
     return data
 
 

@@ -27,16 +27,17 @@ def test_all_subjects_add_specific_interview_depth_without_mutable_shared_state(
 
 def test_bank_filters_pages_and_routes_retain_the_selected_collection():
     bank = interview_practice.question_bank()
-    assert bank['bank_total'] == bank['total'] == 540
-    assert sum(item['count'] for item in bank['tracks']) == 540
-    assert len(bank['items']) == 12 and bank['pages'] == 45
+    # 540 course questions plus the 24 curated React questions in full-stack.
+    assert bank['bank_total'] == bank['total'] == 564
+    assert sum(item['count'] for item in bank['tracks']) == 564
+    assert len(bank['items']) == 12 and bank['pages'] == 47
     other = interview_practice.question_bank({'page': '2'})
     assert not {item['id'] for item in bank['items']} & {item['id'] for item in other['items']}
     filtered = interview_practice.question_bank({'track': 'system_design', 'week': '13', 'q': 'design'})
     assert filtered['total'] and all(item['track'] == 'system_design' and item['week'] == 13 for item in filtered['items'])
     assert all('stage=interview' in item['route'] and 'from=weekly' in item['route'] and 'view=questions' in item['route'] for item in filtered['items'])
     assert interview_practice.question_bank({'q': 'unlikelytermxyz'})['total'] == 0
-    assert interview_practice.question_bank({'page': '9999'})['page'] == 45
+    assert interview_practice.question_bank({'page': '9999'})['page'] == 47
     for query in ({'track': 'private'}, {'week': '14'}, {'page': '0'}, {'q': 'x' * 161}):
         with pytest.raises(ValueError):
             interview_practice.question_bank(query)

@@ -21,6 +21,7 @@ SOURCES = [
     {'title': 'Python: binary-search boundaries', 'url': 'https://docs.python.org/3/library/bisect.html'},
     {'title': 'Jeff Erickson: backtracking', 'url': 'https://jeffe.cs.illinois.edu/teaching/algorithms/book/02-backtracking.pdf'},
     {'title': 'Jeff Erickson: greedy algorithms', 'url': 'https://jeffe.cs.illinois.edu/teaching/algorithms/book/04-greedy.pdf'},
+    {'title': 'kdn251/interviews: data structures and algorithms overview (MIT)', 'url': 'https://github.com/kdn251/interviews#data-structures'},
 ]
 
 
