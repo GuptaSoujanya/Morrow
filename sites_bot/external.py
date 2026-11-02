@@ -1664,6 +1664,12 @@ def apply_here(
     url = _current_url(driver)
     ats = detect_ats(url)
     result = ExternalResult(status=ApplyStatus.EXTERNAL_MANUAL, url=url, ats=ats, resume=str(resume_pdf or ""))
+    from .application_brain import blocked
+    prior = blocked(settings, job)
+    if prior:
+        result.status = ApplyStatus.ALREADY_APPLIED if prior == 'confirmed' else ApplyStatus.EXTERNAL_MANUAL
+        result.detail = 'Application agent: %s. Review this saved attempt before retrying.' % prior
+        return result
     if ats in NOT_A_CAREER_SITE:
         result.detail = "%s applications need a %s session; finish this one by hand" % (ats, ats)
         return result

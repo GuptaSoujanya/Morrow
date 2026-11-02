@@ -534,6 +534,11 @@ def apply_to(
 ) -> ApplyResult:
     """Apply to one job on the board; APPLIED_PLATFORM only when the board shows it applied after a reload."""
     from .page_brain import dead_reason
+    from .application_brain import blocked
+    prior = blocked(settings, job)
+    if prior:
+        return _result(job, ApplyStatus.ALREADY_APPLIED if prior == 'confirmed' else ApplyStatus.EXTERNAL_MANUAL,
+                       'Application agent: %s. Review the saved attempt before retrying.' % prior)
 
     home_handle = driver.current_window_handle
     keep = list(driver.window_handles)
@@ -593,6 +598,8 @@ def apply_to(
             resume=str(resume_pdf or ""))
         taken = browser_agent.take_over(driver, job, profile, settings, resume_pdf, False, stuck)
         if taken is not stuck and taken.status == ApplyStatus.APPLIED_EXTERNAL:
+            if urlparse(taken.url).hostname != urlparse(board.home).hostname:
+                return taken.to_apply_result(job)
             if _verified(driver, board, checked):
                 return _result(job, ApplyStatus.APPLIED_PLATFORM, "the browser agent applied; %s shows Applied" % board.label)
             return _result(job, ApplyStatus.ERROR, "Submit was clicked by the browser agent but %s did not show Applied" % board.label)

@@ -492,15 +492,17 @@ def test_the_stop_reason_names_the_api_error_hidden_behind_a_success_subtype():
     assert agent._stop_reason({}) == "error"
 
 
-def test_a_confirmation_the_site_showed_and_took_away_still_counts(claude, settings, profile, job, monkeypatch):
+def test_an_unverifiable_confirmation_needs_review(claude, settings, profile, job, monkeypatch):
     _company_site(monkeypatch, _stuck())
     claude.report = {"status": "submitted", "confirmation": "Application submitted successfully"}
     driver = _Driver({"naukri": "Naukri", "site": "Careers at Acme | Open roles"})
 
     result = ext.apply_on_company_site(driver, job, profile, None, settings)
 
-    assert result.status == ApplyStatus.APPLIED_EXTERNAL
-    assert result.detail == "submitted by the browser agent, which quoted the site: Application submitted successfully"
+    assert result.status == ApplyStatus.ERROR
+    assert 'confirmation is not on the page' in result.detail
+    from sites_bot.application_brain import blocked
+    assert blocked(settings, job) == 'uncertain'
 
 
 def test_words_that_do_not_say_an_application_arrived_are_not_taken_on_trust(claude, settings, profile, job, monkeypatch):

@@ -119,6 +119,10 @@ _BANNED_WORDS = (
     "world-class",
     "best-in-class",
     "game-changing",
+    "hit the ground running",
+    "team player",
+    "fast learner",
+    "great fit",
 )
 
 
@@ -953,7 +957,14 @@ _LONG_ANSWER_PROMPT = (
     "under %d characters, one paragraph. Use only facts from their "
     "resume below; you may name the company, the role and what the posting says "
     "the team works on. Never invent a project, number, employer, date, feeling "
-    "or plan the resume does not state. No buzzwords, no em or en dashes, no "
+    "or plan the resume does not state. Select from what is true, never add: "
+    "lead with the strongest relevant evidence and its number rather than "
+    "chronology, prefer a concrete situation over an adjective, say so when "
+    "the candidate contributed rather than owned the work, and never describe "
+    "adjacent work in the posting's exact terms. Every sentence must survive "
+    "an interview without backtracking. Where it fits the question, end by "
+    "connecting that evidence to what the posting says this team works on. "
+    "No buzzwords, no em or en dashes, no "
     "exclamation marks, no lists, no greeting or sign-off. If the resume cannot "
     "answer it (a reference, a date, a legal or personal fact), set can_answer "
     "to false.%s\n\nTHE CANDIDATE'S RESUME\n%s\n\nTHE JOB\n%s at %s\n%s\n\nQUESTION\n%s"

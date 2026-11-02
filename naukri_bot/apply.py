@@ -400,6 +400,11 @@ def apply_to_job(
     settings: Settings,
 ) -> ApplyResult:
     """Attempt one Naukri-native application and report only verified outcomes."""
+    from sites_bot.application_brain import blocked
+    prior = blocked(settings, job)
+    if prior:
+        return _result(job, ApplyStatus.ALREADY_APPLIED if prior == 'confirmed' else ApplyStatus.EXTERNAL_MANUAL,
+                       'Application agent: %s. Review the saved attempt before retrying.' % prior)
     if settings.dry_run:
         logger.info("[DRY RUN] Would apply to %s at %s", job.job_id, job.url)
         return _result(job, ApplyStatus.APPLIED, "dry_run_no_navigation_or_click")

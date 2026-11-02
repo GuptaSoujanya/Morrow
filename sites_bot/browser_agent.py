@@ -171,6 +171,10 @@ _RULES = """Rules, in order of importance:
 
 _APPLY_REPORT = (
     '{"status": "submitted|ready|needs_you|gone|failed", "why": "one or two sentences", '
+    '"state": "inspect|sign_in|email_verification|fill|review|submit|email_application|confirmed|needs_you|uncertain", '
+    '"next_step": "what should happen next", "submission_attempted": false, '
+    '"steps": [{"state":"", "observation":"", "action":""}], '
+    '"channel": "web|email", "recipient": "", "subject": "", '
     '"filled": ["field label", "..."], "missing": ["question you could not answer from the facts"], '
     '"written": [{"question": "", "answer": ""}], "account": "created|signed_in|none", '
     '"confirmation": "the confirmation sentence copied word for word from the page after Submit, or empty"}'
@@ -230,7 +234,8 @@ def application_prompt(
         "A required free-text question such as \"Why do you want to join us?\": write two or three "
         "plain first-person sentences using only facts from their resume and the posting, and list the "
         'question and your text under "written".',
-        _RULES,
+        _RULES.replace('Work only in the tab named below, on that site, the sign-in pages it sends you\n   to, and Gmail when rule 2 applies.',
+            'Follow this job’s visible application redirects to its employer or ATS, including new tabs.\n   Check the role and company after each redirect. Use Gmail only for matching verification or\n   an application email explicitly authorized in this task.'),
         "The facts:\n" + facts,
         "The posting:\n" + ((job.description or "")[:FACTS_POSTING_CHARS] or "(not available)"),
         "When you finish or stop, reply with ONE JSON object and nothing else:\n" + _APPLY_REPORT,
@@ -572,21 +577,28 @@ def to_result(driver: Any, run: AgentRun, previous: Any, dry_run: bool) -> Any:
     missing = _strings(report.get("missing"))
     filled = list(previous.filled) + [item for item in _strings(report.get("filled")) if item not in previous.filled]
     result = replace(previous, filled=filled, missing=missing)
+    from .external import _current_url
+    result.url = (_current_url(driver) if driver is not None else '') or previous.url
     if run.report is None:
         result.status = ApplyStatus.ERROR
         result.detail = "the browser agent did not report (%s); check the site before trying again: %s" % (
             run.problem, run.workdir)
     elif status == "submitted":
         quote = " ".join(str(report.get("confirmation", "")).split())
-        if quote_on_page(driver, quote):
+        if dry_run:
+            result.status = ApplyStatus.ERROR
+            result.detail = 'The agent reported a submission during a dry run. Check the site before retrying.'
+        elif report.get('channel') == 'email':
+            from .application_brain import verify_sent_email
+            if verify_sent_email(driver, report):
+                result.status = ApplyStatus.APPLIED_EXTERNAL
+                result.detail = 'Application email verified in Sent: %s — %s' % (report['recipient'], report['subject'])
+            else:
+                result.status = ApplyStatus.ERROR
+                result.detail = 'Send was reported but the matching application email could not be verified in Sent. Check before retrying.'
+        elif confirmation_words(quote) and quote_on_page(driver, quote):
             result.status = ApplyStatus.APPLIED_EXTERNAL
             result.detail = "submitted by the browser agent; the site says: %s" % quote
-        elif confirmation_words(quote):
-            # Sites that answer with a toast take the words away again within seconds, so
-            # asking the page for them a minute later loses real applications. A quote the
-            # scripted path would already have counted as proof is counted here too.
-            result.status = ApplyStatus.APPLIED_EXTERNAL
-            result.detail = "submitted by the browser agent, which quoted the site: %s" % quote
         elif said:
             # It reports a submit it never made when the page already said applied.
             result.status = ApplyStatus.ALREADY_APPLIED
@@ -679,6 +691,12 @@ def finish_application(
 
     from .accounts import account_email
     from .external import _current_url
+    from . import application_brain as brain
+
+    prior = brain.blocked(settings, job)
+    if prior:
+        return replace(previous, status=ApplyStatus.ALREADY_APPLIED if prior == 'confirmed' else ApplyStatus.EXTERNAL_MANUAL,
+                       detail='Application agent: %s. Check the saved attempt before retrying.' % prior)
 
     global _started
     _started += 1
@@ -691,16 +709,35 @@ def finish_application(
         job, url, facts_text(profile, settings), email,
         resume_copy.resolve() if resume_copy is not None else None, dry_run, previous.detail,
         has_password=bool(settings.company_site_password))
+    recipient = brain.mailbox(driver)
+    from .external import _page_text
+    state, next_step = brain.observe(url, _page_text(driver))
+    prompt += '\n\nInitial state: %s. Next step: %s\n' % (state, next_step)
+    prompt += 'Google/Gmail account: %s. Stop if the signed-in account differs.\n' % (settings.google_email or email or '(not configured)')
+    prompt += ('Authorized application recipient from the posting: %s. Use the email application playbook.\n' % recipient
+               if recipient else 'No application email recipient is authorized. Do not send email. If the application redirects to email, report the posting URL and recipient for review.\n')
+    if not dry_run and not brain.claim(settings, job, url):
+        return replace(previous, status=ApplyStatus.EXTERNAL_MANUAL, detail='Application agent: another attempt already owns this job. Check its outcome before retrying.')
     logger.info("      browser agent: Claude Code takes over %s (task %d of %d)", url, _started,
                 settings.browser_agent_limit)
-    run = run_agent(driver, settings, prompt, workdir, (Path(resume_pdf),) if resume_copy is not None else ())
+    run = run_agent(driver, settings, prompt, workdir, (Path(resume_pdf),) if resume_copy is not None else (),
+                    system=brain.instructions(job))
+    if run.report:
+        if brain.submission_click_recorded(run.workdir):
+            run.report['submission_attempted'] = True
+        run.report['_authorized_recipient'] = recipient
+        run.report['_resume_name'] = resume_copy.name if resume_copy else ''
+        run.report['_sender'] = settings.google_email or email
     if run.report is None and note_out_of_quota(run.problem):
         # It stopped in seconds without reaching the page, so the try is given back.
         _started -= 1
     result = to_result(driver, run, previous, dry_run)
+    if not dry_run:
+        brain.finish(settings, job, result, run.report)
     if run.report:
         _keep_written(settings, job, run.report)
-        _keep_account(settings, url, email, run.report)
+        if urlparse(result.url).hostname not in ('mail.google.com', 'accounts.google.com'):
+            _keep_account(settings, result.url, email, run.report)
     _write_record(run, job, url, result)
     logger.info(
         "      browser agent: %s in %.0fs%s (%s)", result.status, run.seconds,
@@ -718,6 +755,11 @@ def take_over(
     result: Any,
 ) -> Any:
     """The scripted result, or the agent's when the scripted filler stopped short."""
+    if not dry_run and 'submit was clicked' in (result.detail or '').casefold():
+        from . import application_brain as brain
+        if brain.claim(settings, job, result.url):
+            brain.finish(settings, job, result, {})
+        return result
     if not should_take_over(settings, result):
         return result
     return finish_application(driver, job, profile, settings, resume_pdf, dry_run, result)
