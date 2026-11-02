@@ -142,6 +142,40 @@ def _ledger_rows(settings: Settings, day: date) -> Tuple[List[Dict[str, Any]], L
         ledger.close()
 
 
+def _skill_gaps(settings: Settings, day: date) -> List[Dict[str, Any]]:
+    """Jobs scored today with the requirements their scorer found missing from the profile."""
+    if not settings.db_path or not Path(settings.db_path).exists():
+        return []
+    from .ledger import Ledger
+
+    start, end = _day_bounds(day)
+    ledger = Ledger(settings.db_path)
+    try:
+        return ledger.gaps_between(start, end)
+    finally:
+        ledger.close()
+
+
+def skill_gaps_text(jobs: List[Dict[str, Any]], top: int = 8) -> List[str]:
+    """The report lines: the most often missing requirements, then the best-scoring jobs they cost."""
+    if not jobs:
+        return ["- No job scored today named a requirement your profile lacks."]
+    counts = {}  # type: Dict[str, List[Any]]
+    for job in jobs:
+        for gap in job["gaps"]:
+            entry = counts.setdefault(gap.casefold(), [gap, 0])
+            entry[1] += 1
+    ranked = sorted(counts.values(), key=lambda item: (-item[1], item[0].casefold()))
+    out = ["Asked for by today's jobs but not on your profile. Add the ones you really have to "
+           "`user/inputs/profile.yaml` or your resume; learn the ones that keep coming up.", ""]
+    out += ["- %s: %d job%s" % (_cell(gap, 80), n, "" if n == 1 else "s") for gap, n in ranked[:top]]
+    out += ["", "Best-scoring jobs with gaps:", ""]
+    out += ["- %s at %s (%.0f): %s" % (_cell(job.get("title"), 60), _cell(job.get("company"), 40),
+                                       job.get("score") or 0, ", ".join(job["gaps"]))
+            for job in jobs[:5]]
+    return out
+
+
 def _blank_questions(settings: Settings) -> List[str]:
     from .answers import AnswerBook, answers_file_path
 
@@ -219,6 +253,32 @@ def _profile_slots(settings: Settings, day: date, now: datetime) -> Tuple[List[s
         lines.append("%s: %s" % (label, status))
     resume = state.get("resume") if isinstance(state.get("resume"), dict) else {}
     return lines, resume
+
+
+def _employer_replies(settings: Settings, day: date) -> List[Dict[str, Any]]:
+    from sites_bot.replies import todays_replies
+
+    try:
+        return todays_replies(settings, day)
+    except OSError:
+        return []
+
+
+def employer_replies_text(rows: List[Dict[str, Any]]) -> List[str]:
+    """Replies read today, counted by kind, each with its drafted answer (never sent)."""
+    if not rows:
+        return ["No employer replies were read today. Run `python3 -m sites_bot.replies`."]
+    kinds: Dict[str, int] = {}
+    for row in rows:
+        kinds[str(row.get("kind") or "OTHER")] = kinds.get(str(row.get("kind") or "OTHER"), 0) + 1
+    out = ["- %s" % ", ".join("%s %d" % (kind.lower(), count) for kind, count in sorted(kinds.items())), ""]
+    out += ["| Company | Kind | Summary | Draft (not sent) | Fill in first |", "|---|---|---|---|---|"]
+    for row in rows:
+        out.append("| %s | %s | %s | %s | %s |" % (
+            _cell(row.get("company") or "-", 60), _cell(row.get("kind") or "-", 20),
+            _cell(row.get("summary") or "-"), _cell(row.get("draft") or "-", 200),
+            _cell("; ".join(row.get("gaps") or []) or "-")))
+    return out
 
 
 def _linkedin(day: date) -> Dict[str, Any]:
@@ -375,6 +435,9 @@ def build_report(settings: Settings, day: Optional[date] = None, now: Optional[d
     else:
         out.append("Nothing was applied to today.")
 
+    out += ["", "## Employer replies", ""]
+    out += employer_replies_text(_employer_replies(settings, day))
+
     out += ["", "## Tried but not applied", ""]
     if not_sent:
         out += ["| Time | Company | Role | Outcome | Why |", "|---|---|---|---|---|"]
@@ -391,6 +454,9 @@ def build_report(settings: Settings, day: Optional[date] = None, now: Optional[d
             )
     else:
         out.append("None.")
+
+    out += ["", "## Skill gaps", ""]
+    out += skill_gaps_text(_skill_gaps(settings, day))
 
     out += ["", "## Runs today", ""]
     if runs:

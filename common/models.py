@@ -66,6 +66,7 @@ class ScoredJob:
     llm_score: Optional[float] = None  # None when the LLM did not rate this job
     reasons: List[str] = field(default_factory=list)
     verdict: str = Verdict.WEAK
+    gaps: List[str] = field(default_factory=list)  # what the job asks that the profile lacks
 
 
 # ---------------------------------------------------------------------------

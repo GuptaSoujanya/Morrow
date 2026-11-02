@@ -246,6 +246,7 @@ def rank(
             if llm_score is not None:
                 candidate.llm_score = llm_score
                 candidate.score = round(0.4 * candidate.lexical_score + 0.6 * llm_score, 2)
+                candidate.gaps = list(llm_result.get("gaps") or [])
                 raw_reasons = llm_result.get("reasons")
                 if isinstance(raw_reasons, list):
                     candidate.reasons.extend(

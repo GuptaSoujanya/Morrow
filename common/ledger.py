@@ -58,6 +58,7 @@ class Ledger:
             self._migrate()
             self._ensure_fingerprint_column()
             self._ensure_facts_column()
+            self._ensure_gaps_column()
         except sqlite3.Error:
             logger.exception("failed to open ledger database at %s", db_path)
             raise
@@ -86,6 +87,18 @@ class Ledger:
             if "facts_fingerprint" not in columns:
                 self._connection.execute(
                     "ALTER TABLE applications ADD COLUMN facts_fingerprint TEXT"
+                )
+
+    def _ensure_gaps_column(self) -> None:
+        with self._lock, self._connection:
+            self._connection.execute("BEGIN IMMEDIATE")
+            columns = {
+                row[1]
+                for row in self._connection.execute("PRAGMA table_info(jobs_seen)")
+            }
+            if "gaps_json" not in columns:
+                self._connection.execute(
+                    "ALTER TABLE jobs_seen ADD COLUMN gaps_json TEXT"
                 )
 
     def _set_journal_mode(self, mode: str) -> None:
@@ -224,20 +237,24 @@ class Ledger:
             logger.exception("failed to record early access share %s", role_key)
             raise
 
-    def record_seen(self, job: JobPosting, score: Optional[float] = None) -> None:
+    def record_seen(
+        self, job: JobPosting, score: Optional[float] = None, gaps: Optional[List[str]] = None
+    ) -> None:
         seen_at = _now()
+        gaps_json = json.dumps(gaps) if gaps else None
         try:
             with self._lock, self._connection:
                 self._connection.execute(
                     """INSERT INTO jobs_seen(
-                           job_id, url, title, company, source, first_seen, last_seen, score
-                       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                           job_id, url, title, company, source, first_seen, last_seen, score, gaps_json
+                       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                        ON CONFLICT(job_id) DO UPDATE SET
                            last_seen = excluded.last_seen,
-                           score = COALESCE(excluded.score, score)""",
+                           score = COALESCE(excluded.score, score),
+                           gaps_json = COALESCE(excluded.gaps_json, gaps_json)""",
                     (
                         job.job_id, job.url, job.title, job.company, job.source,
-                        seen_at, seen_at, score,
+                        seen_at, seen_at, score, gaps_json,
                     ),
                 )
         except sqlite3.Error:
@@ -387,6 +404,29 @@ class Ledger:
         except sqlite3.Error:
             logger.exception("failed to list applications between %s and %s", start, end)
             raise
+
+    def gaps_between(self, start: str, end: str) -> List[Dict[str, Any]]:
+        """Jobs scored in [start, end) with what each asked that the profile lacks."""
+        try:
+            with self._lock:
+                rows = self._connection.execute(
+                    "SELECT job_id, title, company, score, gaps_json FROM jobs_seen "
+                    "WHERE last_seen >= ? AND last_seen < ? AND gaps_json IS NOT NULL "
+                    "ORDER BY score DESC",
+                    (start, end),
+                ).fetchall()
+        except sqlite3.Error:
+            logger.exception("failed to list gaps between %s and %s", start, end)
+            raise
+        jobs = []
+        for row in rows:
+            record = dict(row)
+            try:
+                record["gaps"] = [g for g in json.loads(record.pop("gaps_json")) if isinstance(g, str)]
+            except (TypeError, ValueError):
+                continue
+            jobs.append(record)
+        return jobs
 
     def runs_between(self, start: str, end: str) -> List[Dict[str, Any]]:
         """Runs that started in [start, end), with summary_json decoded as `summary`."""

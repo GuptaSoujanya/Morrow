@@ -678,7 +678,7 @@ def run_board(
         ranked = ranking.rank(profile, jobs, client, settings)
         summary.ranked = len(ranked)
         for scored in ranked:
-            ledger.record_seen(scored.job, scored.score)
+            ledger.record_seen(scored.job, scored.score, scored.gaps)
         selected = ranking.select_for_application(ranked, replace(settings, target_applications=limit), ledger.has_applied)
         facts = answers_module.facts_fingerprint(profile, settings)
         held = ledger.waiting_on_you(facts) | ledger.sent_unconfirmed()

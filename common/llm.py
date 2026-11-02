@@ -502,7 +502,8 @@ def _score_batch(
             "location": job.location,
             "experience": job.experience,
             "salary": job.salary,
-            "description": job.description[:400],
+            # Requirements usually sit past the opening pitch; 400 characters missed them.
+            "description": job.description[:900],
             "tags": job.tags,
         }
         for job in batch
@@ -517,6 +518,10 @@ def _score_batch(
         "visa sponsorship or citizenship they do not have. Reward LLM, "
         "AI, ML, agent, evaluation, and RAG roles. Return one entry per job.\n"
         "Candidate: %s\nJobs: %s"
+        "gaps: up to 3 things the job explicitly requires that the candidate's "
+        "facts and resume do not show, each a short noun phrase such as "
+        "\"Kubernetes\" or \"5+ years of Java\". Never list something the "
+        "candidate has; empty when nothing is missing.\n"
     ) % (candidate_json, json.dumps(payload, ensure_ascii=True))
     response = complete_checked(client, prompt, schema, lambda r: _batch_problems(r, sorted(allowed_ids)))
     if response is None:
@@ -550,10 +555,38 @@ def _score_batch(
             "verdict": verdict,
             "reasons": reasons,
         }
+            "gaps": real_gaps(entry.get("gaps"), skills),
     return results
 
 
 def _normalise_space(value: str) -> str:
+def _skill_key(text: str) -> str:
+    # "APIs" and "API", "Node.js" and "nodejs": case, punctuation and a plural s do not make two skills.
+    words = re.findall(r"[a-z0-9+#]+", text.casefold())
+    return " ".join(word[:-1] if len(word) > 3 and word.endswith("s") else word for word in words)
+
+
+def real_gaps(raw: Any, skills: List[str]) -> List[str]:
+    """The model's gaps, minus any that name a skill the candidate lists.
+
+    From Dossier's gap report (AienTech/dossier): the model proposes, code decides,
+    so a skill on the profile is never reported missing however the model words it.
+    """
+    if not isinstance(raw, list):
+        return []
+    held = [key for key in (_skill_key(skill) for skill in skills) if key]
+    gaps = []  # type: List[str]
+    for item in raw:
+        if not isinstance(item, str) or not item.strip():
+            continue
+        gap = " ".join(item.split())[:80]
+        key = " %s " % _skill_key(gap)
+        if any(" %s " % skill in key for skill in held) or gap in gaps:
+            continue
+        gaps.append(gap)
+    return gaps[:3]
+
+
     return " ".join(value.split()).casefold()
 
 
@@ -696,6 +729,8 @@ def resolve_answer(
         request["prior_answers"] = prior
     prompt = (
         "Answer ONLY from the supplied facts. If the facts do not contain what "
+    if rejected:
+        request["site_rejected"] = rejected
         "is needed, you MUST abstain. Never estimate, never infer, never use a "
         "typical or common value. grounded_in must name the exact supplied fact "
         "key supporting the answer. For options, copy one option exactly.\n"
@@ -708,6 +743,14 @@ def resolve_answer(
         "a question about the candidate from them alone.\n"
         # These answers go into a chat box, not a cover letter. A yes/no question
         # answered in 192 characters was rejected outright: the drawer closed
+        "prior_answers, when present, are this form's earlier questions and "
+        "the answers already typed: use them only to tell what a follow-up such "
+        "as \"If yes, which city?\" refers to, and still ground the answer in a fact.\n"
+        # From beatwad/LinkedIn-AI-Job-Applier-Ultimate: the site's own error says
+        # what shape it wants ("Enter a whole number between 0 and 30").
+        "site_rejected, when present, is the answer the site refused and its "
+        "error message: give the same fact in the shape the error asks for, "
+        "such as a bare whole number, or abstain if no fact fits.\n"
         # without submitting and the application was lost. Four of thirty-eight
         # attempts failed this way in one run, all of them long answers, while
         # every short answer went through.

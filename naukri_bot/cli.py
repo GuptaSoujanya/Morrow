@@ -726,7 +726,7 @@ def run(
         summary.ranked = len(ranked)
         summary.not_ranked = len(candidates) - len(ranked)
         for scored in ranked:
-            ledger.record_seen(scored.job, scored.score)
+            ledger.record_seen(scored.job, scored.score, scored.gaps)
             if ledger.has_applied(scored.job.job_id):
                 summary.already_applied += 1
             elif scored.score < settings.min_score:
