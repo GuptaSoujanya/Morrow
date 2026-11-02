@@ -23,9 +23,12 @@ def _args(**kw):
 
 def _week(week):
     days = learning.days_of(week)
+    small = '\n\n'.join('### ' + title + '\nA worked example.' for title in
+                         ('Words you need', 'The idea', 'A small example', 'Your turn', 'Check your answer')) + '\n\n---\n\n'
     return "# Week %d: t\n\nintro\n\n" % week + "".join(
-        "## Day %d: d%d\n\n**System Design: sd%d** (55 min)\nx\n\n**ML / GenAI: ml%d** (55 min)\ny\n\n"
-        "**Recall** (10 min)\n- q\n\n**Go deeper**\n- [a](http://a)\n\n" % (d, d, d, d) for d in days)
+        f"## Day {d}: d{d}\n\n**System Design: sd{d}** (25 min)\n{small}**ML / GenAI: ml{d}** (25 min)\n{small}"
+        f"**Full-stack: web** (25 min)\n{small}**DSA: arrays** (35 min)\n{small}"
+        "**Recall** (10 min)\n- q\n\n**Go deeper**\n- [a](http://a)\n\n" for d in days)
 
 
 def test_memory_marks_and_reloads(tmp_path):
@@ -85,9 +88,6 @@ def test_run_day_continues_where_it_stopped(tmp_path):
     assert calls.index("profile:naukri") < calls.index("apply:naukri")
 
 
-def test_a_done_stage_whose_file_is_gone_runs_again(tmp_path):
-    out = tmp_path / "out.md"
-    calls = []
 def test_browser_lock_defers_only_that_sites_remaining_work(tmp_path, caplog):
     import logging
 
@@ -110,6 +110,9 @@ def test_browser_lock_defers_only_that_sites_remaining_work(tmp_path, caplog):
     assert calls == ["hirist", "naukri"]
 
 
+def test_a_done_stage_whose_file_is_gone_runs_again(tmp_path):
+    out = tmp_path / "out.md"
+    calls = []
 
     def work():
         calls.append(1)
@@ -308,14 +311,13 @@ def test_naukri_and_linkedin_profile_stages_use_the_browser_agent(monkeypatch):
 
 
 def test_write_today_cuts_the_day_and_moves_on_after_done(tmp_path):
-    (tmp_path / "weeks").mkdir()
-    (tmp_path / "weeks" / "week-01.md").write_text(_week(1))
+    learning.ensure_week(1, lambda prompt: _week(1), tmp_path)
     day, path = learning.write_today(lambda prompt: pytest.fail("no CLI needed"), tmp_path, DAY)
     assert day == 1 and "## Day 1: d1" in path.read_text() and "Day 2" not in path.read_text()
     assert learning.mark_done(tmp_path, DAY) == 1
-    day, _ = learning.write_today(lambda prompt: "", tmp_path, DAY)
+    day, _ = learning.write_today(lambda prompt: learning.split_days(_week(1))[2], tmp_path, DAY)
     assert day == 2
-    assert "System Design: sd2" in learning.today_topics(tmp_path)
+    assert "Clients, servers and HTTP" in learning.today_topics(tmp_path)
 
 
 def test_missing_week_is_written_and_checked(tmp_path):
@@ -475,7 +477,7 @@ def test_week_check_finds_missing_days_parts_links_and_stray_headings(tmp_path):
     learning.week_path(1, tmp_path).write_text(week)
     problems = "\n".join(content.week_problems(1, tmp_path))
     assert "stray heading '## Notes'" in problems and "day 4 has no ML / GenAI" in problems
-    assert "wanted [1, 2, 3, 4, 5, 6, 7]" in problems and "day 1 has no link under Go deeper" in problems
+    assert "within [1, 2, 3, 4, 5, 6, 7]" in problems and "day 1 has no link under Go deeper" in problems
     learning.week_path(1, tmp_path).write_text(_week(1))
     assert content.week_problems(1, tmp_path) == []
 
@@ -547,6 +549,10 @@ def _fake_cli(prompt):
     if prompt.startswith("Write week "):
         week = int(prompt.split()[2])
         return _week(week).replace("- [a](http://a)", "- [course](../../../../database/course/x.md) and https://a.dev/%d" % week)
+    if prompt.startswith('Write only day '):
+        day = int(prompt.split()[3])
+        return learning.split_days(_week(learning.week_of(day)))[day].replace(
+            '- [a](http://a)', '- [course](../../../../../database/course/x.md)')
     agent = next(a for a in briefing.AGENTS if briefing.brief_for(a) in prompt)
     heading = agent.heading + (" caching" if agent.heading.endswith(":") else "")
     if agent.key == 'papers':
@@ -567,15 +573,16 @@ def test_the_pipeline_writes_and_checks_the_material_for_the_date_it_runs(tmp_pa
     (tmp_path / "database" / "course" / "x.md").write_text("# x")
     monkeypatch.setattr(learning, "ask_cli", lambda cli=None: _fake_cli)
     monkeypatch.setattr(run, "board_names", lambda env: [])
+    monkeypatch.delenv('RESUME_PATH', raising=False)
     for day in ("2026-10-23", "2026-10-24"):
         code = run.main(["run", "--only", "learn", "--only", "brief", "--date", day])
         assert code == 0
         assert content.day_problems(date.fromisoformat(day)) == []
-        assert (learning.LEARNING / "daily" / ("%s.md" % day)).read_text().startswith("# %s: Day 1 " % day)
+        assert (learning.content_root() / "daily" / ("%s.md" % day)).read_text().startswith("# %s: Day 1 " % day)
         assert day in (learning.RESEARCH / "TODAY.md").read_text()
         assert Memory(run.MEMORY_DIR, date.fromisoformat(day)).is_done("brief:papers")
     assert (briefing.DAILY / "2026-10-23" / "01-goal.md").exists()  # the day before is kept
-    assert "[course](../../../database/course/x.md)" in (learning.LEARNING / "today.md").read_text()
+    assert "[course](../../../../database/course/x.md)" in (learning.content_root() / "today.md").read_text()
     assert run.main(["check", "--date", "2026-10-25"]) == 3
 
 

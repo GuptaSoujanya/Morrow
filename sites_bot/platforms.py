@@ -1012,7 +1012,7 @@ def main(argv: Optional[List[str]] = None, only: Optional[Board] = None) -> int:
     if not args.dry_run and not args.profile_only:
         report.update_quietly(settings)
     if profiles_failed:
-        logger.error("Profiles not updated: %s", ", ".join(profiles_failed))
+        logger.error("Profile updates incomplete or unverified: %s", ", ".join(profiles_failed))
         return EXIT_FAILED
     if boards_failed:
         logger.error("Boards not finished because the browser stopped answering: %s", ", ".join(boards_failed))

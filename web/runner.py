@@ -23,7 +23,8 @@ READ_GRACE_S = 1.0
 BOARDS = ("naukri", "hirist", "instahyre", "cutshort", "wellfound")
 STAGES = ("learn", "research:resume", "profile:linkedin",
           *(f"{group}:{board}" for group in ("profile", "apply") for board in BOARDS),
-          *(f"brief:{name}" for name in ("goal", "system-design", "papers", "tech-news", "companies")))
+          *(f"brief:{name}" for name in ("goal", "system-design", "papers", "tech-news", "companies", "repositories")))
+STUDY_STAGES = frozenset(('learn', 'brief:papers', 'brief:tech-news', 'brief:repositories'))
 
 
 def _now() -> str:
@@ -50,7 +51,7 @@ def resources_for(command: Command, action: str) -> frozenset[str]:
         resources.add("browser:main")
     if action in ("linkedin", "linkedin_profile"):
         resources.add("browser:linkedin")
-    if action != "pipeline":
+    if action not in ("pipeline", "learning-feed"):
         return frozenset(resources)
 
     subcommand = args[args.index("pipeline") + 1] if "pipeline" in args else "continue"
@@ -58,9 +59,10 @@ def resources_for(command: Command, action: str) -> frozenset[str]:
         return frozenset({f"pipeline:read:{subcommand}"})
     only = [args[i + 1] for i, value in enumerate(args[:-1]) if value == "--only"]
     skip = [args[i + 1] for i, value in enumerate(args[:-1]) if value == "--skip"]
-    if subcommand == "learn":
-        only = ["learn"]
-    matches = lambda stage, groups: any(stage == group or stage.startswith(group + ":") for group in groups)
+    if subcommand in ("learn", "study"):
+        only = [subcommand]
+    matches = lambda stage, groups: any(stage == group or stage.startswith(group + ":")
+                                       or group == "study" and stage in STUDY_STAGES for group in groups)
     selected = [stage for stage in STAGES if (not only or matches(stage, only)) and not matches(stage, skip)]
     resources = {"pipeline:writer", *(f"stage:{stage}" for stage in selected)}
     if "--fresh" in args:

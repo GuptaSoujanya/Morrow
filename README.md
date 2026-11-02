@@ -227,7 +227,7 @@ Applications sent across Naukri, job boards and company sites, the jobs found an
 
 | | Feature | Highlights |
 |---|---|---|
-| 📚 | **Learn** | 90-day interview plan, daily AI-researched briefings, DSA practice with a code runner, streaks, XP and badges |
+| 📚 | **Learn** | Shared 90-day AI/ML, system-design and full-stack interview course, daily DSA, and additional papers, tech news and GitHub discoveries |
 | 👤 | **Profile** | Writes one profile plan from your resume to Naukri, LinkedIn, Hirist, Instahyre, Cutshort and Wellfound, then checks each one |
 | 📄 | **Resume** | Compiles your LaTeX resume and tailors it for each job by reordering what's already there, never adding to it |
 | 🎯 | **Apply** | Naukri, Hirist, Instahyre, Cutshort, Wellfound and company career sites (Greenhouse, Lever, Workday and more), ranked by an LLM against your resume |

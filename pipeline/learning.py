@@ -13,11 +13,16 @@ import hashlib
 import logging
 import os
 import re
-from datetime import date
+import fcntl
+import tempfile
+import threading
+from contextlib import contextmanager
+from datetime import date, datetime
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
 
 from common import ai_cli
+from common import interview_course
 from common import persona as persona_module
 from common.profile import ProfileError, extract_resume_text
 
@@ -33,7 +38,8 @@ RESUME_TEX = paths.user_dir() / "resume" / "base.tex"
 LAST_DAY = 90
 _DAY = re.compile(r"^## Day (\d+)\b", re.M)
 #: What the plan is for when the persona does not say.
-DEFAULT_GOAL = "senior interview level in High-Level System Design and in ML / Generative AI"
+DEFAULT_GOAL = "interview readiness in AI/ML, system design, full-stack development and DSA"
+_generation_lock = threading.RLock()
 
 Ask = Callable[[str], str]
 
@@ -105,7 +111,13 @@ def days_of(week: int) -> List[int]:
 
 
 def week_path(week: int, root: Path = LEARNING) -> Path:
-    return root / "weeks" / ("week-%02d.md" % week)
+    interview_course.week_spec(week)
+    return content_root(root) / "weeks" / ("week-%02d.md" % week)
+
+
+def content_root(root: Path = LEARNING) -> Path:
+    """Keep generated shared-course lessons separate from the earlier resume plan."""
+    return Path(root) / interview_course.COURSE_ID
 
 
 def split_days(text: str) -> Dict[int, str]:
@@ -119,13 +131,9 @@ def split_days(text: str) -> Dict[int, str]:
 
 
 def syllabus_row(week: int, root: Path = LEARNING) -> str:
-    """The week's row of the syllabus table in learning/README.md."""
-    try:
-        text = (root / "README.md").read_text(encoding="utf-8")
-    except OSError:
-        return ""
-    found = re.search(r"^\| %d \| [^\n]+$" % week, text, re.M)
-    return found.group(0) if found else ""
+    """Canonical shared syllabus; private README files cannot change its topics."""
+    spec = interview_course.week_spec(week)
+    return '| %d | %d–%d | %s | %s |' % (week, spec['start_day'], spec['end_day'], spec['title'], spec['project'])
 
 
 def _shared(root: Path) -> bool:
@@ -143,22 +151,21 @@ def _repo(root: Path) -> Path:
 
 
 def load_progress(root: Path = LEARNING) -> Dict:
-    """The saved progress, {} before the first day; a damaged file is an error, not a fresh start."""
+    """Shared-course progress only; the earlier plan is never implicitly imported."""
     if _shared(root):
         from common import learning_memory
-        return learning_memory.transact(_repo(root))["plan"]
-    path = root / "progress.json"
+        data = learning_memory.transact(_repo(root))
+        return {**interview_course.state_for(data), 'done': interview_course.completed_days(data)}
+    path = content_root(root) / "progress.json"
     try:
         text = path.read_text(encoding="utf-8")
     except FileNotFoundError:
-        return {}
+        return interview_course.state_for({})
     try:
         progress = json.loads(text)
     except ValueError as exc:
         raise ValueError("%s is not valid JSON (%s); fix or remove it" % (path, exc)) from exc
-    if not isinstance(progress, dict):
-        raise ValueError("%s does not hold a JSON object" % path)
-    return progress
+    return interview_course.state_for({'interview_course': progress})
 
 
 def save_progress(progress: Dict, root: Path = LEARNING) -> None:
@@ -167,13 +174,15 @@ def save_progress(progress: Dict, root: Path = LEARNING) -> None:
         # Generation only establishes the start date. Completion belongs to locked
         # transactions, so a slow generator cannot overwrite a newer dashboard save.
         def update(data):
+            saved = interview_course.ensure_course_state(data)
             for key, value in progress.items():
                 if key not in ("done", "marked"):
-                    data["plan"].setdefault(key, value)
+                    saved.setdefault(key, value)
         learning_memory.transact(_repo(root), update)
         return
-    root.mkdir(parents=True, exist_ok=True)
-    (root / "progress.json").write_text(json.dumps(progress, indent=1), encoding="utf-8")
+    value = {**interview_course.state_for({}), **progress}
+    interview_course.state_for({'interview_course': value})
+    _atomic_text(content_root(root) / "progress.json", json.dumps(value, indent=2) + '\n')
 
 
 def current_day(progress: Dict) -> int:
@@ -188,133 +197,384 @@ def current_day(progress: Dict) -> int:
 def mark_done(root: Path = LEARNING, today: Optional[date] = None) -> int:
     if _shared(root):
         from common import learning_memory
-        return learning_memory.finish_plan_day(_repo(root), (today or date.today()).isoformat())
-    progress = load_progress(root)
-    stamp = (today or date.today()).isoformat()
-    progress.setdefault("start", stamp)
-    marked = progress.setdefault("marked", {})
-    if stamp in marked:
-        # A second --done the same day does not skip a study day.
-        return int(marked[stamp])
-    day = current_day(progress)
-    progress["done"] = sorted(set(progress.get("done") or []) | {day})
-    marked[stamp] = day
-    save_progress(progress, root)
-    return day
+        result = []
+        stamp = (today or date.today()).isoformat()
+        def change(data):
+            state = interview_course.ensure_course_state(data)
+            if stamp in state.get('marked', {}):
+                result.append(state['marked'][stamp])
+                return
+            day = interview_course.next_day(data)
+            if day is not None:
+                now = datetime.now().astimezone()
+                at = datetime.combine(date.fromisoformat(stamp), now.timetz()).isoformat(timespec='microseconds')
+                interview_course.record_completion(data, day, True, at=at)
+            result.append(day or LAST_DAY)
+        learning_memory.transact(_repo(root), change)
+        return result[0]
+    with _course_lock(root):
+        progress = load_progress(root)
+        stamp = (today or date.today()).isoformat()
+        progress.setdefault("start", stamp)
+        marked = progress.setdefault("marked", {})
+        if stamp in marked:
+            return int(marked[stamp])
+        day = current_day(progress)
+        progress["done"] = sorted(set(progress.get("done") or []) | {day})
+        marked[stamp] = day
+        save_progress(progress, root)
+        return day
+
+
+_LESSON_SHAPE = (
+    "## Day N: <the canonical title>\n\n"
+    "**ML / GenAI: <canonical AI/ML topic>** (25 min)\n"
+    "<use the small lesson structure below>\n\n"
+    "**System Design: <canonical topic>** (25 min)\n"
+    "<use the small lesson structure below>\n\n"
+    "**Full-stack: <canonical topic>** (25 min)\n"
+    "<use the small lesson structure below; explain each code line>\n\n"
+    "**DSA: <canonical topic>** (35 min)\n"
+    "<use the small lesson structure below; trace each step on a list of at most five values>\n\n"
+    "**Recall** (10 min)\n- 3 to 5 self-check questions with short answers after the questions\n\n"
+    "**Go deeper**\n- 2 to 4 verified primary-source links (optional)\n\n"
+    "Small lesson structure, repeated for each subject:\n"
+    "### Words you need\n<2 to 4 terms with plain meanings, before using them>\n"
+    "### The idea\n<2 to 4 short sentences about ONE idea>\n"
+    "### A small example\n<a familiar situation, exact input, 2 to 4 numbered steps, exact result>\n"
+    "### Your turn\n<one small task changing the worked example; include all needed information>\n"
+    "### Check your answer\n<the actual answer and why it is correct; never just 'check your work'>\n"
+    "End each answer with a horizontal rule (---) before the next subject."
+)
+
+
+def _atomic_text(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    name = None
+    try:
+        with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', dir=path.parent,
+                                         prefix='.lesson-', delete=False) as output:
+            name = output.name
+            output.write(text)
+            output.flush()
+            os.fsync(output.fileno())
+        os.replace(name, path)
+    finally:
+        if name and os.path.exists(name):
+            os.unlink(name)
+
+
+@contextmanager
+def _course_lock(root):
+    folder = content_root(root)
+    folder.mkdir(parents=True, exist_ok=True)
+    with _generation_lock, (folder / '.generation.lock').open('a') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        yield
+
+
+def _prior_learning(day: int, root: Path) -> Tuple[str, List[int]]:
+    """Only completed earlier lessons are evidence; unread files are excluded."""
+    completed = sorted(number for number in load_progress(root).get('done', []) if number < day)
+    parts = []
+    # The last three actual readings keep prompts bounded. Earlier completed
+    # topics are named, not represented as lessons the learner has mastered.
+    for number in completed[-3:]:
+        path = week_path(week_of(number), root)
+        try:
+            section = split_days(path.read_text(encoding='utf-8')).get(number, '')
+        except OSError:
+            section = ''
+        metadata = _read_metadata(path)
+        sources = metadata.get('day_sources', {})
+        source = sources.get(str(number), {}) if isinstance(sources, dict) else {}
+        if (not section or not interview_course.is_current(metadata) or not isinstance(source, dict)
+                or source.get('teaching_version') != interview_course.TEACHING_VERSION):
+            try:
+                from common.interview_lessons import lesson
+                public_root = course.COURSE if course.COURSE.is_absolute() else Path(__file__).resolve().parents[1] / course.COURSE
+                section = lesson(number, public_root)['text']
+            except (OSError, ValueError):
+                # Isolated workspaces may omit the public reference chapters.
+                # The canonical material is still evidence, never private files.
+                spec = interview_course.day_spec(number)
+                section = ('Day %d: %s\n%s\n%s\n' %
+                           (number, spec['title'], spec['explanation'], spec['example']))
+                section += '\n'.join(item['title'] + ': ' + item['topic'] for item in spec['topics'])
+        parts.append(section[:3500])
+    summary = ('Completed earlier course days: ' + ', '.join(map(str, completed))
+               if completed else 'No earlier course days are marked complete. Start with the basics.')
+    summary += '\nCompletion records show reading, not proof of mastery. Begin with a brief recall check.'
+    return summary + ('\n\nPreviously completed material:\n' + '\n\n'.join(parts) if parts else ''), completed
+
+
+def learning_context(day: int, root: Path = LEARNING) -> str:
+    return _prior_learning(day, root)[0]
+
+
+def _context_signature(day, root):
+    text, completed = _prior_learning(day, root)
+    return hashlib.sha256(text.encode('utf-8')).hexdigest(), completed
+
+
+def _teaching_rules():
+    return (
+        "This is the same fixed course for everyone. Do not use a resume or change the syllabus. "
+        "Use the learner's completed reading only to connect ideas and choose a short recap. Never assume "
+        "an unread or future lesson has been studied. Teach in simple, clear English: define each new term "
+        "before using it, avoid unexplained jargon, show every important step, and use small concrete examples. "
+        "The learner has explicitly chosen VERY SIMPLE ENGLISH. Write as if this is their first course. "
+        "Use short sentences, usually under 15 words, and one idea per paragraph. "
+        "Say 'a place to save information' before saying 'database'. Explain an abbreviation before using it. "
+        "Do not replace one difficult word with another difficult word. Use examples such as a shopping list, "
+        "a food order or a study tracker, with small numbers and an actual result. "
+        "Do not paste a reference chapter, a wall of code, a list of tools, or a diagram without an explanation. "
+        "Keep each code example under 10 lines and explain every line in everyday words. "
+        "Introduce a formula in words before showing symbols. Start with the smallest useful example, "
+        "then give one slightly changed task. Aim for 150 to 250 words per subject. "
+        "Every explanation must say what it is, why it matters, how it works and how to explain it in an interview. "
+        "Give runnable exercises with expected output, hints and a way to check the answer. "
+        "Keep the main session to about 120 minutes. News, research papers and GitHub exploration are "
+        "additional learning, never prerequisites for finishing this session. "
+        "Search current official documentation and original papers; link only sources actually verified. "
+        "Do not promise a job or claim the learner has mastered a topic merely by reading. "
+        "Output Markdown only. Use exactly the requested Day headings and no other level-two headings. No emojis."
+    )
 
 
 def week_prompt(week: int, root: Path = LEARNING) -> str:
-    days = days_of(week)
-    who = persona_module.load_persona()
-    resume = resume_text()
-    return "\n\n".join([
-        "Write week %d of a 90-day study plan for %s who studies 2 hours a day to reach %s."
-        % (week, "the engineer described by the current resume" if resume.strip() else who.learner_line(), who.goal or DEFAULT_GOAL),
-        "Resume evidence (contact details removed; authoritative for experience):\n" + (resume[:8000] or "No resume is available. Label this as a general curriculum; do not invent experience."),
-        "Personalize prerequisites, examples and skill gaps to this resume and target roles. Cover "
-        "system design, full-stack engineering (frontend, backend, databases and deployment), and AI agents "
-        "(tool use, retrieval, evaluation and reliability). Include full-stack implementation within the "
-        "System Design block and agent projects within ML / GenAI, with one practical deliverable each week. "
-        "Separate skills demonstrated by the resume from skills the learner still needs to develop.",
-        "This week's existing syllabus is a suggested sequence, not evidence of the learner's skills. Adapt it to the current resume (| week | days | system design | ML / GenAI |):\n" + syllabus_row(week, root),
-        "Search the web for current, accurate material and link real pages (official docs, papers, "
-        "well-known engineering blogs). Prefer sources from the last two years for GenAI topics.",
-        "Output markdown only, nothing before or after it. Start with '# Week %d: <title>' and one "
-        "paragraph. Then exactly %d day sections, Day %d to Day %d, each in this exact shape and with "
-        "no other '## ' headings anywhere:\n\n"
-        "## Day N: <short title>\n\n**System Design: <topic>** (55 min)\n<teaching notes, a mermaid "
-        "diagram, a back-of-envelope estimate>\n\n**ML / GenAI: <topic>** (55 min)\n<teaching notes and "
-        "a small Python exercise>\n\n**Recall** (10 min)\n- 3 to 5 self-check questions\n\n**Go deeper**\n"
-        "- 2 to 4 links" % (week, len(days), days[0], days[-1]),
-        "Day %d is a revision and mini-project day for the week. No emojis." % days[-1]
-        if len(days) == 7 else "The last day is a final mock interview and wrap-up. No emojis.",
+    spec = interview_course.week_spec(week)
+    return '\n\n'.join([
+        'Write week %d of the shared 90-day interview course: %s.' % (week, spec['title']),
+        _teaching_rules(),
+        'Fixed syllabus (do not reorder or substitute topics):\n' + json.dumps(spec, ensure_ascii=False),
+        learning_context(spec['start_day'], root),
+        "Start with '# Week %d: %s'. Then exactly %d sections, Day %d to Day %d. "
+        "Each day follows this shape:\n\n%s" %
+        (week, spec['title'], len(spec['days']), spec['start_day'], spec['end_day'], _LESSON_SHAPE),
+        'The final day of this week is review, a practical deliverable and an interview rehearsal. '
+        'The weekly deliverable is: ' + spec['project'],
     ])
 
 
-def ensure_week(week: int, ask: Ask, root: Path = LEARNING) -> Path:
-    """Refresh unfinished days for the selected resume, preserving completed work."""
+def day_prompt(day: int, root: Path = LEARNING) -> str:
+    spec = interview_course.day_spec(day)
+    return '\n\n'.join([
+        'Write only day %d of the shared 90-day interview course.' % day,
+        _teaching_rules(),
+        'Fixed lesson specification:\n' + json.dumps(spec, ensure_ascii=False),
+        learning_context(day, root),
+        'Output exactly one section starting with "## Day %d: %s". Follow this shape:\n\n%s' %
+        (day, spec['title'], _LESSON_SHAPE),
+    ])
+
+
+def _checked_sections(text, wanted):
+    numbers = [int(match[1]) for match in _DAY.finditer(text)]
+    if set(numbers) != set(wanted) or len(numbers) != len(set(numbers)):
+        raise ai_cli.AIError('the lesson output must contain exactly day(s) %s' % sorted(wanted))
+    if re.search(r'^## (?!Day \d+\b)', text, re.M):
+        raise ai_cli.AIError('the lesson output has an unexpected level-two heading')
+    sections = split_days(text)
+    for day, section in sections.items():
+        required = ('**ML / GenAI:', '**System Design:', '**Full-stack:', '**DSA:', '**Recall**', '**Go deeper**')
+        missing = [part.strip('*:') for part in required if part not in section]
+        if missing:
+            raise ai_cli.AIError('day %d is missing %s' % (day, ', '.join(missing)))
+        _check_teaching_steps(day, section)
+    return sections
+
+
+def _check_teaching_steps(day, section):
+    """Require four real lessons, excluding text that only appears in code."""
+    from markdown_it import MarkdownIt
+    tokens = MarkdownIt('commonmark').parse(section)
+    subjects = {'ML / GenAI', 'System Design', 'Full-stack', 'DSA'}
+    boundaries = []
+    for index, token in enumerate(tokens[:-1]):
+        if token.type != 'paragraph_open' or tokens[index + 1].type != 'inline':
+            continue
+        line = tokens[index + 1].content
+        possible = re.match(r'^\*\*(ML / GenAI|System Design|Full-stack|DSA):', line)
+        if possible:
+            if not re.match(r'^\*\*(ML / GenAI|System Design|Full-stack|DSA):[^\n*]+\*\*(?:\s|$)', line):
+                raise ai_cli.AIError('day %d has a malformed subject label' % day)
+            boundaries.append((possible[1], index))
+        elif re.match(r'^\*\*(Recall|Go deeper)\*\*', line):
+            boundaries.append(('', index))
+    names = [name for name, _ in boundaries if name]
+    if len(names) != 4 or set(names) != subjects:
+        raise ai_cli.AIError('day %d must contain exactly four subject lessons' % day)
+    needed = ['Words you need', 'The idea', 'A small example', 'Your turn', 'Check your answer']
+    for position, (name, start) in enumerate(boundaries):
+        if not name:
+            continue
+        end = boundaries[position + 1][1] if position + 1 < len(boundaries) else len(tokens)
+        headings = [(tokens[i + 1].content.strip(), i) for i in range(start, end - 1)
+                    if tokens[i].type == 'heading_open' and tokens[i].tag == 'h3']
+        if [title for title, _ in headings if title in needed] != needed:
+            raise ai_cli.AIError('day %d is missing or reorders the beginner lesson steps: words, idea, example, task and answer' % day)
+        for i, (title, heading) in enumerate(headings):
+            if title not in needed:
+                continue
+            stop = headings[i + 1][1] if i + 1 < len(headings) else end
+            # Require explanatory text, not an empty heading or a bare code dump.
+            if not any(t.type == 'inline' and re.search(r'\w', t.content)
+                       for t in tokens[heading + 3:stop]):
+                raise ai_cli.AIError('day %d has empty beginner lesson steps: %s' % (day, title))
+
+
+def _source_valid(day, section, metadata, signature):
+    sources = metadata.get('day_sources', {})
+    source = sources.get(str(day), {}) if isinstance(sources, dict) else {}
+    if not isinstance(source, dict):
+        return False
+    return (interview_course.is_current(metadata)
+            and source.get('teaching_version') == interview_course.TEACHING_VERSION
+            and source.get('context_sha256') == signature
+            and source.get('content_sha256') == hashlib.sha256(section.encode('utf-8')).hexdigest())
+
+
+def _selected_days_prompt(week, days, root):
+    if len(days) == 1:
+        return day_prompt(days[0], root)
+    return '\n\n'.join([
+        'Prepare only the unfinished days of week %d of the shared interview course.' % week,
+        _teaching_rules(),
+        'Fixed lesson specifications:\n' + json.dumps([interview_course.day_spec(day) for day in days], ensure_ascii=False),
+        learning_context(min(days), root),
+        "Start with '# Week %d: %s'. Output exactly these day sections: %s. "
+        "Do not output completed days. Each section follows this shape:\n\n%s" %
+        (week, interview_course.week_spec(week)['title'], ', '.join('Day %d' % day for day in days), _LESSON_SHAPE),
+    ])
+
+
+def _bundled_section(day):
+    from common.interview_lessons import lesson
+    public_root = course.COURSE if course.COURSE.is_absolute() else Path(__file__).resolve().parents[1] / course.COURSE
+    # This changes only Markdown heading levels outside code fences, preserving
+    # the exact reading the learner completed instead of asking AI to replace it.
+    return course._demote(lesson(day, public_root)['text'], 2).strip() + '\n'
+
+
+def _ensure_lessons(week, wanted, ask, root, prompt):
     path = week_path(week, root)
-    wanted = set(days_of(week))
-    fingerprint = resume_fingerprint()
-    evidence = resume_text()  # Fail clearly if an explicitly selected resume cannot be read.
-    if fingerprint and not evidence.strip():
-        raise ai_cli.AIError("the selected resume has no readable experience or skills")
     metadata = _read_metadata(path)
-    previous = ""
     try:
-        previous = path.read_text(encoding="utf-8")
-        if wanted <= set(split_days(previous)) and (not fingerprint or metadata.get("resume_sha256") == fingerprint):
-            return path
-    except OSError:
-        pass
-    completed = set(load_progress(root).get("done") or [])
+        previous = path.read_text(encoding='utf-8')
+    except FileNotFoundError:
+        previous = ''
     old_sections = split_days(previous)
-    if wanted <= completed and wanted <= set(old_sections):
+    completed = set(load_progress(root).get('done', []))
+    signatures = {day: _context_signature(day, root) for day in wanted}
+    if all(day in old_sections and interview_course.is_current(metadata)
+           and (day in completed or _source_valid(day, old_sections[day], metadata, signatures[day][0]))
+           for day in wanted):
         return path
-    logger.info("Writing %s with the AI CLI.", path)
-    text = links.linkify(ai_cli.markdown_from(ask(week_prompt(week, root)), "# Week"))
-    missing = wanted - set(split_days(text))
-    if missing:
-        raise ai_cli.AIError("the week it wrote has no section for day(s) %s" % sorted(missing))
-    if resume_fingerprint() != fingerprint:
-        raise ai_cli.AIError("the selected resume changed during generation; retry with the current resume")
-    completed = set(load_progress(root).get("done") or [])
-    # The model may produce a new whole week, but completed lessons retain their
-    # exact source. Their provenance remains old/unknown, never relabelled.
-    new_sections = split_days(text)
-    text = text[:_DAY.search(text).start()] + "\n".join(
-        old_sections[d] if d in completed and d in old_sections else new_sections[d]
-        for d in days_of(week)
-    )
-    path.parent.mkdir(parents=True, exist_ok=True)
-    if previous:
-        _archive(path, previous)
-    path.write_text(text, encoding="utf-8")
-    old_sources = metadata.get("day_resume_sha256", {})
-    if not isinstance(old_sources, dict):
-        old_sources = {}
-    _write_metadata(path, {"resume_sha256": fingerprint, "day_resume_sha256": {
-        str(d): old_sources.get(str(d), metadata.get("resume_sha256", ""))
-        if d in completed and d in old_sections else fingerprint for d in days_of(week)
-    }})
+    required = [day for day in wanted if day not in completed
+                and not (day in old_sections and _source_valid(day, old_sections[day], metadata, signatures[day][0]))]
+    bundled = {day: _bundled_section(day) for day in wanted if day in completed
+               and not (day in old_sections and interview_course.is_current(metadata))}
+    sections = dict(bundled)
+    if required:
+        logger.info('Generating study content for %s with the AI CLI; not saved yet.', path)
+        prefix = '# Week' if len(required) > 1 else '## Day'
+        if required != list(wanted):
+            prompt = _selected_days_prompt(week, required, root)
+        text = links.linkify(ai_cli.markdown_from(ask(prompt), prefix))
+        sections.update(_checked_sections(text, required))
+    with _course_lock(root):
+        latest_done = set(load_progress(root).get('done', []))
+        if any(_context_signature(day, root) != signatures[day] for day in wanted):
+            raise ai_cli.AIError('completed reading changed during lesson generation; retry to build on the latest progress')
+        if any(day not in latest_done for day in bundled):
+            raise ai_cli.AIError('a completed lesson was reopened during preparation; retry with the latest progress')
+        metadata = _read_metadata(path)
+        try:
+            previous = path.read_text(encoding='utf-8')
+        except FileNotFoundError:
+            previous = ''
+        merged = split_days(previous) if interview_course.is_current(metadata) else {}
+        saved_sources = metadata.get('day_sources', {})
+        sources = dict(saved_sources) if interview_course.is_current(metadata) and isinstance(saved_sources, dict) else {}
+        for day in sections:
+            # Preserve a lesson completed or saved by another request while the
+            # AI was running. Generation never writes completion state.
+            if day in merged and (day in latest_done or _source_valid(day, merged[day], metadata, signatures[day][0])):
+                continue
+            if day in latest_done and day not in completed:
+                raise ai_cli.AIError('this lesson was completed during generation; retry to prepare the next day')
+            merged[day] = sections[day]
+            sources[str(day)] = {'context_sha256': signatures[day][0], 'completed_days': signatures[day][1],
+                                 'teaching_version': interview_course.TEACHING_VERSION,
+                                 'source': 'bundled' if day in bundled else 'generated',
+                                 'content_sha256': hashlib.sha256(sections[day].encode('utf-8')).hexdigest()}
+        spec = interview_course.week_spec(week)
+        saved = '# Week %d: %s\n\n%s\n\n' % (week, spec['title'], interview_course.COURSE_TITLE)
+        saved += '\n'.join(merged[day] for day in sorted(merged))
+        if previous and previous != saved:
+            _archive(path, previous)
+        _atomic_text(path, saved)
+        _write_metadata(path, {'course_id': interview_course.COURSE_ID, 'course_version': interview_course.COURSE_VERSION,
+                               'day_sources': sources})
+    logger.info('Saved study content to %s.', path)
     return path
 
 
+def ensure_week(week: int, ask: Ask, root: Path = LEARNING) -> Path:
+    """Prepare a whole shared-syllabus week explicitly, keeping completed lessons."""
+    return _ensure_lessons(week, days_of(week), ask, root, week_prompt(week, root))
+
+
+def ensure_day(day: int, ask: Ask, root: Path = LEARNING) -> Path:
+    """Prepare only the requested day using actual prior completed reading."""
+    interview_course.day_spec(day)
+    return _ensure_lessons(week_of(day), [day], ask, root, day_prompt(day, root))
+
+
 def write_today(ask: Ask, root: Path = LEARNING, today: Optional[date] = None) -> Tuple[int, Path]:
-    """Write today.md and daily/<date>.md for the first day not yet done."""
+    """Prepare the next unread course day; a missed date never skips a lesson."""
     today = today or date.today()
-    progress = load_progress(root)
-    if "start" not in progress:
-        progress["start"] = today.isoformat()
-        save_progress(progress, root)
+    with _course_lock(root):
+        progress = load_progress(root)
+        if 'start' not in progress:
+            progress['start'] = today.isoformat()
+            save_progress(progress, root)
     day = current_day(progress)
+    complete = len(set(progress.get('done', []))) == LAST_DAY
     week = week_of(day)
-    week_file = ensure_week(week, ask, root)
-    section = split_days(week_file.read_text(encoding="utf-8"))[day]
-    sources = _read_metadata(week_file).get("day_resume_sha256", {})
-    source = sources.get(str(day), "") if isinstance(sources, dict) else ""
-    head = "\n".join([
-        "# %s: Day %d of %d (week %d)" % (today.isoformat(), day, LAST_DAY, week),
-        "",
-        "2 hours: 55 min system design, 55 min ML / GenAI, 10 min recall. "
-        "When finished: `python3 -m pipeline learn --done`.",
-        "",
-    ])
-    tail = ("Also today: the briefing in `user/research/daily/%s/` and one file from "
-            "`user/research/resume-learning/`.\n" % today.isoformat())
-    daily = root / "daily" / ("%s.md" % today.isoformat())
-    daily.parent.mkdir(parents=True, exist_ok=True)
-    for path in (daily, root / "today.md"):
-        # The week's links are relative to weeks/; move them for each copy.
+    if complete:
+        section = ('## Day 90: Course complete\n\nYou have completed all 90 course days. '
+                   'Use your practice results to choose a review topic and continue mock interviews.\n')
+        quoted, source = '', {}
+        week_file = week_path(week, root)
+    else:
+        week_file = ensure_day(day, ask, root)
+        section = split_days(week_file.read_text(encoding='utf-8'))[day]
+        source = _read_metadata(week_file).get('day_sources', {}).get(str(day), {})
+    head = ('# %s: Day %d of %d (week %d)\n\n%s\n\n'
+            'About 2 hours: AI/ML 25 min, system design 25 min, full-stack 25 min, '
+            'DSA 35 min, recall 10 min.\n\n') % (
+            today.isoformat(), day, LAST_DAY, week, interview_course.COURSE_TITLE)
+    tail = ("\nAdditional learning: today's research papers, tech news and GitHub discoveries. "
+            'These do not change completion of your course lesson.\n')
+    daily = content_root(root) / 'daily' / ('%s.md' % today.isoformat())
+    for path in (daily, content_root(root) / 'today.md'):
         body = links.relink(section, week_file.parent, path.parent)
-        quoted = course.reading(day, section, week_file.parent, path.parent, root)
-        content = "\n".join([head, body, quoted, tail])
-        if path == daily and path.exists():
-            previous = path.read_text(encoding="utf-8")
-            if previous != content:
-                _archive(path, previous)
-        path.write_text(content, encoding="utf-8")
-        _write_metadata(path, {"resume_sha256": source, "plan_day": day, "week": week})
+        quoted = ('## From the course\n\nRevisit the topics you found difficult.\n' if complete else
+                  course.reading(day, section, week_file.parent, path.parent, content_root(root)))
+        content = head + body + '\n' + quoted + tail
+        with _course_lock(root):
+            if current_day(load_progress(root)) != day:
+                raise ai_cli.AIError('course progress changed before publishing today; retry to prepare the next day')
+            if path == daily and path.exists():
+                previous = path.read_text(encoding='utf-8')
+                if previous != content:
+                    _archive(path, previous)
+            _atomic_text(path, content)
+            _write_metadata(path, {'course_id': interview_course.COURSE_ID,
+                                   'course_version': interview_course.COURSE_VERSION,
+                                   'plan_day': day, 'week': week, 'source': source})
     return day, daily
 
 
@@ -356,7 +616,7 @@ def _read_metadata(path: Path) -> Dict:
 
 
 def _write_metadata(path: Path, data: Dict) -> None:
-    path.with_suffix(".meta.json").write_text(json.dumps({"schema_version": 1, **data}, indent=2) + "\n", encoding="utf-8")
+    _atomic_text(path.with_suffix(".meta.json"), json.dumps({"schema_version": 1, **data}, indent=2) + "\n")
 
 
 def _archive(path: Path, text: str) -> None:
@@ -465,9 +725,6 @@ def write_resume_index(root: Path = RESUME_LEARNING, fingerprint: str = "") -> P
 
 
 def today_topics(root: Path = LEARNING) -> str:
-    """The two topic lines of today's study day, for the briefing agents."""
-    try:
-        text = (root / "today.md").read_text(encoding="utf-8")
-    except OSError:
-        return ""
-    return "; ".join(re.findall(r"^\*\*((?:System Design|ML / GenAI): [^*]+)\*\*", text, re.M))
+    """Canonical topics for the next unread course day, including before fetch."""
+    spec = interview_course.day_spec(current_day(load_progress(root)))
+    return '; '.join(item['title'] + ': ' + item['topic'] for item in spec['topics'])

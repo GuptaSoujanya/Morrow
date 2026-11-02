@@ -80,7 +80,7 @@ def _words(text: str) -> set:
     return {word.rstrip("s") for word in _WORD.findall(text.lower()) if word not in _COMMON}
 
 
-_PART = re.compile(r"^\*\*(System Design|ML / GenAI|Recall|Go deeper)\b:?\s*(.*?)\*\*", re.M)
+_PART = re.compile(r"^\*\*(System Design|ML / GenAI|Full-stack|DSA|Recall|Go deeper)\b:?\s*(.*?)\*\*", re.M)
 
 
 def topics_of(day_text: str) -> List[Tuple[int, str]]:
@@ -91,7 +91,7 @@ def topics_of(day_text: str) -> List[Tuple[int, str]]:
     titles = " ".join(mark.group(2) for mark in marks)
     found = [(0, " ".join([first, titles]))]
     for mark in marks:
-        own = mark.group(2) if mark.group(1) in ("System Design", "ML / GenAI") else titles
+        own = mark.group(2) if mark.group(1) in ("System Design", "ML / GenAI", "Full-stack", "DSA") else titles
         found.append((mark.start(), " ".join([first, own])))
     return found
 

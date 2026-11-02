@@ -9,7 +9,7 @@ fills in while the rest of the pipeline runs.
 
     01-goal.md            today's goal: what to learn, a concept map and a 2-hour plan
     02-system-design.md   a deep dive into today's design topic with architecture diagrams
-    03-papers.md          two recent papers, prioritizing AI and resume relevance
+    03-papers.md          two recent papers, prioritizing AI and course relevance
     04-tech-news.md       the week's AI / GenAI / engineering news
     05-companies.md       companies to look at and why
     06-repositories.md    active GitHub repositories to explore and save
@@ -40,7 +40,13 @@ DAILY = learning.RESEARCH / "daily"
 _RULES = ("Output markdown only, nothing before or after it. Search the web; every source needs a real "
           "URL that you actually found, never an invented one. Graphs are mermaid code blocks "
           "(```mermaid) that render on GitHub: flowchart, sequenceDiagram, mindmap, timeline, pie, "
-          "gantt or xychart-beta. No emojis.")
+          "gantt or xychart-beta. Explain in simple English, define unfamiliar terms, and connect each "
+          "item to a concrete example and the learner's current course topics. These are additional "
+          "readings, not required tasks for completing the daily course. The learner chose VERY SIMPLE ENGLISH. "
+          "For each item use short sentences under the labels: What it is, A simple example, "
+          "Why it matters, and Words explained. Define abbreviations before using them. "
+          "Explain the idea before any formula, code or diagram. Do not copy the abstract of a paper "
+          "as its explanation. Show the original link as optional further reading. No emojis.")
 
 
 class Agent(NamedTuple):
@@ -57,12 +63,13 @@ AGENTS = (
     Agent("goal", "01-goal.md", "# Today's goal", 2, 3,
           "Write today's learning goal for this study day. Sections: ## Goal (one paragraph: what the "
           "learner can do by tonight), ## Concept map (a mermaid mindmap of today's ideas and how they "
-          "connect), ## The 2 hours (a mermaid gantt chart of the 55 / 55 / 10 minute blocks, then a "
+          "connect), ## The 2 hours (a mermaid gantt chart of AI/ML 25, system design 25, full-stack 25, "
+          "DSA 35 and recall 10 minute blocks, then a "
           "numbered step list), ## Key ideas (the 6 to 10 facts to remember, each one or two lines), "
           "## Check yourself (5 interview questions with short model answers), ## Where this leads "
           "(what tomorrow builds on, and how it shows up in real systems), ## Sources."),
     Agent("system-design", "02-system-design.md", "# System design:", 2, 4,
-          "Write a deep dive into today's system design topic, at senior-interview level. Sections: "
+          "Explain today's system design topic from first principles, building toward interview trade-offs. Sections: "
           "## The problem, ## Architecture (a mermaid flowchart of the components), ## Request flow (a "
           "mermaid sequenceDiagram), ## Numbers (a back-of-envelope estimate as a markdown table: QPS, "
           "storage, bandwidth), ## Trade-offs (a table: option, gains, costs, when to pick it), ## How "
@@ -72,8 +79,8 @@ AGENTS = (
           "Pick exactly 2 distinct research papers, every one published in the years given below, that matter to the "
           "tech industry right now: work that companies are shipping, open-source projects are adopting "
           "or labs are building on (LLMs, agents, RAG, inference and serving, evaluation, ML systems, "
-          "distributed systems for AI). Prioritize AI for both papers: one should directly fit the resume "
-          "and today's learning topic; the other should introduce a new AI idea. Search the newest releases "
+          "distributed systems for AI). Prioritize AI for both papers: one should connect to "
+          "today's shared-course topic; the other should introduce a new AI idea. Search the newest releases "
           "first, preferably the last 7 days, widening to 30 days only when necessary and stating the actual "
           "publication date as **Published**: YYYY-MM-DD in each paper section. Each paper must have been "
           "first published within the last 30 days, never in the future. Verify that date on its primary "
@@ -101,9 +108,9 @@ AGENTS = (
           "## Talking points, how the resume's work maps to each group."),
     Agent("repositories", "06-repositories.md", "# GitHub discoveries", 0, 3,
           "Search GitHub and the web for 3 to 5 active repositories gaining attention this week, prioritizing "
-          "AI agents, useful new developer tools, and the resume's skills ({focus}). Verify each repository "
+          "AI/ML, full-stack and system-design examples connected to the course ({focus}). Verify each repository "
           "exists at its canonical https://github.com/owner/repository URL. Use exactly one ## owner/repository "
-          "heading for each. Put the canonical link first, then **What it does**, **Why it fits your resume**, "
+          "heading for each. Put the canonical link first, then **What it does**, **Connection to your course**, "
           "**Try it** (a small practical experiment), **Activity** (dated evidence with a source), and **License** "
           "(only when verified). Distinguish evidence of recent activity from evidence of trending; do not "
           "invent star counts, growth or popularity. No other level-two headings."),
@@ -119,24 +126,22 @@ def output_of(agent: Agent, day: date, root: Path = DAILY) -> Path:
 
 
 def context(day: date, learning_root: Path = learning.LEARNING) -> str:
-    """What every agent is told about today: the study day and the resume skills."""
+    """Shared course topics and completed reading; no resume prerequisite."""
     progress = learning.load_progress(learning_root)
     try:
-        today = (learning_root / "today.md").read_text(encoding="utf-8")
+        path = learning.content_root(learning_root) / 'today.md'
+        metadata = learning._read_metadata(path)
+        today = path.read_text(encoding="utf-8") if metadata.get('plan_day') == learning.current_day(progress) else ''
     except OSError:
         today = ""
-    resume = learning.resume_text()
-    skills = re.findall(r"\\textbf\{([^}]*)\}", resume)[:40]
-    who = persona_module.load_persona()
     return "\n\n".join(part for part in [
-        "Today is %s. The learner is %s%s on day %d of a 90-day plan to reach %s, studying 2 hours a day."
-        % (day.isoformat(), "the engineer described by the current resume" if resume.strip() else who.learner_line(), " in " + who.location if who.location else "",
-           learning.current_day(progress), who.goal or learning.DEFAULT_GOAL),
-        "Today's topics: %s." % (learning.today_topics(learning_root) or "system design and LLMs"),
+        "Today is %s. This is day %d of the shared 90-day interview course in AI/ML, system design, "
+        "full-stack development and DSA. Everyone follows the same syllabus at their own pace."
+        % (day.isoformat(), learning.current_day(progress)),
+        "Today's topics: %s." % learning.today_topics(learning_root),
         "Today's study notes (for reference):\n" + today[:6000] if today else "",
-        "Resume highlights: " + ", ".join(skills) if skills else "",
-        "Resume evidence (contact details removed; authoritative for experience):\n" + resume[:6000],
-        "Saved goals/location are preferences, not evidence of experience. Study notes may predate the selected resume; use the resume for personal relevance.",
+        learning.learning_context(learning.current_day(progress), learning_root),
+        "News and research can introduce a new idea, but explain its prerequisites. They do not advance course completion.",
         "Recent paper reading history (avoid repeating these):\n" + recent_papers(day, learning_root.parent / 'daily'),
     ] if part)
 
@@ -163,7 +168,9 @@ def first_year(agent: Agent, day: date) -> int:
 def brief_for(agent: Agent) -> str:
     """The agent's brief with {focus} and {location} filled from the persona."""
     who = persona_module.load_persona()
-    return (agent.brief.replace("{focus}", "the skills and projects evidenced by the current resume")
+    focus = ('the skills and projects evidenced by the current resume' if agent.key == 'companies'
+             else 'AI/ML, system design, full-stack engineering and interview practice')
+    return (agent.brief.replace("{focus}", focus)
             .replace("{location}", who.location or "their country"))
 
 
@@ -173,7 +180,12 @@ def prompt_for(agent: Agent, ctx: str, day: Optional[date] = None) -> str:
     if agent.recent and day:
         years = ("Only papers published from %d to %d; nothing older, not even classics. Put the year in "
                  "each paper's heading." % (first_year(agent, day), day.year))
-    return "\n\n".join(part for part in [ctx, brief_for(agent), years, "Start with '%s'." % start, _RULES] if part)
+    personal = ''
+    if agent.key == 'companies':
+        resume = learning.resume_text()
+        personal = ('Resume evidence for company relevance only (never change the shared course):\n' + resume[:6000]
+                    if resume else 'No resume is available. Suggest general AI/ML and software roles; do not invent experience.')
+    return "\n\n".join(part for part in [ctx, personal, brief_for(agent), years, "Start with '%s'." % start, _RULES] if part)
 
 
 _YEAR = re.compile(r"\b(19|20)\d\d\b")
@@ -395,11 +407,14 @@ def write_index(day: date, stages: Dict[str, Dict], history: List[tuple], applie
     """user/research/daily/<date>/README.md: every agent's file and status, and the day in charts."""
     folder = folder_for(day, root)
     progress = learning.load_progress(learning_root)
+    notes = learning.content_root(learning_root) / 'daily' / (day.isoformat() + '.md')
+    study = ('Study notes: [course lesson](%s). Mark the day finished with `python3 -m pipeline learn --done`.'
+             % links._relative(notes.resolve(), folder.resolve()) if notes.exists()
+             else 'Open Learning for the shared course. This date has no generated lesson saved yet.')
     lines = ["# Briefing %s" % day.isoformat(), "",
              "Day %d of %d. Topics: %s." % (learning.current_day(progress), learning.LAST_DAY,
                                             learning.today_topics(learning_root) or "-"), "",
-             "Study notes: [today.md](../../learning/today.md). Mark the day finished with "
-             "`python3 -m pipeline learn --done`.", "",
+             study, "",
              "## Agents", "", "| Agent | Status | File |", "| --- | --- | --- |"]
     for agent in AGENTS:
         entry = stages.get("brief:%s" % agent.key) or {"status": "not run"}

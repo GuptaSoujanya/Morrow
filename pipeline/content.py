@@ -14,7 +14,7 @@ from . import briefing, course, learning
 from .links import MD_LINK, link_problems, prose
 
 #: Each regular study day has these four parts, in this order.
-DAY_PARTS = ("**System Design:", "**ML / GenAI:", "**Recall**", "**Go deeper**")
+DAY_PARTS = ("**System Design:", "**ML / GenAI:", "**Full-stack:", "**DSA:", "**Recall**", "**Go deeper**")
 #: Each resume study file has these sections.
 RESUME_SECTIONS = ("## What it is", "## How you used it", "## Core concepts", "## Interview questions",
                    "## Hands-on", "## Read next")
@@ -30,19 +30,24 @@ def _hygiene(path: Path, text: str) -> List[str]:
 
 def week_problems(week: int, root: Path = learning.LEARNING) -> List[str]:
     path = learning.week_path(week, root)
+    legacy = False
+    if not path.exists() and (root / 'weeks' / ('week-%02d.md' % week)).exists():
+        path = root / 'weeks' / ('week-%02d.md' % week)
+        legacy = True
     try:
         text = path.read_text(encoding="utf-8")
     except OSError:
         return ["%s: missing (the pipeline writes it when week %d comes up)" % (path, week)]
     problems = _hygiene(path, text)
     numbers = [int(n) for n in re.findall(r"^## Day (\d+)\b", text, re.M)]
-    if sorted(numbers) != learning.days_of(week):
-        problems.append("%s: days %s, wanted %s" % (path, numbers, learning.days_of(week)))
+    # Daily generation fills a week gradually. Missing future days are expected;
+    # duplicates and days belonging to another week are still errors.
+    if not numbers or len(numbers) != len(set(numbers)) or not set(numbers) <= set(learning.days_of(week)):
+        problems.append("%s: days %s must be distinct and within %s" % (path, numbers, learning.days_of(week)))
     for heading in re.findall(r"^## (?!Day \d).*", prose(text), re.M):
         problems.append("%s: stray heading '%s'" % (path, heading))
     for number, section in learning.split_days(text).items():
-        revision = re.search(r"revision|mock interview|wrap-up", section.splitlines()[0], re.I)
-        parts = DAY_PARTS[2:] if revision else DAY_PARTS
+        parts = ("**System Design:", "**ML / GenAI:", "**Recall**", "**Go deeper**") if legacy else DAY_PARTS
         missing = [part.strip("*:") for part in parts if part not in section]
         if missing:
             problems.append("%s: day %d has no %s" % (path, number, ", ".join(missing)))
@@ -80,13 +85,15 @@ def resume_problems(root: Path = learning.RESUME_LEARNING) -> List[str]:
 
 
 def day_problems(day: date, learning_root: Path = learning.LEARNING,
-                 daily_root: Path = briefing.DAILY) -> List[str]:
+                 daily_root: Path = briefing.DAILY, *, required_agents=None,
+                 require_lesson=True) -> List[str]:
     """What the pipeline should have written for `day`: the study notes and the briefing."""
     problems = []
-    notes = learning_root / "daily" / ("%s.md" % day.isoformat())
-    if not notes.exists():
+    root = learning.content_root(learning_root)
+    notes = root / "daily" / ("%s.md" % day.isoformat())
+    if require_lesson and not notes.exists():
         problems.append("%s: missing (stage learn)" % notes)
-    else:
+    elif require_lesson:
         text = notes.read_text(encoding="utf-8")
         if not text.startswith("# %s: Day " % day.isoformat()):
             problems.append("%s: not headed with the date" % notes)
@@ -95,11 +102,13 @@ def day_problems(day: date, learning_root: Path = learning.LEARNING,
         if "## From the course" not in text:
             problems.append("%s: has no 'From the course' part" % notes)
         problems += link_problems(notes)
-    today = learning_root / "today.md"
+    today = root / "today.md"
     if today.exists():
         problems += link_problems(today)
     folder = briefing.folder_for(day, daily_root)
     for agent in briefing.AGENTS:
+        if required_agents is not None and agent.key not in required_agents:
+            continue
         path = folder / agent.filename
         if not path.exists():
             problems.append("%s: missing (stage brief:%s)" % (path, agent.key))
@@ -113,9 +122,9 @@ def day_problems(day: date, learning_root: Path = learning.LEARNING,
             problems.append("%s: %s" % (path, exc))
         problems += _hygiene(path, text)
     index = folder / "README.md"
-    if not index.exists():
+    if not index.exists() and (required_agents is None or required_agents):
         problems.append("%s: missing" % index)
-    else:
+    elif index.exists():
         problems += link_problems(index)
     return problems
 
@@ -127,7 +136,8 @@ def all_problems(day: Optional[date] = None, research: Path = learning.RESEARCH,
     learning_root = research / "learning"
     problems = []
     for week in range(1, learning.week_of(learning.LAST_DAY) + 1):
-        problems += week_problems(week, learning_root)
+        if learning.week_path(week, learning_root).exists():
+            problems += week_problems(week, learning_root)
     problems += course.problems(course_root, learning_root)
     problems += resume_problems(research / "resume-learning")
     problems += day_problems(day, learning_root, research / "daily")

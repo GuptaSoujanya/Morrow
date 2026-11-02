@@ -158,7 +158,7 @@ def build_stages(args: argparse.Namespace, boards: List[str]) -> List[Stage]:
     ask = next(iter(team.values()))
     day = args.today or date.today()
     stages = [Stage("learn", lambda: _ai_stage(lambda: learning.write_today(ask, today=day)), False,
-                    (learning.LEARNING / "daily" / ("%s.md" % day.isoformat()),))]
+                    (learning.content_root(learning.LEARNING) / "daily" / ("%s.md" % day.isoformat()),))]
     naukri_flags = dry + common + ["--review"]
     stages.append(_bot("profile:naukri", "naukri_bot.update_profile", naukri_flags,
                        lambda: _naukri_profile(naukri_flags)))
@@ -184,7 +184,8 @@ def build_stages(args: argparse.Namespace, boards: List[str]) -> List[Stage]:
 def selected(stages: List[Stage], only: List[str], skip: List[str]) -> List[Stage]:
     """Stages named (or grouped, as 'apply' or 'profile') by --only, minus --skip."""
     def hit(name: str, patterns: List[str]) -> bool:
-        return any(name == p or name.split(":")[0] == p for p in patterns)
+        study = ('learn', 'brief:papers', 'brief:tech-news', 'brief:repositories')
+        return any(name == p or name.split(":")[0] == p or p == 'study' and name in study for p in patterns)
 
     return [s for s in stages if (not only or hit(s.name, only)) and not hit(s.name, skip)]
 
@@ -251,7 +252,7 @@ def run_day(args: argparse.Namespace, stages: List[Stage], mem: memory_module.Me
     if not args.dry_run:
         names = [s.name for s in stages]
         saved_plan = mem.planned()
-        continuing = getattr(args, "command", None) == "continue" and bool(saved_plan)
+        continuing = getattr(args, "command", None) in ("continue", "study") and bool(saved_plan)
         # A dashboard resume selects the unfinished stages of an existing
         # workflow. Do not silently add today's entire stage catalogue to that
         # historical plan when build_stages() contains additional stages.
@@ -297,8 +298,8 @@ def run_day(args: argparse.Namespace, stages: List[Stage], mem: memory_module.Me
                 sync_applied(mem, args.env)
             if stage.parallel:
                 write_index(mem)
-
         return code
+
     # The browser lanes start at once. `learn` runs next to them; only the agents wait for
     # it (they are told today's topics), then run in their pool next to the browser stages.
     first = [s for s in stages if s.name == "learn"]
@@ -328,8 +329,8 @@ def run_day(args: argparse.Namespace, stages: List[Stage], mem: memory_module.Me
         show(args, [lanes_module.lane_of(stages[0].name) for stages in lanes if stages])
 
     def lane(stages: List[Stage]) -> None:
-        for stage in stages:
         blocked_sites = set()
+        for stage in stages:
             site = lanes_module.lane_of(stage.name)
             if site in blocked_sites and not mem.is_done(stage.name):
                 detail = "Browser profile is locked; resolve the earlier %s browser error, then continue." % site
@@ -383,19 +384,19 @@ def check_day(mem: "memory_module.Memory", ran: List[str]) -> None:
     """Report what is missing or broken in the day's study notes and briefing."""
     if not any(name == "learn" or name.startswith("brief:") for name in ran):
         return
-    problems = content.day_problems(mem.day)
+    required = {name[6:] for name in ran if name.startswith('brief:')}
+    problems = content.day_problems(mem.day, required_agents=required, require_lesson='learn' in ran)
     for problem in problems:
         logger.warning("[pipeline] content: %s", problem)
     if not problems:
-        logger.info("[pipeline] content for %s checked: study notes and all %d briefing files are there.",
-                    mem.key, len(briefing.AGENTS))
+        logger.info("[pipeline] content for %s checked: selected learning stages are saved.", mem.key)
 
 
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(prog="python3 -m pipeline",
                                      description="Profiles, applications and the day's study material, resumable.")
     parser.add_argument("command", nargs="?", default="run",
-                        choices=("run", "continue", "status", "learn", "check", "onboard"))
+                        choices=("run", "continue", "status", "learn", "study", "check", "onboard"))
     parser.add_argument("--fresh", action="store_true", help="start today over instead of continuing")
     parser.add_argument("--only", action="append", default=[], metavar="STAGE",
                         help="run only this stage or group (profile, apply, research, learn, apply:naukri...)")
@@ -442,6 +443,10 @@ def main(argv: Optional[List[str]] = None, today: Optional[date] = None) -> int:
             print("Day %d marked done." % learning.mark_done(today=today))
             return EXIT_OK
         args.only = ["learn"]
+    if args.command == 'study':
+        # This command is safe to schedule for learning alone: no applications,
+        # profile updates, outreach, or resume-dependent generation.
+        args.only = ['study']
     onboard_args = ["--env", args.env] if args.env else []
     if args.command == "onboard":
         from common import onboard

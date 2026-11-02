@@ -1,4 +1,4 @@
-"""Selected onboarding resumes drive study prompts, with contact lines removed."""
+"""Resume topics stay personal; the shared interview course stays independent."""
 from pathlib import Path
 from datetime import date
 import json
@@ -70,68 +70,65 @@ def test_selected_resume_overrides_stale_onboarding_areas_and_prompt_facts(tmp_p
     assert all(skill in titles for skill in ('Python', 'FastAPI', 'PostgreSQL', 'Docker', 'PyTorch'))
     assert 'COBOL' not in titles
     assert 'OldEmployer' not in learning.week_prompt(1, tmp_path)
-    assert 'FastAPI' in briefing.context(date(2026, 10, 22), tmp_path)
+    context = briefing.context(date(2026, 10, 22), tmp_path)
+    assert 'FastAPI' not in context
+    assert 'FastAPI' in briefing.prompt_for(briefing.by_key('companies'), context)
     assert 'COBOL' not in briefing.brief_for(briefing.by_key('papers'))
 
 
+def _day(day, label):
+    small = '\n\n'.join('### ' + title + '\nA worked example.' for title in
+                         ('Words you need', 'The idea', 'A small example', 'Your turn', 'Check your answer')) + '\n\n---'
+    return '## Day %d: %s\n\n' % (day, label) + '\n\n'.join(
+        '**%s: %s**\n%s' % (part, label, small)
+        for part in ('System Design', 'ML / GenAI', 'Full-stack', 'DSA')) + (
+            '\n\n**Recall**\nExplain the example.\n\n**Go deeper**\n- [Docs](https://docs.python.org/3/)\n')
+
+
 def _week(label):
-    return '# Week 1: %s\n\n' % label + '\n'.join(
-        '## Day %d: %s\n\n**System Design: %s**\n' % (day, label, label)
-        for day in range(1, 8))
+    return '# Week 1: %s\n\n' % label + '\n'.join(_day(day, label) for day in range(1, 8))
 
 
-def test_resume_change_refreshes_unfinished_days_and_preserves_completion(tmp_path, monkeypatch):
+def test_resume_change_does_not_change_shared_course_or_completed_reading(tmp_path, monkeypatch):
     selected = tmp_path / 'resume.txt'
     selected.write_text('Python FastAPI\n')
     monkeypatch.setenv('RESUME_PATH', str(selected))
     root = tmp_path / 'learning'
-    old_path = learning.ensure_week(1, lambda prompt: _week('Python'), root)
-    old_text = old_path.read_text()
-    old_hash = learning.resume_fingerprint()
+    path = learning.ensure_week(1, lambda prompt: _week('Shared course'), root)
+    original = learning.split_days(path.read_text())[1]
     learning.save_progress({'done': [1, 2], 'marked': {'2026-10-20': 1}}, root)
-    assert learning.ensure_week(1, lambda prompt: pytest.fail('Current cache should be reused'), root) == old_path
+    learning.ensure_day(3, lambda prompt: _day(3, 'After prior reading'), root)
+    before = path.read_text(), path.with_suffix('.meta.json').read_text()
     selected.write_text('Rust distributed services\n')
-    prompts = []
-    learning.ensure_week(1, lambda prompt: prompts.append(prompt) or _week('Rust'), root)
-    sections = learning.split_days(old_path.read_text())
-    assert 'Python' in sections[1] and 'Python' in sections[2]
-    assert all('Rust' in sections[day] for day in range(3, 8))
-    assert 'Rust distributed' in prompts[0]
+    assert learning.ensure_day(3, lambda prompt: pytest.fail('Resume must not change the course'), root) == path
+    assert (path.read_text(), path.with_suffix('.meta.json').read_text()) == before
+    assert learning.split_days(path.read_text())[1] == original
     assert learning.load_progress(root)['done'] == [1, 2]
     assert learning.load_progress(root)['marked'] == {'2026-10-20': 1}
-    metadata = json.loads(old_path.with_suffix('.meta.json').read_text())
-    assert metadata['resume_sha256'] == learning.resume_fingerprint()
-    assert metadata['day_resume_sha256']['1'] == old_hash
-    assert metadata['day_resume_sha256']['3'] == learning.resume_fingerprint()
-    archives = list((root / 'weeks/archive/week-01').glob('*.md'))
-    assert len(archives) == 1 and archives[0].read_text() == old_text
-
-
-def test_legacy_week_is_never_silently_claimed_as_current_resume(tmp_path, monkeypatch):
-    selected = tmp_path / 'resume.txt'
-    selected.write_text('React TypeScript\n')
-    monkeypatch.setenv('RESUME_PATH', str(selected))
-    root = tmp_path / 'learning'
-    path = learning.week_path(1, root)
-    path.parent.mkdir(parents=True)
-    path.write_text(_week('Legacy'))
-    learning.save_progress({'done': [1]}, root)
-    learning.ensure_week(1, lambda prompt: _week('React'), root)
     metadata = json.loads(path.with_suffix('.meta.json').read_text())
-    assert metadata['day_resume_sha256']['1'] == ''
-    assert metadata['day_resume_sha256']['2'] == learning.resume_fingerprint()
+    assert metadata['course_id'] == 'interview-90' and 'resume_sha256' not in metadata
 
 
-def test_failed_refresh_leaves_previous_lessons_and_metadata_intact(tmp_path, monkeypatch):
-    selected = tmp_path / 'resume.txt'
-    selected.write_text('Python\n')
-    monkeypatch.setenv('RESUME_PATH', str(selected))
+def test_legacy_week_and_completion_are_not_relabelled_as_shared_course(tmp_path):
     root = tmp_path / 'learning'
-    path = learning.ensure_week(1, lambda prompt: _week('Python'), root)
+    old = root / 'weeks/week-01.md'
+    old.parent.mkdir(parents=True)
+    old.write_text(_week('Legacy'))
+    (root / 'progress.json').write_text(json.dumps({'done': [1]}))
+    path = learning.ensure_week(1, lambda prompt: _week('Shared'), root)
+    assert path != old and old.read_text() == _week('Legacy')
+    assert json.loads((root / 'progress.json').read_text()) == {'done': [1]}
+    assert learning.load_progress(root)['done'] == []
+    assert json.loads(path.with_suffix('.meta.json').read_text())['course_id'] == 'interview-90'
+
+
+def test_failed_refresh_leaves_previous_lessons_and_metadata_intact(tmp_path):
+    root = tmp_path / 'learning'
+    path = learning.ensure_week(1, lambda prompt: _week('Shared'), root)
     old_text, old_metadata = path.read_text(), path.with_suffix('.meta.json').read_text()
-    selected.write_text('TypeScript\n')
+    learning.mark_done(root, date(2026, 10, 22))
     with pytest.raises(ai_cli.AIError):
-        learning.ensure_week(1, lambda prompt: '# Week 1\n## Day 1: incomplete\n', root)
+        learning.ensure_day(2, lambda prompt: '## Day 2: incomplete\n', root)
     assert path.read_text() == old_text
     assert path.with_suffix('.meta.json').read_text() == old_metadata
 
@@ -155,13 +152,10 @@ def test_resume_topics_create_new_revisions_without_overwriting_bookmarked_paths
     assert not learning.missing_resume_areas(root)
 
 
-def test_missing_selected_resume_fails_before_using_an_old_week(tmp_path, monkeypatch):
+def test_missing_selected_resume_does_not_block_shared_course(tmp_path, monkeypatch):
     monkeypatch.setenv('RESUME_PATH', str(tmp_path / 'missing.txt'))
-    path = learning.week_path(1, tmp_path)
-    path.parent.mkdir()
-    path.write_text(_week('Legacy'))
-    with pytest.raises(ai_cli.AIError, match='selected resume'):
-        learning.ensure_week(1, lambda prompt: pytest.fail('Must not generate without selected evidence'), tmp_path)
+    path = learning.ensure_day(1, lambda prompt: _day(1, 'Shared'), tmp_path)
+    assert path.exists() and 'Shared' in path.read_text()
 
 
 def test_content_validation_selects_current_resume_revision(tmp_path, monkeypatch):
@@ -177,32 +171,29 @@ def test_content_validation_selects_current_resume_revision(tmp_path, monkeypatc
     assert (root / '01-languages.md').read_text() == '# Old and incomplete\n'
 
 
-def test_daily_notes_record_actual_day_source_and_keep_prior_date_revision(tmp_path, monkeypatch):
-    selected = tmp_path / 'resume.txt'
-    selected.write_text('Python\n')
-    monkeypatch.setenv('RESUME_PATH', str(selected))
+def test_daily_notes_record_course_source_and_keep_prior_date_revision(tmp_path):
     root = tmp_path / 'learning'
-    day, path = learning.write_today(lambda prompt: _week('Python'), root, date(2026, 10, 22))
+    day, path = learning.write_today(lambda prompt: _day(1, 'First lesson'), root, date(2026, 10, 22))
     old_text = path.read_text()
-    old_hash = learning.resume_fingerprint()
-    assert json.loads(path.with_suffix('.meta.json').read_text())['resume_sha256'] == old_hash
-    selected.write_text('Rust\n')
-    learning.write_today(lambda prompt: _week('Rust'), root, date(2026, 10, 22))
-    archived = list((root / 'daily/archive/2026-10-22').glob('*.md'))
+    old_metadata = json.loads(path.with_suffix('.meta.json').read_text())
+    assert old_metadata['course_id'] == 'interview-90' and old_metadata['plan_day'] == 1
+    learning.mark_done(root, date(2026, 10, 22))
+    learning.write_today(lambda prompt: _day(2, 'Next lesson'), root, date(2026, 10, 22))
+    archived = list((learning.content_root(root) / 'daily/archive/2026-10-22').glob('*.md'))
     assert len(archived) == 1 and archived[0].read_text() == old_text
-    assert json.loads(archived[0].with_suffix('.meta.json').read_text())['resume_sha256'] == old_hash
+    assert json.loads(archived[0].with_suffix('.meta.json').read_text()) == old_metadata
 
 
-def test_resume_changed_during_generation_is_not_mislabeled_or_saved(tmp_path, monkeypatch):
+def test_resume_change_during_generation_does_not_change_course_source(tmp_path, monkeypatch):
     selected = tmp_path / 'resume.txt'
-    selected.write_text('Python\n')
+    selected.write_text('PrivateResumeStack\n')
     monkeypatch.setenv('RESUME_PATH', str(selected))
     def generate(prompt):
-        selected.write_text('Rust\n')
-        return _week('Python')
-    with pytest.raises(ai_cli.AIError, match='changed during generation'):
-        learning.ensure_week(1, generate, tmp_path / 'learning')
-    assert not learning.week_path(1, tmp_path / 'learning').exists()
+        selected.write_text('ChangedPrivateStack\n')
+        assert 'PrivateResumeStack' not in prompt and 'ChangedPrivateStack' not in prompt
+        return _day(1, 'Shared')
+    path = learning.ensure_day(1, generate, tmp_path / 'learning')
+    assert json.loads(path.with_suffix('.meta.json').read_text())['course_id'] == 'interview-90'
 
 
 def test_selected_user_relative_resume_follows_private_data_directory(tmp_path, monkeypatch):
@@ -223,9 +214,9 @@ def test_archived_lesson_keeps_relative_course_links_working(tmp_path):
     (course / 'lesson.md').write_text('# A lesson\n')
     path = learning.week_path(1, root)
     path.parent.mkdir(parents=True)
-    text = '# Week 1\n\n[Lesson](../../course/lesson.md)\n'
+    text = '# Week 1\n\n[Lesson](../../../course/lesson.md)\n'
     learning._archive(path, text)
     archived = next((path.parent / 'archive/week-01').glob('*.md'))
-    assert '[Lesson](../../../../course/lesson.md)' in archived.read_text()
+    assert '[Lesson](../../../../../course/lesson.md)' in archived.read_text()
     from pipeline import links
     assert links.link_problems(archived) == []

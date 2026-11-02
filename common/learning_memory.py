@@ -61,6 +61,9 @@ def _validate(data):
                     dt.datetime.fromisoformat(entry['completed_at'])
             except (ValueError, TypeError) as exc:
                 raise ValueError('Invalid DSA progress. Your progress has not been reset.') from exc
+    if 'interview_course' in data:
+        from .interview_course import state_for
+        state_for(data)
     return data
 
 
