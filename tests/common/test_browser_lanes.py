@@ -31,7 +31,7 @@ def destination(source, lane="hirist"):
 def test_paths_are_stable_independent_and_pure(source):
     expected = [destination(source, site) for site in lanes.BOARD_LANES]
     assert [lanes.profile_dir(site, str(source)) for site in lanes.BOARD_LANES] == expected
-    assert len(set(expected)) == 4
+    assert len(set(expected)) == len(lanes.BOARD_LANES) == 5
     assert not any(folder.exists() for folder in expected)
     assert lanes.profile_dir("naukri", str(source)) is None
     assert lanes.profile_dir("linkedin", str(source)) is None
@@ -268,4 +268,4 @@ def test_prepare_all_is_eager_deduplicated_and_preserves_site_order(source):
 def test_default_prepare_all_creates_all_four_independent_board_sessions(source):
     all_envs = lanes.prepare_all(str(source))
     assert tuple(all_envs) == lanes.BOARD_LANES
-    assert len({value["BROWSER_PROFILE_DIR"] for value in all_envs.values()}) == 4
+    assert len({value["BROWSER_PROFILE_DIR"] for value in all_envs.values()}) == len(lanes.BOARD_LANES)
