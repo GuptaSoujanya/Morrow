@@ -47,7 +47,7 @@ def catalog(db):
         tables = {r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         groups = {}
         if 'jobs_seen' in tables:
-            for job in con.execute('SELECT job_id,title,company,url,last_seen FROM jobs_seen ORDER BY last_seen DESC'):
+            for job in con.execute('SELECT job_id,title,company,url,last_seen,score FROM jobs_seen ORDER BY last_seen DESC'):
                 key = company_key(job['company'])
                 if not key:
                     continue
@@ -128,6 +128,15 @@ def summary(db, query=None):
     query = query or {}
     rows = catalog(db)
     counts = {status: sum(row['status'] == status for row in rows) for status in STATUSES}
+    def has_contact(row, field):
+        return any(str(entry.get('value') or '').strip() for entry in row['fields'].get(field, []))
+
+    contact_counts = dict(all=len(rows), email=sum(has_contact(r, 'email') for r in rows),
+                          phone=sum(has_contact(r, 'phone') for r in rows),
+                          missing=sum(not has_contact(r, 'email') and not has_contact(r, 'phone') for r in rows))
+    contact = query.get('contact', 'all')
+    if contact not in contact_counts:
+        raise ValueError('Choose a supported contact filter.')
     term = str(query.get('q', '')).strip().casefold()
     status = query.get('status', 'all')
     if status not in ('all', *STATUSES):
@@ -135,8 +144,13 @@ def summary(db, query=None):
     key = query.get('id', '')
     filtered = [r for r in rows if (not key or r['company_id'] == key)
                 and (status == 'all' or r['status'] == status)
-                and (not term or term in (r['name'] + ' ' + json.dumps(r['fields'], ensure_ascii=False)).casefold())]
-    filtered.sort(key=lambda r: (STATUSES.index(r['status']), r['name'].casefold()))
+                and (contact == 'all' or (contact == 'missing' and not has_contact(r, 'email') and not has_contact(r, 'phone'))
+                     or (contact in ('email', 'phone') and has_contact(r, contact)))
+                and (not term or term in (r['name'] + ' ' + json.dumps(r['fields'], ensure_ascii=False)
+                                         + ' ' + ' '.join(j.get('title') or '' for j in r['jobs'])).casefold())]
+    # Put useful contacts first across the entire catalog, before pagination.
+    filtered.sort(key=lambda r: (not has_contact(r, 'email'), not has_contact(r, 'phone'),
+                                STATUSES.index(r['status']), r['name'].casefold()))
     try:
         page, size = int(query.get('page', 1)), int(query.get('size', 20))
         if not 1 <= page <= 1000000 or not 1 <= size <= 100:
@@ -145,5 +159,5 @@ def summary(db, query=None):
         raise ValueError('Use a valid company page and a page size from 1 to 100.') from None
     pages = max(1, (len(filtered) + size - 1) // size)
     page = min(page, pages)
-    return dict(rows=filtered[(page-1)*size:page*size], counts=counts, total=len(filtered),
+    return dict(rows=filtered[(page-1)*size:page*size], counts=counts, contact_counts=contact_counts, total=len(filtered),
                 page=page, pages=pages, size=size, pending=sum(eligible(r) for r in rows))

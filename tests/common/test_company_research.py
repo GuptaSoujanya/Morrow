@@ -141,3 +141,22 @@ def test_summary_filters_paginate_and_keep_missing_fields(db):
     assert response['total'] == 1 and response['counts']['pending'] == 1
     assert response['rows'][0]['information_found']
     with pytest.raises(ValueError):store.summary(db, {'size':'500'})
+
+
+def test_contact_filters_and_order_apply_before_pagination(db):
+    research.run(db, limit=1, ask=lambda _:reply(), fetch=page)
+    beta = next(row for row in store.catalog(db) if row['name'] == 'Beta')
+    assert store.claim(db, beta)
+    store.finish(db, beta['company_id'], {'fields':{'phone':[{'value':'+1 555 0100'}]}})
+    with Ledger(str(db)) as ledger:
+        ledger.record_seen(JobPosting('d', 'https://missing.example/job', company='Aardvark'))
+    response = store.summary(db, {'size':1})
+    assert response['contact_counts'] == dict(all=3, email=1, phone=1, missing=1)
+    assert response['rows'][0]['fields']['email']  # Contacts beat alphabetically earlier pending entries.
+    assert store.summary(db, {'size':1, 'page':2})['rows'][0]['name'] == 'Beta'
+    assert store.summary(db, {'contact':'phone'})['total'] == 1
+    assert store.summary(db, {'contact':'email', 'q':'careers@acme.com'})['total'] == 1
+    assert store.summary(db, {'contact':'email', 'status':'pending'})['total'] == 0
+    assert store.summary(db, {'contact':'missing'})['rows'][0]['name'] == 'Aardvark'
+    with pytest.raises(ValueError, match='contact filter'):
+        store.summary(db, {'contact':'made-up'})

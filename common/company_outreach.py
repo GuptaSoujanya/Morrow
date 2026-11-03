@@ -1,0 +1,442 @@
+"""Research company contacts and save one resume pitch per recipient. Never send mail."""
+import argparse
+import hashlib
+import imaplib
+import json
+import logging
+import os
+import re
+import sqlite3
+import ssl
+import time
+from email import policy
+from email.parser import BytesParser
+from pathlib import Path
+from urllib.parse import quote
+
+from . import company_store as store, company_research, resume
+from sites_bot import cold_email as mail
+
+log = logging.getLogger(__name__)
+EMAIL = re.compile(r'[A-Za-z0-9._%+\-]+@[A-Za-z0-9\-]+(?:\.[A-Za-z0-9\-]+)+')
+TABLE = 'company_email_drafts'
+
+
+def sender_for(settings):
+    return (settings.cold_email_from or settings.google_email or settings.email).strip().lower()
+
+
+def initialize(db):
+    with store.connect(db) as con:
+        con.execute(f'''CREATE TABLE IF NOT EXISTS {TABLE} (
+            draft_id TEXT PRIMARY KEY, company_id TEXT NOT NULL, recipient TEXT NOT NULL,
+            sender TEXT NOT NULL, state TEXT NOT NULL, data_json TEXT NOT NULL DEFAULT '{{}}',
+            error TEXT NOT NULL DEFAULT '', updated_at REAL NOT NULL, lease_until REAL DEFAULT 0)''')
+
+
+def records(db, sender=''):
+    if not Path(db).is_file():
+        return []
+    con = sqlite3.connect(Path(db).resolve().as_uri()+'?mode=ro', uri=True, timeout=30)
+    con.row_factory = sqlite3.Row
+    try:
+        if not con.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (TABLE,)).fetchone():
+            return []
+        rows = []
+        for row in con.execute(f'SELECT * FROM {TABLE} ORDER BY updated_at DESC'):
+            if sender and row['sender'] != sender:
+                continue
+            item = dict(row)
+            item['data'] = json.loads(item.pop('data_json'))
+            if item['lease_until'] < time.time():
+                if item['state'] == 'preparing':
+                    item.update(state='failed', error='Draft preparation was interrupted. Retry to continue.')
+                elif item['state'] == 'saving_gmail':
+                    item.update(state='needs_review', error='Gmail save was interrupted. Recheck before making another draft.')
+            rows.append(item)
+        return rows
+    finally:
+        con.close()
+
+
+def update(db, key, state, data=None, error='', lease=0):
+    with store.connect(db) as con:
+        con.execute(f'''UPDATE {TABLE} SET state=?, data_json=COALESCE(?,data_json), error=?,
+            updated_at=?,lease_until=? WHERE draft_id=?''',
+            (state, json.dumps(data) if data is not None else None, error, time.time(), lease, key))
+
+
+def claim(db, company, recipient, sender):
+    key = hashlib.sha256((sender+'\n'+recipient.lower()).encode()).hexdigest()[:32]
+    with store.connect(db) as con:
+        con.execute('BEGIN IMMEDIATE')
+        row = con.execute(f'SELECT * FROM {TABLE} WHERE draft_id=?', (key,)).fetchone()
+        if row and (row['state'] != 'failed' and not (row['state'] == 'preparing' and row['lease_until'] < time.time())):
+            return key, False
+        con.execute(f'''INSERT INTO {TABLE}(draft_id,company_id,recipient,sender,state,updated_at,lease_until)
+            VALUES(?,?,?,?,'preparing',?,?) ON CONFLICT(draft_id) DO UPDATE SET state='preparing',
+            error='',updated_at=excluded.updated_at,lease_until=excluded.lease_until''',
+            (key, company['company_id'], recipient, sender, time.time(), time.time()+1800))
+    return key, True
+
+
+def hiring_contacts(company, own=()):
+    """Only addresses backed by a checked public source and relevant hiring context."""
+    found = []
+    for entry in company['fields'].get('email', []):
+        address = str(entry.get('value', '')).strip().lower()
+        context = str(entry.get('evidence', ''))
+        for_hiring = bool(re.search(r'\b(hiring|recruit\w*|careers?|resumes?|cv|apply|applications?|talent)\b', context, re.I)
+                          or mail._HIRING_MAILBOX.search(address.partition('@')[0]))
+        if (entry.get('source_checked') and EMAIL.fullmatch(address) and address not in own
+                and company_research.public_url(str(entry.get('source','')))
+                and for_hiring and address in mail.find_addresses(context)
+                and address not in [e['value'] for e in found]):
+            found.append({**entry, 'value':address})
+    return found
+
+
+def make_local(settings, profile, client, company, contact, base):
+    sender = sender_for(settings)
+    key, fresh = claim(settings.db_path, company, contact['value'], sender)
+    if not fresh:
+        return key
+    try:
+        jobs = [j for j in company['jobs'] if j.get('title') and j.get('url')]
+        if not jobs:
+            raise ValueError('No linked job title and URL. Add a job before preparing a pitch.')
+        # Reuse the pipeline's match scores when it has already ranked these jobs.
+        jobs.sort(key=lambda job:float(job.get('score') or 0), reverse=True)
+        job = jobs[0]
+        context = f"Role: {job['title']} at {company['name']}\nJob URL: {job['url']}\n" + contact.get('evidence', '')
+        lead = mail.Lead(contact['value'], company['name'], job['title'], job['url'], contact['source'], context)
+        lead = mail.unique_leads(settings, profile, [lead])[0]
+        attachment = mail.attachment_for(settings, lead)
+        if attachment is None or not attachment.is_file() or attachment.read_bytes()[:5] != b'%PDF-':
+            raise ValueError('A readable PDF resume is required. Update your resume before creating drafts.')
+        if attachment.stat().st_size > 20 * 1024 * 1024:
+            raise ValueError('The resume is too large. Choose a PDF smaller than 20 MB.')
+        written = mail.write_email(client, base, lead)
+        if not written:
+            raise ValueError('The AI could not produce a pitch grounded in your resume. Retry after checking your AI connection.')
+        subject, body = written
+        message = mail.build_message(sender, lead, subject, body, profile, attachment)
+        message.replace_header('Message-ID', f'<company-pitch-{key}@morrow.local>')
+        folder = Path(settings.report_dir) / time.strftime('%Y-%m-%d') / 'emails'
+        folder.mkdir(parents=True, exist_ok=True)
+        path = folder / f'company-pitch-{key}.eml'
+        with os.fdopen(os.open(path, os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o600), 'wb') as handle:
+            handle.write(message.as_bytes(policy=policy.SMTP))
+        data = dict(subject=subject, body=body+'\n\n'+mail.signature(profile), title=lead.title,
+                    job_url=lead.job_url, source=lead.source, resume=attachment.name, eml=str(path),
+                    message_id=message['Message-ID'])
+        update(settings.db_path, key, 'local', data)
+    except (ValueError, OSError, resume.ResumeError) as exc:
+        update(settings.db_path, key, 'failed', error=str(exc)[:400])
+    except Exception as exc:
+        # A provider failure must release this recipient's lease and allow the
+        # remaining selected companies to continue. Provider text may be private.
+        log.warning('Company draft preparation failed (%s).', type(exc).__name__)
+        update(settings.db_path, key, 'failed', error='The email could not be prepared. Check your AI connection and retry.')
+    return key
+
+
+def drafts_folder(imap):
+    status, entries = imap.list()
+    if status == 'OK':
+        for entry in entries or []:
+            match = re.match(rb'\([^)]*\\Drafts[^)]*\)\s+(?:"[^"]*"|NIL)\s+(.+)$', entry or b'', re.I)
+            if match:
+                return match.group(1).decode('ascii')
+    return '"[Gmail]/Drafts"'
+
+
+def verify_message(raw, original):
+    parsed = BytesParser(policy=policy.default).parsebytes(raw)
+    expected = BytesParser(policy=policy.default).parsebytes(original)
+    if any(str(parsed.get(key, '')).strip() != str(expected.get(key, '')).strip()
+           for key in ('Message-ID', 'To', 'From', 'Subject')):
+        return False
+    attachments = lambda msg: [(p.get_filename(), hashlib.sha256(p.get_payload(decode=True) or b'').hexdigest())
+                               for p in msg.iter_attachments()]
+    actual, wanted = parsed.get_body(preferencelist=('plain',)), expected.get_body(preferencelist=('plain',))
+    return bool(actual and wanted and attachments(parsed) == attachments(expected) and attachments(expected)
+                and actual.get_content().strip().replace('\r\n','\n') == wanted.get_content().strip().replace('\r\n','\n'))
+
+
+def sync_gmail(settings, row, factory=imaplib.IMAP4_SSL):
+    """APPEND a MIME draft only; reconcile uncertain writes instead of appending twice."""
+    db, key = settings.db_path, row['draft_id']
+    if row['state'] in ('gmail', 'preparing', 'saving_gmail', 'failed', 'existing'):
+        return
+    if not settings.gmail_app_password:
+        return
+    # Lease also covers independent CLI workers, not just dashboard runs.
+    with store.connect(db) as con:
+        changed = con.execute(f'''UPDATE {TABLE} SET state='saving_gmail',lease_until=?,updated_at=?
+            WHERE draft_id=? AND (state IN ('local','needs_review') OR (state='saving_gmail' AND lease_until<?))''',
+            (time.time()+180, time.time(), key, time.time())).rowcount
+    if not changed:
+        return
+    uncertain = row['state'] == 'needs_review'
+    imap = None
+    try:
+        original = Path(row['data']['eml']).read_bytes()
+        imap = factory(mail.GMAIL_IMAP, ssl_context=ssl.create_default_context(), timeout=mail.IMAP_TIMEOUT_S)
+        imap.login(row['sender'], settings.gmail_app_password)
+        folder = drafts_folder(imap)
+        if imap.select(folder, readonly=True)[0] != 'OK':
+            raise ValueError('Could not open Gmail Drafts.')
+
+        def matching():
+            nonlocal uncertain
+            status, data = imap.uid('search', None, 'HEADER', 'Message-ID', '"'+row['data']['message_id']+'"')
+            if status != 'OK':
+                raise ValueError('Could not check existing Gmail drafts.')
+            ids = b' '.join(data or []).split()
+            if not ids:
+                return False
+            uncertain = True
+            if len(ids) != 1:
+                raise ValueError('More than one matching draft needs review.')
+            status, parts = imap.uid('fetch', ids[0], '(BODY.PEEK[])')
+            verified = status == 'OK' and any(isinstance(part, tuple) and verify_message(part[1], original) for part in parts or [])
+            if not verified:
+                raise ValueError('The existing draft changed or its attachment cannot be verified.')
+            return True
+
+        if matching():
+            update(db, key, 'gmail')
+            return
+        if uncertain:
+            update(db, key, 'needs_review', error='Gmail could not confirm the previous save. Check Gmail Drafts before retrying manually.')
+            return
+        # Persist uncertainty before the network mutation, even if this process is terminated.
+        uncertain = True
+        status, _ = imap.append(folder, '\\Draft', imaplib.Time2Internaldate(time.time()), original)
+        if status == 'OK' and matching():
+            update(db, key, 'gmail')
+        else:
+            update(db, key, 'needs_review', error='Gmail has not confirmed the draft and resume. Recheck the save; no duplicate will be created.')
+    except (OSError, ValueError, imaplib.IMAP4.error):
+        update(db, key, 'needs_review' if uncertain else 'local',
+               error='Gmail save needs verification. Recheck before creating another draft.' if uncertain
+               else 'Could not connect to Gmail Drafts. Check the Gmail connection and retry.')
+    finally:
+        if imap is not None:
+            try:
+                imap.logout()
+            except Exception:
+                pass
+
+
+def public_status(settings):
+    from .gmail_browser import available
+    sender = sender_for(settings)
+    method = 'imap' if settings.gmail_app_password and sender else 'browser' if available(settings, sender) else ''
+    return dict(sender=sender, gmail_configured=bool(method), gmail_method=method,
+                resume_name=Path(settings.resume_path).name, resume_ready=Path(settings.resume_path).is_file())
+
+
+def attach_rows(settings, companies):
+    by_company = {}
+    root = Path(settings.report_dir).resolve()
+    for row in records(settings.db_path, sender_for(settings)):
+        data = row['data']
+        download = ''
+        path = Path(data.get('eml') or '')
+        if path.is_file() and root in path.resolve().parents:
+            download = '/reports/' + quote(str(path.resolve().relative_to(root)))
+        public = {key:row[key] for key in ('draft_id','recipient','state','error','updated_at')}
+        public.update({key:data.get(key, '') for key in ('subject','body','title','job_url','source','resume')})
+        public['download_url'] = download
+        public['gmail_url'] = data.get('gmail_browser_url') or 'https://mail.google.com/mail/u/?authuser='+quote(row['sender'])+'#search/'+quote('in:drafts rfc822msgid:'+data.get('message_id',''), safe='') if row['state']=='gmail' else ''
+        by_company.setdefault(row['company_id'], []).append(public)
+    for company in companies:
+        company['drafts'] = by_company.get(company['company_id'], [])
+        company['draft_note'] = '' if hiring_contacts(company) else ('Find a hiring email first' if company['status']=='pending' else 'No public hiring email found')
+    return companies
+
+
+def connect_gmail(settings, sender, password, factory=imaplib.IMAP4_SSL):
+    """Validate the user-entered connection before saving. Never return the secret."""
+    from .shared_files import locked_file, atomic_write_text
+    sender, password = str(sender).strip().lower(), str(password).replace(' ', '')
+    if not EMAIL.fullmatch(sender) or not re.fullmatch('[a-zA-Z]{16}', password):
+        raise ValueError('Enter your Gmail address and its 16-letter Google app password.')
+    imap = None
+    try:
+        imap = factory(mail.GMAIL_IMAP, ssl_context=ssl.create_default_context(), timeout=mail.IMAP_TIMEOUT_S)
+        imap.login(sender, password)
+        if imap.select(drafts_folder(imap), readonly=True)[0] != 'OK':
+            raise ValueError('Could not open Gmail Drafts.')
+    except (OSError, imaplib.IMAP4.error):
+        raise ValueError('Gmail could not verify this connection. Check the address and Google app password.') from None
+    finally:
+        if imap:
+            try: imap.logout()
+            except Exception: pass
+    with locked_file(settings.env_file) as path:
+        values = {'COLD_EMAIL_FROM':sender, 'GMAIL_APP_PASSWORD':password}
+        lines = path.read_text().splitlines() if path.is_file() else []
+        lines = [line for line in lines if line.split('=',1)[0].strip() not in values]
+        if path.is_file():
+            path.chmod(0o600)
+        atomic_write_text(path, '\n'.join(lines+[f'{key}={value}' for key,value in values.items()])+'\n')
+        os.environ.update(values)
+    return dict(connected=True, sender=sender)
+
+
+def selected_company_ids(company_id='', company_ids=None, all_remaining=False):
+    """An explicit selection must never fall back to processing the whole catalog."""
+    if company_ids is not None:
+        if company_id or all_remaining:
+            raise ValueError('Use selected companies without a single company or all remaining.')
+        if not isinstance(company_ids, (list, tuple)) or not 1 <= len(company_ids) <= 50:
+            raise ValueError('Select between 1 and 50 companies from the database.')
+        selected = list(company_ids)
+    else:
+        if company_id and all_remaining:
+            raise ValueError('Choose a company or all remaining companies.')
+        selected = [company_id] if company_id else []
+    if any(not isinstance(key, str) or not re.fullmatch(r'[a-f0-9]{24}', key) for key in selected):
+        raise ValueError('Choose companies from the database.')
+    if len(selected) != len(set(selected)):
+        raise ValueError('Select each company only once.')
+    return selected
+
+
+def _run(settings, profile, client, *, gmail=None, limit=10, company_id='', company_ids=None,
+        all_remaining=False, research=True, dry_run=False, require_gmail=False):
+    selected = selected_company_ids(company_id, company_ids, all_remaining)
+    if not EMAIL.fullmatch(sender_for(settings)):
+        raise ValueError('Add your email address before preparing drafts.')
+    if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 50:
+        raise ValueError('Choose between 1 and 50 companies, or all remaining.')
+    if require_gmail and not public_status(settings)['gmail_configured']:
+        raise ValueError('Connect Gmail Drafts before saving the selected emails to Gmail.')
+    all_rows = store.catalog(settings.db_path)
+    catalog = {company['company_id']:company for company in all_rows}
+    if any(key not in catalog for key in selected):
+        raise ValueError('Some selected companies no longer exist. Refresh the list and select them again.')
+    saved = records(settings.db_path, sender_for(settings))
+    done = {r['recipient'] for r in saved if r['state'] in ('gmail', 'existing') or (r['state']=='local' and not public_status(settings)['gmail_configured'])}
+    own = mail.own_addresses(settings, profile)
+    if selected:
+        # Keep the exact selection and its order. The automatic batch limit is
+        # irrelevant here, otherwise selecting 20 could silently draft only 10.
+        candidates = [catalog[key] for key in selected]
+    else:
+        candidates = [c for c in all_rows if store.eligible(c) or any(e['value'] not in done for e in hiring_contacts(c, own))]
+        candidates.sort(key=lambda c:not bool(hiring_contacts(c, own)))
+        candidates = candidates if all_remaining else candidates[:limit]
+    if dry_run:
+        return dict(companies=len(candidates), company_ids=[c['company_id'] for c in candidates], drafts=0, preview=True)
+    initialize(settings.db_path)
+    base = resume.load_source(settings.resume_path)
+    # The older recruiter tool also owns drafts: never silently make another one.
+    from .shared_files import locked_file
+    processed, outcomes = set(), []
+    for company in candidates:
+        if company_research.ai_cli.shutdown_event is not None and company_research.ai_cli.shutdown_event.is_set():
+            break
+        outcome = dict(company_id=company['company_id'], state='no_contact', drafts=0, gmail=0)
+        try:
+            if research and not hiring_contacts(company, own) and (store.eligible(company) or selected):
+                company_research.run(settings.db_path, limit=1, company_id=company['company_id'], retry=bool(selected))
+                company = next(c for c in store.catalog(settings.db_path) if c['company_id']==company['company_id'])
+            with locked_file(mail.records_path(settings)):
+                legacy = {str(r.get('email','')).lower():r for r in mail.read_records(settings)}
+                contacts = hiring_contacts(company, own)
+                for contact in contacts:
+                    if contact['value'] in legacy:
+                        key, fresh = claim(settings.db_path, company, contact['value'], sender_for(settings))
+                        if fresh:
+                            old = legacy[contact['value']]
+                            update(settings.db_path, key, 'existing', dict(subject=old.get('subject',''), eml=old.get('eml','')),
+                                   'A recruiter draft already exists. Review it before creating another.')
+                    else:
+                        make_local(settings, profile, client, company, contact, base)
+                for row in records(settings.db_path, sender_for(settings)):
+                    if row['company_id'] == company['company_id']:
+                        sync_browser(settings, row, gmail) if gmail else sync_gmail(settings, row)
+            rows = [r for r in records(settings.db_path, sender_for(settings)) if r['company_id']==company['company_id']]
+            states = {row['state'] for row in rows}
+            outcome.update(drafts=sum(bool(r['data'].get('eml')) for r in rows), gmail=sum(r['state']=='gmail' for r in rows))
+            outcome['state'] = next((state for state in ('needs_review','failed','preparing','saving_gmail','local','existing','gmail') if state in states),
+                                    'failed' if company['status']=='failed' else 'existing' if contacts else 'no_contact')
+        except Exception as exc:
+            # Continue independent companies without exposing provider errors or
+            # making a new draft when a previous Gmail save is uncertain.
+            log.warning('Company draft batch item failed (%s).', type(exc).__name__)
+            outcome.update(state='failed', error='This company could not be completed. Retry it after checking the connection.')
+        log.info('Company email drafts: %s checked. Drafts are never sent.', company['name'])
+        processed.add(company['company_id'])
+        outcomes.append(outcome)
+    results = [r for r in records(settings.db_path, sender_for(settings)) if r['company_id'] in processed]
+    return dict(companies=len(processed), drafts=sum(bool(r['data'].get('eml')) for r in results),
+                gmail=sum(r['state']=='gmail' for r in results),
+                failed=sum(item['state']=='failed' or (require_gmail and item['state']=='local') for item in outcomes),
+                no_contact=sum(item['state']=='no_contact' for item in outcomes),
+                needs_review=sum(r['state']=='needs_review' for r in results),
+                company_results=outcomes)
+
+
+def sync_browser(settings, row, gmail):
+    if row['state'] not in ('local', 'needs_review'):
+        return
+    with store.connect(settings.db_path) as con:
+        changed = con.execute(f"UPDATE {TABLE} SET state='saving_gmail',lease_until=?,updated_at=? WHERE draft_id=? AND (state IN ('local','needs_review') OR (state='saving_gmail' AND lease_until<?))",
+                              (time.time()+360, time.time(), row['draft_id'], time.time())).rowcount
+    if not changed:
+        return
+    try:
+        link = gmail.save(row, uncertain=row['state']=='needs_review')
+        data = dict(row['data'], gmail_browser_url=link)
+        update(settings.db_path, row['draft_id'], 'gmail', data)
+    except Exception as exc:
+        # Never retry an uncertain autosave by opening another compose window.
+        log.warning('Gmail browser draft check failed (%s).', type(exc).__name__)
+        from .gmail_browser import DraftVerificationError
+        reason = str(exc) if isinstance(exc, DraftVerificationError) else 'Gmail could not verify the saved draft and résumé. Check the connection and review Drafts.'
+        update(settings.db_path, row['draft_id'], 'needs_review', error=reason[:400])
+
+
+def run(settings, profile, client, **options):
+    from .gmail_browser import GmailDrafts
+    # Validate explicit IDs before opening any browser. Preview is read-only.
+    selected_company_ids(options.get('company_id', ''), options.get('company_ids'), options.get('all_remaining', False))
+    if not options.get('dry_run') and public_status(settings).get('gmail_method') == 'browser':
+        with GmailDrafts(settings, sender_for(settings)) as gmail:
+            return _run(settings, profile, client, gmail=gmail, **options)
+    return _run(settings, profile, client, **options)
+
+
+def main(argv=None):
+    from . import config, llm, profile as profiles
+    from .run import configure_logging, keep_log
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--env')
+    parser.add_argument('--company', action='append', default=None)
+    parser.add_argument('--limit', type=int, default=10)
+    parser.add_argument('--all', action='store_true')
+    parser.add_argument('--no-research', action='store_true')
+    parser.add_argument('--dry-run', action='store_true')
+    parser.add_argument('--require-gmail', action='store_true')
+    args = parser.parse_args(argv)
+    configure_logging(False)
+    settings = config.load_settings(args.env)
+    keep_log(settings, 'company-email-drafts')
+    try:
+        result = run(settings, profiles.load_profile(settings), llm.build_client(settings), limit=args.limit,
+                     company_ids=args.company, all_remaining=args.all, research=not args.no_research,
+                     dry_run=args.dry_run, require_gmail=args.require_gmail)
+        log.info('Company drafts: %s', result)
+        return 1 if result.get('failed') or result.get('needs_review') else 0
+    except (ValueError, OSError, resume.ResumeError) as exc:
+        log.error('%s', exc)
+        return 1
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())

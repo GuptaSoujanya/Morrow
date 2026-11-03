@@ -42,10 +42,16 @@ def resources_for(command: Command, action: str) -> frozenset[str]:
     resources = {f"action:boards:{site}" if site else f"action:{action or command.shown}"}
     if action == 'company_research':
         resources.add('stage:research:companies')
+    if action == 'company_outreach':
+        resources.update(('stage:research:companies', 'email:drafts', 'browser:main'))
+    if action == 'cold_email':
+        resources.add('email:drafts')
     if action in ("install", "tests"):
         return frozenset({"workspace"})
     if action in ("naukri", "profile", "external", "assist", "google"):
         resources.add("browser:main")
+    if action == "startups":
+        resources.add("browser:lane:startups")
     if action == "boards":
         resources.update((f"browser:lane:{site}",) if site else
                          ("browser:main", *(f"browser:lane:{lane}" for lane in BOARD_LANES)))
