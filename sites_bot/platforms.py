@@ -346,6 +346,10 @@ return out;
 
 
 def shows_applied(driver: Any, board: Board) -> bool:
+    if board.name == "cutshort":
+        from cutshort_bot.questionnaires import application_conversation
+        if application_conversation(driver):
+            return True
     try:
         texts = driver.execute_script(_MARKERS_SCRIPT) or []
     except WebDriverException:
@@ -573,8 +577,13 @@ def apply_to(
         checked = job
         if board.second_apply:
             second = _wait_for_controls(driver, board.second_apply, AFTER_CLICK_WAIT_S)
+            checked = replace(job, url=ext._current_url(driver))
+            # Cutshort keeps the public Apply link after an application. Its
+            # signed-in job card instead links to the existing conversation.
+            if shows_applied(driver, board):
+                return _result(job, ApplyStatus.ALREADY_APPLIED,
+                               "%s shows an existing application conversation" % board.label)
             if second:
-                checked = replace(job, url=ext._current_url(driver))
                 before = _field_labels(driver)
                 ext._click(driver, second[0])
         landed = _wait_after_click(driver, board, handles, AFTER_CLICK_WAIT_S, before)
@@ -671,6 +680,16 @@ def run_board(
                 "%s is signed out in the bot's browser. Sign in once with: scripts/google_login.sh %s",
                 board.label, board.home)
             return summary
+        if board.name == "cutshort" and not dry_run:
+            from cutshort_bot.questionnaires import finish_pending
+            try:
+                finish_pending(driver, profile, settings, limit=min(limit, 10))
+            except BROWSER_GONE:
+                raise  # Keep the normal browser-recovery path.
+            except Exception:
+                # A corrupt journal, output error or malformed follow-up must not
+                # prevent independent new applications. Existing claims stay held.
+                logger.exception('Cutshort questionnaire pass stopped; continuing with new applications')
         jobs = collect(driver, board, derive_keywords(profile, settings), settings.max_candidates,
                        settings.pages_per_keyword, profile.preferred_locations)
         summary.collected = len(jobs)

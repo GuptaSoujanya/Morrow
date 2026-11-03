@@ -251,6 +251,46 @@ def test_zero_budget_runs_without_a_dollar_cap(claude, settings, profile, job, t
     assert result.status == ApplyStatus.APPLIED_EXTERNAL
 
 
+def test_another_open_applications_receipt_cannot_confirm_this_job(claude, settings, profile, job):
+    claude.report = {"status": "submitted", "confirmation": THANKS}
+    driver = _Driver({"previous_application": THANKS, "site": "Application form with no receipt"})
+    result = agent.take_over(driver, job, profile, settings, None, False, _stuck())
+    assert result.status == ApplyStatus.ERROR
+    assert "confirmation is not on the page" in result.detail
+    assert driver.current_window_handle == "site"
+
+
+def test_a_new_application_tab_opened_by_this_task_can_supply_the_receipt(monkeypatch, settings, profile, job, tmp_path):
+    driver = _Driver({"old": "Another tab", "site": "Application form"})
+    def run(*args, **kwargs):
+        driver.texts['new_ats'] = THANKS
+        driver.window_handles.append('new_ats')
+        return agent.AgentRun({"status": "submitted", "confirmation": THANKS}, tmp_path, 1)
+    monkeypatch.setattr(agent, "run_agent", run)
+    result = agent.finish_application(driver, job, profile, settings, None, False, _stuck())
+    assert result.status == ApplyStatus.APPLIED_EXTERNAL
+    assert driver.current_window_handle == "site"
+
+
+def test_agent_ending_in_an_older_applied_tab_cannot_use_the_already_applied_fallback(monkeypatch, settings, profile, job, tmp_path):
+    from sites_bot import application_brain
+    driver = _Driver({"old": "You have applied to this job", "site": "Application form"})
+    def run(*args, **kwargs):
+        driver.current = "old"
+        return agent.AgentRun({"status": "submitted", "confirmation": "You have applied to this job"}, tmp_path, 1)
+    monkeypatch.setattr(agent, "run_agent", run)
+    result = agent.finish_application(driver, job, profile, settings, None, False, _stuck())
+    assert result.status == ApplyStatus.ERROR
+    assert application_brain.blocked(settings, job) == 'uncertain'
+
+
+def test_direct_result_without_task_scope_still_reads_the_current_tab(tmp_path):
+    driver = _Driver({"site": "You have applied to this job"})
+    run = agent.AgentRun({"status": "submitted", "confirmation": "No receipt quote supplied"}, tmp_path, 1)
+    result = agent.to_result(driver, run, _stuck(), False)
+    assert result.status == ApplyStatus.ALREADY_APPLIED
+
+
 # ---------------------------------------------------------------------------
 # What the agent is told and allowed
 # ---------------------------------------------------------------------------

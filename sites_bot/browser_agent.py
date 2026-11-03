@@ -77,6 +77,16 @@ def tasks_left(settings: Settings) -> int:
     return max(0, settings.browser_agent_limit - _started)
 
 
+def reserve_task(settings: Settings) -> bool:
+    """Share the per-run task limit with bounded non-application browser tasks."""
+    from common.llm import out_of_quota
+    global _started
+    if not settings.browser_agent or tasks_left(settings) <= 0 or out_of_quota():
+        return False
+    _started += 1
+    return True
+
+
 def cdp_endpoint(driver: Any) -> str:
     """The DevTools address chromedriver (or msedgedriver) opened for this browser."""
     capabilities = getattr(driver, "capabilities", None) or {}
@@ -535,8 +545,8 @@ def _flat(text: str) -> str:
     return " ".join((text or "").split()).casefold()
 
 
-def quote_on_page(driver: Any, quote: str) -> bool:
-    """Whether the quoted confirmation is on any open tab; the current tab stays current."""
+def quote_on_page(driver: Any, quote: str, allowed_handles: Optional[List[str]] = None) -> bool:
+    """Read only this task's tabs; an older application's receipt cannot prove this send."""
     from .external import _page_text
 
     wanted = _flat(quote)
@@ -544,13 +554,16 @@ def quote_on_page(driver: Any, quote: str) -> bool:
         return False
     try:
         home = driver.current_window_handle
-        handles = [home] + [handle for handle in driver.window_handles if handle != home]
+        handles = ([home] if allowed_handles is None else
+                   [handle for handle in driver.window_handles if handle in allowed_handles])
     except Exception:
         return False
     found = False
     for handle in handles:
         try:
             driver.switch_to.window(handle)
+            if urlparse(driver.current_url).hostname in ('mail.google.com', 'accounts.google.com'):
+                continue
             if wanted in _flat(_page_text(driver)):
                 found = True
                 break
@@ -575,7 +588,15 @@ def to_result(driver: Any, run: AgentRun, previous: Any, dry_run: bool) -> Any:
 
     report = run.report or {}
     status = str(report.get("status", "")).strip().lower()
-    said = already_applied(driver) if status == "submitted" else ""
+    said = ""
+    if status == "submitted":
+        try:
+            scope = report.get('_confirmation_handles')
+            if scope is None or driver.current_window_handle in scope:
+                said = already_applied(driver)
+        except Exception:
+            # Missing/closed or out-of-scope tabs cannot establish this job's state.
+            pass
     why = " ".join(str(report.get("why", "")).split())
     missing = _strings(report.get("missing"))
     filled = list(previous.filled) + [item for item in _strings(report.get("filled")) if item not in previous.filled]
@@ -599,7 +620,7 @@ def to_result(driver: Any, run: AgentRun, previous: Any, dry_run: bool) -> Any:
             else:
                 result.status = ApplyStatus.ERROR
                 result.detail = 'Send was reported but the matching application email could not be verified in Sent. Check before retrying.'
-        elif confirmation_words(quote) and quote_on_page(driver, quote):
+        elif confirmation_words(quote) and quote_on_page(driver, quote, report.get('_confirmation_handles')):
             result.status = ApplyStatus.APPLIED_EXTERNAL
             result.detail = "submitted by the browser agent; the site says: %s" % quote
         elif said:
@@ -723,10 +744,20 @@ def finish_application(
         return replace(previous, status=ApplyStatus.EXTERNAL_MANUAL, detail='Application agent: another attempt already owns this job. Check its outcome before retrying.')
     logger.info("      browser agent: Claude Code takes over %s (task %d of %d)", url, _started,
                 settings.browser_agent_limit)
+    try:
+        original_handle = driver.current_window_handle
+        previous_handles = set(driver.window_handles)
+    except Exception:
+        original_handle, previous_handles = None, set()
     run = run_agent(driver, settings, prompt, workdir, (Path(resume_pdf),) if resume_copy is not None else (),
-                    system=brain.instructions(job))
+                    system=brain.instructions(job, url))
     if run.report:
-        if brain.submission_click_recorded(run.workdir):
+        try:
+            run.report['_confirmation_handles'] = ([original_handle] +
+                [handle for handle in driver.window_handles if handle not in previous_handles]) if original_handle else []
+        except Exception:
+            run.report['_confirmation_handles'] = []
+        if brain.submission_click_recorded(run.workdir, url):
             run.report['submission_attempted'] = True
         run.report['_authorized_recipient'] = recipient
         run.report['_resume_name'] = resume_copy.name if resume_copy else ''
