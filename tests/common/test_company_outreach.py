@@ -16,6 +16,23 @@ REAL_WRITE_EMAIL = outreach.mail.write_email
 REAL_JOB_CONTEXT = outreach.job_context
 
 
+def test_automatic_role_selection_uses_a_saved_id_and_rejects_invented_roles():
+    company={'company_id':'a'*24,'name':'Acme','jobs':[
+        {'job_id':'j1','title':'Front Office Executive','url':'https://example.com/1'},
+        {'job_id':'j2','title':'Python AI Engineer','url':'https://example.com/2'}]}
+    class Client:
+        def available(self):return True
+        def complete_json(self,*args):return {'job_id':self.choice}
+    client=Client();client.choice='j2'
+    chosen=outreach.automatic_company(company,client,SimpleNamespace(plain_text='Python AI software engineer'))
+    assert chosen['jobs'][0]['job_id']=='j2' and chosen['automatic']
+    client.choice=None
+    assert outreach.automatic_company(company,client,SimpleNamespace(plain_text='Python AI'))['jobs']==[]
+    client.choice='invented'
+    with pytest.raises(ValueError,match='unknown role'):
+        outreach.automatic_company(company,client,SimpleNamespace(plain_text='Python AI'))
+
+
 @pytest.fixture
 def setup(tmp_path, monkeypatch):
     for key in ('COLD_EMAIL_FROM','GMAIL_APP_PASSWORD'):
@@ -58,7 +75,51 @@ def test_one_local_draft_per_recipient_contains_pitch_and_pdf(setup):
     assert parsed['To']=='careers@acmelabs.in' and parsed['X-Unsent']=='1'
     assert parsed['From']=='Candidate Name <applicant@gmail.com>'
     assert list(parsed.iter_attachments())[0].get_filename()=='Resume.pdf'
-    assert 'AI evaluations' in parsed.get_body(preferencelist=('plain',)).get_content()
+    body = parsed.get_body(preferencelist=('plain',)).get_content().strip()
+    assert body == first['data']['body'] == 'I build AI evaluations. My resume is attached.'
+
+
+def test_one_automatic_run_turns_unrelated_role_into_introduction_and_verified_gmail_draft(setup,monkeypatch):
+    settings,profile,company=setup
+    calls=[]
+    def write(client,base,lead):
+        calls.append(lead)
+        if not lead.introduction:raise outreach.PitchIssue('role_mismatch','No relevant background for the saved job.')
+        assert not lead.job_url and lead.title=='Introduction based on your résumé'
+        return 'Introduction: software opportunities','I build AI evaluations. Are there relevant opportunities? My resume is attached.'
+    class VerifiedGmail:
+        saves=0
+        def save(self,row,uncertain=False):
+            self.saves+=1
+            parsed=BytesParser(policy=policy.default).parsebytes(Path(row['data']['eml']).read_bytes())
+            assert str(parsed['Subject'])=='Introduction: software opportunities'
+            assert len(list(parsed.iter_attachments()))==1
+            assert list(parsed.iter_attachments())[0].get_payload(decode=True)==Path(settings.resume_path).read_bytes()
+            return 'https://mail.google.com/mail/u/0/#search/verified'
+    monkeypatch.setattr(outreach.mail,'write_email',write)
+    gmail=VerifiedGmail()
+    result=outreach._run(settings,profile,object(),company_ids=[company['company_id']],automatic=True,research=False,gmail=gmail)
+    assert result['gmail']==1 and result['failed']==0 and gmail.saves==1
+    assert len(calls)==2 and calls[1].introduction
+    row=outreach.records(settings.db_path)[0]
+    assert row['data']['context_source']=='general_inquiry' and row['data']['job_url']==''
+    state=outreach.progress.read(settings.db_path,settings.google_email)[company['company_id']]
+    assert state['phase']=='ready' and state['title']=='Introduction based on your résumé'
+    # Repeat the same click: keep the saved draft even if AI is now unavailable.
+    outreach._run(settings,profile,None,company_ids=[company['company_id']],automatic=True,research=False,gmail=gmail)
+    assert gmail.saves==1 and len(calls)==2
+
+
+def test_automatic_drafting_does_not_disguise_ai_or_resume_failures(setup,monkeypatch):
+    settings,profile,company=setup
+    calls=[]
+    def write(*args):
+        calls.append(True)
+        raise outreach.PitchIssue('resume_unreadable','The résumé could not be read.')
+    monkeypatch.setattr(outreach.mail,'write_email',write)
+    result=outreach._run(settings,profile,object(),company_ids=[company['company_id']],automatic=True,research=False)
+    assert result['failed']==1 and len(calls)==1
+    assert not list(Path(settings.report_dir).rglob('*.eml'))
 
 
 def test_parallel_preparation_claims_address_once(setup):

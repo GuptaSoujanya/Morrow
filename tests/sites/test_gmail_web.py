@@ -66,9 +66,9 @@ def test_cold_email_uses_the_browser_when_there_is_no_app_password(monkeypatch, 
     from sites_bot import cold_email
 
     saved = []
-    monkeypatch.setattr(gmail_web, "save_draft", lambda d, to, subject, body, attachment=None: saved.append(to) or "")
+    monkeypatch.setattr(gmail_web, "save_draft", lambda d, to, subject, body, attachment=None: saved.append((to, body)) or "")
     settings = Settings(gmail_app_password="")
     lead = cold_email.Lead("jobs@a.io", "A", "Engineer", "u", "hn")
     assert cold_email._gmail(settings, None, "me@x.io", lead, "s", "b", Profile(full_name="T"), None, object()) == ""
-    assert saved == ["jobs@a.io"]
+    assert saved == [("jobs@a.io", "b")]
     assert cold_email._gmail(settings, None, "me@x.io", lead, "s", "b", Profile(), None, None) != ""

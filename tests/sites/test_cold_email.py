@@ -126,7 +126,7 @@ def test_an_email_claiming_what_the_resume_does_not_say_is_dropped(settings):
     assert ce.write_email(client, load_base(settings.resume_path), _lead()) is None
 
 
-def test_the_draft_carries_her_signature_and_opens_as_unsent(settings, profile, tmp_path):
+def test_the_draft_has_no_duplicate_signature_and_opens_as_unsent(settings, profile, tmp_path):
     pdf = tmp_path / "Jane_Doe_Resume.pdf"
     pdf.write_bytes(b"%PDF-1.4")
     message = ce.build_message("jane.jobs@example.org", _lead(), "AI Engineer role", BODY, profile, pdf)
@@ -134,8 +134,17 @@ def test_the_draft_carries_her_signature_and_opens_as_unsent(settings, profile, 
     assert parsed["To"] == "hr@acmelabs.in" and parsed["X-Unsent"] == "1"
     assert parsed["From"] == "Jane Doe <jane.jobs@example.org>"
     text = parsed.get_payload()[0].get_payload(decode=True).decode()
-    assert text.endswith("Jane Doe\n+91 90000 00000\nhttps://linkedin.com/in/jane\nhttps://jane.dev\n")
+    assert text == BODY + "\n"
     assert parsed.get_payload()[1].get_filename() == "Jane_Doe_Resume.pdf"
+
+
+def test_ai_signoff_is_rejected_and_rewritten_without_a_footer(settings):
+    from common.resume import load_base
+
+    client = _Client({"subject": "AI Engineer role", "body": BODY + "\n\nBest regards,\nJane Doe"},
+                     {"subject": "AI Engineer role", "body": BODY})
+    assert ce.write_email(client, load_base(settings.resume_path), _lead()) == ("AI Engineer role", BODY)
+    assert "remove the sign-off and signature" in client.prompts[1]
 
 
 def test_drafts_are_saved_recorded_and_never_written_twice(settings, profile, no_pdf):

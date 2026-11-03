@@ -58,6 +58,28 @@ def normalize(value):
     return ' '.join(str(value).split())
 
 
+SIGNATURE_SELECTOR = '.gmail_signature, [data-smartmail="gmail_signature"]'
+
+
+def body_matches(message, body):
+    """Match the exact pitch, allowing only Gmail's own trailing signature.
+
+    This also reconciles a saved draft after interruption, when the local MIME
+    contains the pitch but Gmail has appended the user's formatted signature.
+    """
+    actual, expected = normalize(message.get_attribute('innerText')), normalize(body)
+    if actual == expected:
+        return True
+    signatures = message.find_elements(By.CSS_SELECTOR, SIGNATURE_SELECTOR)
+    for signature in reversed(signatures):
+        text = normalize(signature.get_attribute('innerText'))
+        if text:
+            if not actual.endswith(' ' + text):
+                return False
+            actual = actual[:-(len(text) + 1)].rstrip()
+    return actual == expected
+
+
 class GmailDrafts:
     def __init__(self, settings, sender, driver_factory=connections.create_driver):
         self.settings, self.sender, self.factory = settings, sender, driver_factory
@@ -150,7 +172,7 @@ class GmailDrafts:
         # Gmail's current recipient chips use data-hovercard-id on the visible address.
         recipients.update(e.get_attribute('data-hovercard-id').lower() for e in region.find_elements(By.CSS_SELECTOR, '[data-hovercard-id]') if '@' in (e.get_attribute('data-hovercard-id') or ''))
         return (recipients == {recipient.lower()} and len(bodies) == 1
-                and normalize(bodies[0].get_attribute('innerText')) == normalize(body)
+                and body_matches(bodies[0], body)
                 and filename in region.text
                 and not region.find_elements(By.CSS_SELECTOR, '[role=progressbar]'))
 
@@ -159,6 +181,29 @@ class GmailDrafts:
             self.wait(lambda _: self.verify_open(subject, body, filename, recipient))
         except TimeoutException as exc:
             raise DraftVerificationError('The saved draft or résumé did not pass verification. Review Gmail Drafts.') from exc
+
+    def insert_pitch(self, message, body):
+        """Type above the native signature, preserving its links and formatting."""
+        signature_text = message.get_attribute('innerText') or ''
+        signatures = message.find_elements(By.CSS_SELECTOR, SIGNATURE_SELECTOR)
+        original_html = [s.get_attribute('outerHTML') for s in signatures]
+        if normalize(signature_text) != normalize(' '.join(s.get_attribute('innerText') or '' for s in signatures)):
+            raise DraftVerificationError('Gmail opened with existing message text. Review the compose window before retrying.')
+        # Give the pitch its own paragraph. A caret at the editor's start can
+        # otherwise land inside an image-only signature and alter its markup.
+        self.driver.execute_script('''
+            const body = arguments[0], paragraph = document.createElement('div');
+            paragraph.append(document.createElement('br')); body.prepend(paragraph); body.focus();
+            const range = document.createRange(); range.setStart(paragraph, 0); range.collapse(true);
+            const selection = window.getSelection(); selection.removeAllRanges(); selection.addRange(range);
+        ''', message)
+        message.send_keys(body + ('\n\n' if signatures else ''))
+        preserved = [s.get_attribute('outerHTML') for s in message.find_elements(By.CSS_SELECTOR, SIGNATURE_SELECTOR)]
+        expected = body + ('\n\n' + signature_text if signatures else '')
+        if original_html != preserved or normalize(message.get_attribute('innerText')) != normalize(expected):
+            raise DraftVerificationError('The pitch or Gmail signature changed unexpectedly. Review Gmail Drafts.')
+        # Verify the full observed signature on this save and after reopening.
+        return expected
 
     def save(self, row, uncertain=False):
         self.mutated = False
@@ -186,12 +231,7 @@ class GmailDrafts:
         recipient.send_keys(row['recipient'], Keys.TAB)
         self.visible('input[name=subjectbox]')[0].send_keys(subject)
         message = self.visible('[contenteditable=true][aria-label="Message Body"]')[0]
-        message.click()
-        # Replace any Gmail signature with the exact already-signed local pitch.
-        import sys
-        message.send_keys(Keys.COMMAND if sys.platform == 'darwin' else Keys.CONTROL, 'a', Keys.NULL)
-        message.send_keys(Keys.BACKSPACE)
-        message.send_keys(body)
+        body = self.insert_pitch(message, body)
         with tempfile.TemporaryDirectory(prefix='morrow-resume-') as folder:
             attachment = Path(folder) / filename
             attachment.write_bytes(payload)

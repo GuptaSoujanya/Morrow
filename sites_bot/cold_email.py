@@ -89,6 +89,7 @@ class Lead:
     job_url: str
     source: str
     posting: str = ""
+    introduction: bool = False
 
     def job(self) -> JobPosting:
         return JobPosting(job_id=self.job_url or self.email, url=self.job_url, title=self.title,
@@ -314,7 +315,9 @@ Rules:
 - Use only facts from the resume and the posting. No numbers, employers, tools or titles they do not name.
 - No buzzwords (passionate, results-driven, synergy, leverage, cutting-edge, delve, thrilled, excited to
   share), no em or en dashes, no exclamation marks, no emojis, no bullet lists, no placeholders.
-- Do not sign it; their signature is added after your text.
+- End with the application request. Do not add a sign-off (such as Regards or Thanks),
+  a signature, the candidate's name on its own, or a contact/social-link footer.
+  The sender already has a signature configured in Gmail.
 
 Reply with JSON: {"can_write": true, "subject": "...", "body": "...", "reason_code": "", "reason": ""}.
 When can_write=false, provide reason_code and reason instead of an email."""
@@ -334,6 +337,13 @@ def write_email(client: Any, base: Any, lead: Lead) -> Optional[Tuple[str, str]]
         prompt = _PROMPT % (base.plain_text[:8000], lead.title or "a role", lead.company or "the company",
                             (lead.posting or "")[:3000], feedback, MIN_WORDS, MAX_WORDS - 30,
                             lead.company or "hiring")
+        if lead.introduction:
+            prompt += '''\nThis is a general hiring inquiry, not an application to a known vacancy.
+Use the résumé to describe the candidate's actual professional focus and two concrete examples.
+Ask whether the company has relevant opportunities. Do not claim the company is hiring, invent a
+vacancy, mention an unrelated saved role, or claim the candidate meets unknown requirements.
+The subject must describe an introduction or inquiry about opportunities. No job description is
+needed for this introduction. Return can_write=true when the résumé contains usable facts.'''
         reply = client.complete_json(prompt, _SCHEMA)
         if not reply or reply.get("can_write") is False:
             return None
@@ -349,21 +359,13 @@ def write_email(client: Any, base: Any, lead: Lead) -> Optional[Tuple[str, str]]
             problems.append("the subject is missing or longer than 90 characters")
         if _PLACEHOLDERS.search(body + subject):
             problems.append("it has a placeholder or a made-up greeting")
+        if re.search(r"(?im)^\s*(?:best(?: regards| wishes)?|kind regards|regards|sincerely|"
+                     r"yours (?:sincerely|faithfully|truly)|thanks|thank you)[,.!\s]*$", body):
+            problems.append("remove the sign-off and signature; Gmail already supplies the sender's signature")
         if not problems:
             return subject, body
     logger.info("No cold email for %s: %s", lead.email, "; ".join(problems))
     return None
-
-
-def signature(profile: Profile) -> str:
-    extra = profile.extra_facts or {}
-    lines = [profile.full_name or ""]
-    if profile.phone:
-        lines.append(profile.phone)
-    for key in ("linkedin_url", "portfolio_url", "github_url"):
-        if extra.get(key):
-            lines.append(str(extra[key]))
-    return "\n".join(line for line in lines if line)
 
 
 def build_message(sender: str, lead: Lead, subject: str, body: str, profile: Profile,
@@ -376,7 +378,8 @@ def build_message(sender: str, lead: Lead, subject: str, body: str, profile: Pro
     message["Message-ID"] = make_msgid()
     # Apple Mail and Outlook open a message with this header as a draft to edit and send.
     message["X-Unsent"] = "1"
-    message.set_content("%s\n\n%s\n" % (body.strip(), signature(profile)))
+    # Gmail owns the signature. Keep local/IMAP drafts free of a second footer.
+    message.set_content(body.strip() + "\n")
     if attachment is not None and attachment.is_file():
         message.add_attachment(attachment.read_bytes(), maintype="application", subtype="pdf",
                                filename=attachment.name)
@@ -480,7 +483,7 @@ def _gmail(settings, message, sender, lead, subject, body, profile, attachment, 
     if driver is not None:
         from .gmail_web import save_draft
 
-        return save_draft(driver, lead.email, subject, "%s\n\n%s\n" % (body.strip(), signature(profile)), attachment)
+        return save_draft(driver, lead.email, subject, body.strip(), attachment)
     return "no app password and no signed-in browser"
 
 
