@@ -1,6 +1,7 @@
 """Research company contacts and save one resume pitch per recipient. Never send mail."""
 import argparse
 import hashlib
+import http.client
 import imaplib
 import json
 import logging
@@ -12,9 +13,10 @@ import time
 from email import policy
 from email.parser import BytesParser
 from pathlib import Path
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 from . import company_store as store, company_research, resume, outreach_progress as progress
+from .public_web import fetch_page
 from sites_bot import cold_email as mail
 
 log = logging.getLogger(__name__)
@@ -97,14 +99,48 @@ def hiring_contacts(company, own=()):
     return found
 
 
+class PitchIssue(ValueError):
+    def __init__(self, code, reason):
+        self.code = code
+        super().__init__(reason)
+
+
 class GroundedPitchClient:
-    def __init__(self, client):self.client=client
+    def __init__(self, client, title='this role'):
+        self.client, self.title = client, title
     def available(self):return bool(self.client and self.client.available())
     def complete_json(self, prompt, schema):
         reply=self.client.complete_json(prompt,schema)
         if reply and reply.get('can_write') is False:
-            raise ValueError('This role is not supported by the résumé. Choose a matching role; no skills or experience were invented.')
+            code = reply.get('reason_code')
+            if code not in ('role_mismatch', 'missing_context', 'resume_unreadable'):
+                code = 'review_needed'
+            fallback = {'role_mismatch':f'The draft review did not find résumé evidence for {self.title}.',
+                        'missing_context':f'More job information is needed to assess {self.title}.',
+                        'resume_unreadable':'The résumé could not provide enough readable candidate facts.',
+                        'review_needed':f'The AI did not produce a pitch for {self.title} and did not give a specific reason.'}
+            reason = reply.get('reason')
+            raise PitchIssue(code, str(reason).strip()[:400] if isinstance(reason,str) and reason.strip() else fallback[code])
         return reply
+
+
+def job_context(company, job):
+    """Prefer the saved description; check the exact public job URL for older records."""
+    description = str(job.get('description') or '').strip()
+    if description:
+        return description[:7000], 'saved_posting'
+    try:
+        page = fetch_page(job['url'])
+        text = ' '.join(page['text'].split())
+        title = ' '.join(job['title'].split())
+        name = ' '.join(company['name'].split())
+        # Login pages, blocked pages and unrelated redirects are not job evidence.
+        if title.casefold() in text.casefold() and name.casefold() in text.casefold() and len(text)>180:
+            at = text.casefold().find(title.casefold())
+            return text[max(0,at-100):at+6900], 'public_posting'
+    except (OSError, ValueError, UnicodeError, http.client.HTTPException):
+        pass
+    return 'The full job description is unavailable. Only the role title and company are known; do not infer specific requirements.', 'title_only'
 
 
 def chosen_company(company, roles):
@@ -123,6 +159,7 @@ def make_local(settings, profile, client, company, contact, base):
         if saved and saved['company_id']==company['company_id'] and saved['data'].get('job_url') and len(company['jobs'])==1 and saved['data']['job_url']!=company['jobs'][0]['url']:
             raise ValueError('A draft to this recipient already exists for a different role. Review the existing pitch before creating another.')
         return key
+    attempt = {}
     try:
         jobs = [j for j in company['jobs'] if j.get('title') and j.get('url')]
         if not jobs:
@@ -130,7 +167,11 @@ def make_local(settings, profile, client, company, contact, base):
         # Reuse the pipeline's match scores when it has already ranked these jobs.
         jobs.sort(key=lambda job:float(job.get('score') or 0), reverse=True)
         job = jobs[0]
-        context = f"Role: {job['title']} at {company['name']}\nJob URL: {job['url']}\n" + contact.get('evidence', '')
+        progress.record(settings.db_path, sender, company, 'writing', 'Reading the selected job and résumé before writing.', job)
+        description, context_source = job_context(company, job)
+        context = f"Role: {job['title']} at {company['name']}\nJob URL: {job['url']}\nJob description:\n{description}"
+        attempt = dict(job_id=job['job_id'], title=job['title'], job_url=job['url'],
+                       resume=Path(settings.resume_path).name, context_source=context_source)
         lead = mail.Lead(contact['value'], company['name'], job['title'], job['url'], contact['source'], context)
         lead = mail.unique_leads(settings, profile, [lead])[0]
         attachment = mail.attachment_for(settings, lead)
@@ -139,9 +180,9 @@ def make_local(settings, profile, client, company, contact, base):
         if attachment.stat().st_size > 20 * 1024 * 1024:
             raise ValueError('The resume is too large. Choose a PDF smaller than 20 MB.')
         progress.record(settings.db_path, sender, company, 'writing', 'Writing a pitch grounded in your résumé.', job)
-        written = mail.write_email(GroundedPitchClient(client), base, lead)
+        written = mail.write_email(GroundedPitchClient(client, job['title']), base, lead)
         if not written:
-            raise ValueError('The AI could not produce a pitch grounded in your resume. Retry after checking your AI connection.')
+            raise PitchIssue('generation_failed', 'A usable draft was not returned. Check the AI connection or retry; this does not establish a role mismatch.')
         subject, body = written
         progress.record(settings.db_path, sender, company, 'attaching', 'Adding the résumé PDF and subject.', job)
         message = mail.build_message(sender, lead, subject, body, profile, attachment)
@@ -151,12 +192,14 @@ def make_local(settings, profile, client, company, contact, base):
         path = folder / f'company-pitch-{key}.eml'
         with os.fdopen(os.open(path, os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o600), 'wb') as handle:
             handle.write(message.as_bytes(policy=policy.SMTP))
-        data = dict(subject=subject, body=body+'\n\n'+mail.signature(profile), title=lead.title,
+        data = dict(attempt, subject=subject, body=body+'\n\n'+mail.signature(profile), title=lead.title,
                     job_url=lead.job_url, source=lead.source, resume=attachment.name, eml=str(path),
                     message_id=message['Message-ID'])
         update(settings.db_path, key, 'local', data)
+    except PitchIssue as exc:
+        update(settings.db_path, key, 'failed', dict(attempt,issue_code=exc.code),error=str(exc)[:400])
     except (ValueError, OSError, resume.ResumeError) as exc:
-        update(settings.db_path, key, 'failed', error=str(exc)[:400])
+        update(settings.db_path, key, 'failed', attempt, error=str(exc)[:400])
     except Exception as exc:
         # A provider failure must release this recipient's lease and allow the
         # remaining selected companies to continue. Provider text may be private.
@@ -258,7 +301,7 @@ def public_status(settings):
     from .gmail_browser import available
     sender = sender_for(settings)
     method = 'imap' if settings.gmail_app_password and sender else 'browser' if available(settings, sender) else ''
-    return dict(sender=sender, gmail_configured=bool(method), gmail_method=method, workflow_version=2,
+    return dict(sender=sender, gmail_configured=bool(method), gmail_method=method, workflow_version=2, recovery_version=2,
                 resume_name=Path(settings.resume_path).name, resume_ready=Path(settings.resume_path).is_file())
 
 
@@ -273,13 +316,19 @@ def attach_rows(settings, companies):
         if path.is_file() and root in path.resolve().parents:
             download = '/reports/' + quote(str(path.resolve().relative_to(root)))
         public = {key:row[key] for key in ('draft_id','recipient','state','error','updated_at')}
-        public.update({key:data.get(key, '') for key in ('subject','body','title','job_url','source','resume')})
+        public.update({key:data.get(key, '') for key in ('subject','body','title','job_url','source','resume','issue_code','context_source')})
         public['download_url'] = download
-        public['gmail_url'] = data.get('gmail_browser_url') or 'https://mail.google.com/mail/u/?authuser='+quote(row['sender'])+'#search/'+quote('in:drafts rfc822msgid:'+data.get('message_id',''), safe='') if row['state']=='gmail' else ''
+        # Browser account indexes are not portable to the user's other Chrome tab.
+        fragment = urlsplit(data.get('gmail_browser_url') or '').fragment or 'search/'+quote('in:drafts rfc822msgid:'+data.get('message_id',''), safe='')
+        public['gmail_url'] = 'https://mail.google.com/mail/u/?authuser='+quote(row['sender'],safe='')+'#'+fragment if row['state']=='gmail' else ''
         by_company.setdefault(row['company_id'], []).append(public)
     for company in companies:
         company['drafts'] = by_company.get(company['company_id'], [])
         company['workflow'] = workflows.get(company['company_id'])
+        # Explain old failures without pretending we recorded an AI reason then.
+        if company['workflow'] and not company['workflow'].get('issue') and company['workflow'].get('message','').startswith('This role is not supported by the résumé.'):
+            company['workflow']={**company['workflow'], 'issue':{'code':'review_needed'},
+                'message':'No pitch was created for '+(company['workflow'].get('title') or 'the selected role')+'. The previous check did not record whether the role was unrelated or job information was missing.'}
         company['draft_note'] = '' if hiring_contacts(company) else ('Find a hiring email first' if company['status']=='pending' else 'No public hiring email found')
     return companies
 
@@ -410,7 +459,10 @@ def _run(settings, profile, client, *, gmail=None, limit=10, company_id='', comp
         rows=[row for row in records(settings.db_path,sender_for(settings)) if row['company_id']==company['company_id']]
         phase='ready' if outcome['state']=='gmail' else 'blocked' if outcome['state'] in ('no_contact','needs_review','existing') else 'failed'
         detail=outcome.get('error','') or next((row['error'] for row in rows if row['error']),'') or ('Draft verified in Gmail. Ready for you to review.' if phase=='ready' else 'No verified hiring email was found.' if outcome['state']=='no_contact' else 'A draft to this hiring contact already exists. Review it before creating another.' if outcome['state']=='existing' else 'The draft is saved locally. Gmail still needs attention.')
-        progress.record(settings.db_path,sender_for(settings),company,phase,detail)
+        problem=next((row for row in rows if row['state']=='failed' and row['data'].get('issue_code')),None)
+        issue={'code':problem['data']['issue_code'],'context_source':problem['data'].get('context_source',''),
+               'resume':problem['data'].get('resume','')} if problem else None
+        progress.record(settings.db_path,sender_for(settings),company,phase,detail,issue=issue)
         log.info('Company email drafts: %s checked. Drafts are never sent.', company['name'])
         processed.add(company['company_id'])
         outcomes.append(outcome)

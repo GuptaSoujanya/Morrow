@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 import sqlite3
 import time
+import os
 from contextlib import closing
 from .company_store import connect
 
@@ -15,13 +16,17 @@ def initialize(db):
             company_id TEXT NOT NULL, sender TEXT NOT NULL, data_json TEXT NOT NULL,
             updated_at REAL NOT NULL, PRIMARY KEY(company_id,sender))''')
 
-def record(db, sender, company, phase, message='', job=None):
+def record(db, sender, company, phase, message='', job=None, issue=None):
     now=time.time()
     with connect(db) as con:
         row=con.execute(f'SELECT data_json FROM {TABLE} WHERE company_id=? AND sender=?',(company['company_id'],sender)).fetchone()
         data=json.loads(row[0]) if row and phase!='queued' else {'started_at':now,'history':[]}
+        if phase=='queued' and os.environ.get('MORROW_RUN_ID'):
+            data['run_id']=os.environ['MORROW_RUN_ID']
         if job:
             data.update(job_id=job.get('job_id',''),title=job.get('title',''))
+        if issue:
+            data['issue']=issue
         data.update(phase=phase,message=message,updated_at=now)
         if not data['history'] or data['history'][-1]['phase']!=phase:
             data['history'].append({'phase':phase,'at':now})

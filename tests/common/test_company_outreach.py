@@ -13,6 +13,7 @@ from common.ledger import Ledger
 from common.models import JobPosting, Profile, Settings
 
 REAL_WRITE_EMAIL = outreach.mail.write_email
+REAL_JOB_CONTEXT = outreach.job_context
 
 
 @pytest.fixture
@@ -36,6 +37,7 @@ def setup(tmp_path, monkeypatch):
     outreach.initialize(settings.db_path)
     monkeypatch.setattr(outreach.resume, 'load_source', lambda path:SimpleNamespace(plain_text='My resume',terms=frozenset()))
     monkeypatch.setattr(outreach.mail,'attachment_for',lambda settings,lead:Path(settings.resume_path))
+    monkeypatch.setattr(outreach,'job_context',lambda company,job:(job.get('description') or 'Role title only','saved_posting' if job.get('description') else 'title_only'))
     monkeypatch.setattr(outreach.mail,'write_email',lambda *args:('AI Engineer application','I build AI evaluations. My resume is attached.'))
     return settings, profile, company
 
@@ -390,13 +392,59 @@ def test_unrelated_role_explains_failure_without_creating_a_draft(setup, monkeyp
     settings, profile, company = setup
     class Client:
         def available(self):return True
-        def complete_json(self, *args):return {'can_write':False}
+        def complete_json(self, *args):return {'can_write':False,'reason_code':'role_mismatch','reason':'The selected role requires evidence that this résumé does not provide.'}
     monkeypatch.setattr(outreach.mail, 'write_email', REAL_WRITE_EMAIL)
     result=outreach.run(settings,profile,Client(),company_ids=[company['company_id']],roles={company['company_id']:'j1'},research=False)
     state=outreach.progress.read(settings.db_path,settings.google_email)[company['company_id']]
     assert result['failed']==1 and state['phase']=='failed'
-    assert 'role is not supported' in state['message']
+    assert state['issue']['code']=='role_mismatch' and 'requires evidence' in state['message']
     assert not list(Path(settings.report_dir).rglob('*.eml'))
+
+
+@pytest.mark.parametrize('code', ['missing_context','resume_unreadable','unknown',''])
+def test_refusal_reasons_are_not_mislabeled_as_role_mismatch(setup, monkeypatch, code):
+    settings, profile, company = setup
+    class Client:
+        def available(self):return True
+        def complete_json(self,*args):return {'can_write':False,'reason_code':code,'reason':'Insufficient source information.'}
+    monkeypatch.setattr(outreach.mail,'write_email',REAL_WRITE_EMAIL)
+    outreach.run(settings,profile,Client(),company_ids=[company['company_id']],research=False)
+    state=outreach.progress.read(settings.db_path,settings.google_email)[company['company_id']]
+    assert state['issue']['code']==(code if code in ('missing_context','resume_unreadable') else 'review_needed')
+    assert state['message']=='Insufficient source information.'
+
+
+def test_saved_job_description_survives_summary_refresh_and_reaches_pitch(setup, monkeypatch):
+    settings,profile,company=setup
+    with Ledger(settings.db_path) as ledger:
+        ledger.record_seen(JobPosting('j1','https://acmelabs.in/jobs/1',company='Acme Labs',title='AI Engineer',description='Build evaluation tooling with Python.'))
+        ledger.record_seen(JobPosting('j1','https://acmelabs.in/jobs/1',company='Acme Labs',title='AI Engineer'))
+    saved=store.catalog(settings.db_path)[0]
+    assert saved['jobs'][0]['description']=='Build evaluation tooling with Python.'
+    def write(client,base,lead):
+        assert 'Build evaluation tooling with Python.' in lead.posting
+        assert 'Send your resume' not in lead.posting
+        return 'AI Engineer','My résumé is attached.'
+    monkeypatch.setattr(outreach.mail,'write_email',write)
+    outreach.make_local(settings,profile,object(),saved,outreach.hiring_contacts(saved)[0],SimpleNamespace())
+    assert outreach.records(settings.db_path)[0]['state']=='local'
+
+
+def test_public_job_context_rejects_login_pages_and_unrelated_redirects(setup,monkeypatch):
+    _,_,company=setup
+    job=company['jobs'][0]
+    monkeypatch.setattr(outreach,'fetch_page',lambda url:{'text':'Please sign in to view jobs. '*30})
+    assert REAL_JOB_CONTEXT(company,job)[1]=='title_only'
+    monkeypatch.setattr(outreach,'fetch_page',lambda url:{'text':'Acme Labs AI Engineer. Build evaluation infrastructure. '*20})
+    assert REAL_JOB_CONTEXT(company,job)[1]=='public_posting'
+
+
+def test_gmail_deep_link_uses_sender_instead_of_automation_browser_account_index(setup):
+    settings,_,company=setup
+    row=prepare(setup)
+    outreach.update(settings.db_path,row['draft_id'],'gmail',dict(row['data'],gmail_browser_url='https://mail.google.com/mail/u/3/#search/verified'))
+    public=outreach.attach_rows(settings,[company])[0]['drafts'][0]
+    assert public['gmail_url']=='https://mail.google.com/mail/u/?authuser=applicant%40gmail.com#search/verified'
 
 
 def test_browser_startup_failure_is_visible_and_invalid_roles_never_open_browser(setup, monkeypatch):

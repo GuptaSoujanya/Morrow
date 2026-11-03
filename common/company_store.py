@@ -47,7 +47,9 @@ def catalog(db):
         tables = {r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         groups = {}
         if 'jobs_seen' in tables:
-            for job in con.execute('SELECT job_id,title,company,url,last_seen,score FROM jobs_seen ORDER BY last_seen DESC'):
+            columns = {row[1] for row in con.execute('PRAGMA table_info(jobs_seen)')}
+            description = 'description' if 'description' in columns else "'' AS description"
+            for job in con.execute('SELECT job_id,title,company,url,last_seen,score,'+description+' FROM jobs_seen ORDER BY last_seen DESC'):
                 key = company_key(job['company'])
                 if not key:
                     continue
