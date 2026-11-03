@@ -328,6 +328,18 @@ def unsupported_section(board: Board, name: str) -> bool:
         return True
     if board.name == 'hirist' and re.search(r'employment|work experience', name):
         return bool(re.search(r'description|job profile|skills used', name))
+    if board.name in ('cutshort', 'wellfound') and re.match(r'^(?:projects?|certifications?)(?:\b|:)', name):
+        # These fields were inspected in the saved board audits. The shared
+        # resume plan must not manufacture editors that these boards lack.
+        return True
+    if board.name == 'cutshort':
+        return bool(re.fullmatch(r'current role(?: / designation)?|designation|desired roles|target roles|desired job titles|it skill years|total experience', name)
+                    or re.fullmatch(r'education\s*\(degree,\s*branch,\s*years\)', name)
+                    or (re.match(r'^(?:employment|work experience):', name)
+                        and re.search(r'description|job profile|skills used|dates|designation', name)))
+    if board.name == 'wellfound':
+        return bool(re.search(r'\bcurrent (?:salary|ctc|compensation)\b|\bnotice period\b', name)
+                    or re.fullmatch(r'(?:preferences:\s*)?availability', name))
     return False
 
 
@@ -453,10 +465,15 @@ def _load_all(driver: Any) -> None:
 _TEXT_JS = """
 var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT),
     parts = [], node, blind = ['hidden', 'password', 'checkbox', 'radio', 'submit', 'button', 'file'];
+function visible(el) {
+  if (!el.getClientRects().length || el.closest('[hidden], [aria-hidden="true"]')) return false;
+  var visibility = window.getComputedStyle(el).visibility;
+  return visibility !== 'hidden' && visibility !== 'collapse';
+}
 while ((node = walker.nextNode())) {
   if (node.nodeType === 1) {
     var kind = node.tagName, value = '';
-    if (kind === 'A' && node.getClientRects().length) {
+    if (kind === 'A' && visible(node)) {
       // Icon-only profile links have no text node. Keep their public destination
       // next to the section so the verifier can check saved portfolio URLs.
       try {
@@ -465,7 +482,7 @@ while ((node = walker.nextNode())) {
       } catch (e) {}
     }
     if (kind !== 'INPUT' && kind !== 'TEXTAREA' && kind !== 'SELECT') continue;
-    if (!node.getClientRects().length) continue;
+    if (!visible(node)) continue;
     if (kind === 'SELECT') {
       var chosen = node.options[node.selectedIndex];
       value = chosen ? chosen.text : '';
@@ -478,9 +495,20 @@ while ((node = walker.nextNode())) {
   }
   var text = node.nodeValue.replace(/\\s+/g, ' ').trim(), parent = node.parentElement;
   if (!text || !parent) continue;
+  // A select's other options are not saved values. Its selected text was read
+  // above; including all options can falsely verify an unsaved preference.
+  // Textarea child text is its initial/default value, not necessarily the
+  // current saved .value already read above.
+  if (parent.closest('select, textarea')) continue;
+  var option = parent.closest('[role="option"]');
+  if (option && option.getAttribute('aria-selected') !== 'true') continue;
+  var label = parent.closest('label'), control = label && label.control;
+  if (control && /^(checkbox|radio)$/i.test(control.type) && !control.checked) continue;
+  var choice = parent.closest('[role="checkbox"], [role="radio"]');
+  if (choice && choice.getAttribute('aria-checked') !== 'true') continue;
   var tag = parent.tagName;
   if (tag === 'SCRIPT' || tag === 'STYLE' || tag === 'NOSCRIPT' || tag === 'TEMPLATE') continue;
-  if (!parent.getClientRects().length) continue;
+  if (!visible(parent)) continue;
   parts.push(text);
 }
 return parts.join(' ');
@@ -490,23 +518,18 @@ return parts.join(' ');
 def page_text(driver: Any) -> str:
     """The visible text of the page with a space between neighbouring elements, form values included.
 
-    Selenium's body text runs inline chips together ("PythonJavascriptMongoDB"), so a skill list
-    could never be matched chip by chip; it stays the fallback for a driver that cannot run scripts.
+    Selenium's body text runs inline chips together ("PythonJavascriptMongoDB") and includes
+    unselected dropdown options. It cannot substitute for a selected-value read.
     What sits in a text box or a drop-down is part of the profile on a board that edits it as a
     form (Hirist's About and work preferences), and body text never shows it.
     """
-    from .external import _page_text
-
     try:
         text = driver.execute_script(_TEXT_JS)
-        if isinstance(text, str) and text.strip():
+        if isinstance(text, str):
             return " ".join(text.split())
     except Exception:
         pass
-    try:
-        return _page_text(driver)
-    except Exception:
-        return ""
+    return ""
 
 
 def _words(text: str) -> List[str]:
@@ -659,6 +682,22 @@ def verify(expected: str, page: str, heading: str = "", lead: int = 0) -> Tuple[
     (None, []) when there is nothing to compare -- an empty value, or a page the bot could not
     read -- never a bare True.
     """
+    if expected.strip().casefold() in ('yes', 'no'):
+        # An unrelated Yes elsewhere on a long form cannot prove this choice.
+        # Only accept the answer directly following this question's own label.
+        words = _words(heading)
+        if not words:
+            return None, []
+        pattern = r'\b' + r'\W+'.join(re.escape(word) for word in words) + r'\b'
+        answers = []
+        for match in re.finditer(pattern, page, re.I):
+            answer = re.match(r'\s*[:*?\-]*\s*(yes|no)\b(?!\s+(?:yes|no)\b)', page[match.end():], re.I)
+            if answer:
+                answers.append(answer.group(1).casefold())
+        if not answers:
+            return None, []
+        found = all(answer == expected.strip().casefold() for answer in answers)
+        return found, [] if found else [expected]
     best: Optional[Tuple[Optional[bool], List[str]]] = None
     # About can be 2,600 characters and job descriptions 4,000. A fixed 1,200
     # character window could never verify 70% of a complete long section.
@@ -713,6 +752,10 @@ def confirm(section: "Section", page: str) -> Tuple[Optional[bool], List[str]]:
     if section.fact_key:
         return profile_contract.verify_fact(section.fact_key, section.wanted, page)
     heading, lead = _locate(section.name)
+    if section.wanted.strip().casefold() in ('yes', 'no'):
+        category, _, question = section.name.partition(':')
+        if question and category.casefold() in ('additional information', 'professional details', 'preferences', 'personal details'):
+            heading = question.strip()
     best: Optional[Tuple[Optional[bool], List[str]]] = None
     for claim in claims(section):
         outcome = verify(claim, page, heading, lead)
@@ -721,6 +764,42 @@ def confirm(section: "Section", page: str) -> Tuple[Optional[bool], List[str]]:
         if outcome[0] is not None and (best is None or _claim_rank(outcome) > _claim_rank(best)):
             best = outcome
     return best if best is not None else (None, [])
+
+
+def _confirm_saved(section: "Section", page: str, board: Board,
+                   workdir: Path) -> Tuple[Optional[bool], List[str]]:
+    """Check the page, with upload evidence when Hirist renames the supplied resume."""
+    outcome = confirm(section, page)
+    if (board.name != 'hirist' or outcome == (True, [])
+            or not re.fullmatch(r'(?:attach |uploaded )?resume(?: attached)?', section.name, re.I)):
+        return outcome
+    from .resume_evidence import verify_hirist_resume
+
+    folders = [workdir]
+    repair = re.fullmatch(r'repair-(\d+)', workdir.name)
+    if repair:
+        # An unrelated repair must not discard the first pass's upload proof.
+        # Each candidate still has to match the current reloaded attachment's
+        # timestamp and size; a later different upload cannot reuse old proof.
+        prior = [path for path in workdir.parent.glob('repair-*')
+                 if path.is_dir() and re.fullmatch(r'repair-\d+', path.name)
+                 and int(path.name.split('-')[1]) < int(repair.group(1))]
+        folders.extend(sorted(prior, key=lambda path: int(path.name.split('-')[1]), reverse=True))
+        folders.append(workdir.parent)
+    for folder in folders:
+        before = folder / 'before.txt'
+        if not before.is_file() and re.fullmatch(r'repair-\d+', folder.name):
+            before = folder.parent / 'page-after.txt'
+        try:
+            previous = before.read_text(encoding='utf-8')
+        except OSError:
+            continue
+        if verify_hirist_resume(folder, section.wanted, previous, page):
+            evidence = 'Saved attachment verified from the supplied file upload, changed upload time and matching size.'
+            if evidence not in section.note:
+                section.note = (section.note + ' ' + evidence).strip()
+            return True, []
+    return outcome
 
 
 # ---------------------------------------------------------------------------
@@ -784,6 +863,8 @@ def _section_key(name: str) -> str:
     fact = profile_contract.fact_key(name)
     if fact:
         return 'fact ' + fact
+    if profile_contract._summary_section(name):
+        return 'profile summary'
     name = re.sub(r'^(?:employment|work experience|job profile)\s*:', 'experience:', name, flags=re.I)
     return re.sub(r"[^a-z0-9]+", " ", name.casefold()).strip()
 
@@ -819,14 +900,20 @@ def add_planned(result: ProfileCheck, edits: Optional[List[Dict[str, str]]], pag
             section.target = target or section.target
             section.fact_key = edit.get('fact_key', '')
             section.project_dates = edit.get('project_dates', {})
-            if section.action in (UNSUPPORTED, EXCLUDED, 'skipped'):
+            if edit.get('action') == 'skip':
+                # Missing facts and conflicts are authoritative. An agent's
+                # already_ok claim cannot turn an old website value into a fact.
+                section.action = action
+                section.on_page, section.missing = None, []
+                section.note = edit.get('why') or section.note
+            elif section.action in (UNSUPPORTED, EXCLUDED, 'skipped'):
                 section.action = action
         if reported:
             continue
         section = Section(name=edit['name'], action=action, target=target, fact_key=edit.get('fact_key', ''),
                           project_dates=edit.get('project_dates', {}))
-        on_page, missing = confirm(section, page) if page and target else (None, [])
-        done = on_page is True and not missing
+        on_page, missing = confirm(section, page) if action == PENDING and page and target else (None, [])
+        done = action == PENDING and on_page is True and not missing
         result.sections.append(Section(
             name=edit["name"], action=ALREADY_OK if done else action, before=edit.get("current", ""),
             target=target, fact_key=edit.get('fact_key', ''), on_page=on_page, missing=missing,
@@ -873,6 +960,16 @@ def _read_profile(driver: Any, board: Board) -> str:
     parts = [text]
     entries = profile_contract.read_entries(driver)
     pages = list(board.profile_pages)
+    if board.name == 'cutshort':
+        # /profile is a collapsed dashboard. Follow only its own unique talent
+        # card link, never a job/recruiter's card or an ID saved from another user.
+        cards = set(re.findall(r'https://cutshort\.io/profile/edit-signal/([a-f0-9]{24})(?=\s|$)', text))
+        if len(cards) == 1:
+            card = cards.pop()
+            pages.extend(['https://cutshort.io/profile/edit-signal/' + card,
+                          'https://cutshort.io/profile/matches/c/' + card + '?view=survey'])
+        elif len(cards) > 1:
+            logger.warning('Cutshort: several talent cards are visible; no editor was selected for verification.')
     if board.name == 'linkedin':
         # LinkedIn's overview only shows two skills, and draws its Experience, Education and
         # Projects cards late or not at all, so a run that changed a position/project had nothing to be
@@ -897,7 +994,7 @@ def _read_profile(driver: Any, board: Board) -> str:
             entries.extend(profile_contract.read_entries(driver))
         else:
             logger.warning("%s: %s could not be read; what it holds cannot be confirmed.", board.label, url)
-    if board.name == 'linkedin' and pages:
+    if board.name in ('linkedin', 'hirist', 'wellfound', 'cutshort') and pages:
         # The following screenshot check expects the overview's headline and
         # completeness, not whichever detail page we inspected last.
         try:
@@ -923,12 +1020,18 @@ def check(driver: Any, board: Board, settings: Settings, report: Dict[str, Any],
     for section in result.sections:
         if unsupported_section(board, section.name):
             section.action = UNSUPPORTED
-        elif section.action in ('skipped', UNSUPPORTED, EXCLUDED) and profile_contract.protected(section.name):
+        elif section.action in ('skipped', UNSUPPORTED, EXCLUDED, NEEDS_INPUT, ALREADY_OK) and profile_contract.protected(section.name):
             section.action = EXCLUDED
         elif section.action in ('skipped', UNSUPPORTED, EXCLUDED):
             section.action = NEEDS_INPUT
         if section.action == FAILED and re.search(r'needs? (?:salary breakdown|client|start date|course dates|institute)|missing (?:facts|dates)', section.note, re.I):
             section.action = NEEDS_INPUT
+        key = profile_contract.fact_key(section.name)
+        if board.name == 'cutshort' and key in ('full_time_experience_years', 'internship_experience_months'):
+            if (getattr(profile, 'extra_facts', {}) or {}).get(key) in (None, ''):
+                section.action = NEEDS_INPUT
+                section.note = 'The saved facts do not include %s; unchanged website values are not proof.' % key
+                section.on_page, section.missing = None, []
     page = _read_profile(driver, board)
     if not page:
         logger.warning("%s: the profile page could not be read after the run; trying once more in %ds.",
@@ -948,6 +1051,14 @@ def check(driver: Any, board: Board, settings: Settings, report: Dict[str, Any],
     add_planned(result, [edit for edit in edits or [] if not unsupported_section(board, edit.get('name', ''))
                         and not profile_contract.exclusion_reason(profile, edit.get('name', ''))], page)
     for section in result.sections:
+        if board.name == 'cutshort' and section.action == NEEDS_INPUT and section.target:
+            kind, _, company = section.name.partition(':')
+            company = re.sub(r'\s*\(formerly[^)]*\)', '', company, flags=re.I).strip()
+            if kind.casefold() in ('employment', 'work experience') and profile_contract.key(section.target) == profile_contract.key(company):
+                windows = _windows('Your current company', page) + _windows('Past companies', page)
+                if any(_compare(section.target, window)[0] is True for window in windows):
+                    section.action = ALREADY_OK
+                    section.note = 'The approved company chip is on the reloaded page; role descriptions and dates are unsupported.'
         excluded = profile_contract.exclusion_reason(profile, section.name)
         if excluded:
             section.action = EXCLUDED
@@ -957,7 +1068,7 @@ def check(driver: Any, board: Board, settings: Settings, report: Dict[str, Any],
         # What the agent says it changed, and what it says was already there: both are claims about
         # the page, and a repair pass that finds a section "already_ok" must leave page evidence too.
         if page and section.wanted and section.action in (*CHANGED, ALREADY_OK, 'checked', PENDING):
-            section.on_page, section.missing = confirm(section, page)
+            section.on_page, section.missing = _confirm_saved(section, page, board, workdir)
             if section.action == PENDING and section.on_page is True and not section.missing:
                 section.action = ALREADY_OK
     if page and plan is not None and plan.headline and not unsupported_section(board, 'Headline') and not any("headline" in s.name.casefold()
@@ -1099,7 +1210,7 @@ def repair(driver: Any, board: Board, settings: Settings, result: ProfileCheck, 
             fresh_page = page_path.read_text(encoding='utf-8')
             for section in result.required:
                 if section.wanted and section.action in (*CHANGED, ALREADY_OK, 'checked'):
-                    section.on_page, section.missing = confirm(section, fresh_page)
+                    section.on_page, section.missing = _confirm_saved(section, fresh_page, board, folder)
             result.saved, result.why = _verdict(result)
     return result
 
@@ -1273,6 +1384,15 @@ def _finish(workdir: Path, board: Board, result: ProfileCheck, plan: Any,
     return path
 
 
+def _same_blocked_target(previous: str, target: str) -> bool:
+    """An old missing-input result cannot block a changed board-specific task.
+
+    The record shortens long targets to 300 characters. Compare that prefix,
+    not merely the section name (Cutshort company chips used to request prose).
+    """
+    return previous == target or (previous.endswith('...') and target.startswith(previous[:-3]))
+
+
 def run(driver: Any, board: Board, settings: Settings, profile: Optional[Profile], task: str,
         files: Tuple[Path, ...], plan: Any, label: str) -> Tuple[bool, str]:
     """One profile-agent run, checked; (saved, notes for memory and the log)."""
@@ -1304,7 +1424,8 @@ def run(driver: Any, board: Board, settings: Settings, profile: Optional[Profile
         if previous.get('facts_digest') == facts_digest:
             blocked = [s for s in previous.get('sections', []) if s.get('action') == NEEDS_INPUT]
             for edit in edits:
-                matches = [s for s in blocked if _same_section(s.get('name', ''), edit['name'])]
+                matches = [s for s in blocked if _same_section(s.get('name', ''), edit['name'])
+                           and _same_blocked_target(s.get('after', ''), edit.get('target', ''))]
                 if matches:
                     edit.update(action='skip', why='needs input (facts unchanged; do not reopen this form): '
                                 + '; '.join(s.get('note', '') for s in matches))

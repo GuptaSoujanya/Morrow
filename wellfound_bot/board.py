@@ -7,6 +7,8 @@ BOARD = Board(
     label="Wellfound",
     home="https://wellfound.com/jobs",
     profile_url="https://wellfound.com/profile/edit",
+    profile_pages=("https://wellfound.com/profile/edit/preferences",
+                   "https://wellfound.com/profile/edit/resume"),
     feeds=("https://wellfound.com/jobs",),
     search="https://wellfound.com/role/r/{slug}",
     search_page="https://wellfound.com/role/r/{slug}?page={page}",

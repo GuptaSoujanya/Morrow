@@ -7,6 +7,7 @@ BOARD = Board(
     label="Cutshort",
     home="https://cutshort.io/jobs/datascience-jobs",
     profile_url="https://cutshort.io/profile",
+    profile_pages=("https://cutshort.io/profile/candidate-settings/profile",),
     # Cutshort's keyword search gave the same nine jobs for every keyword; its category pages are the feed.
     feeds=("https://cutshort.io/jobs/datascience-jobs", "https://cutshort.io/jobs/backend-developer-jobs",
            "https://cutshort.io/jobs/frontend-developer-jobs", "https://cutshort.io/jobs/fullstack-developer-jobs",

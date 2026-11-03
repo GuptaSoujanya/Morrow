@@ -28,7 +28,7 @@ class FakeDriver:
         return True
 
     def execute_script(self, script):
-        return None
+        return self.page if "createTreeWalker" in script else None
 
     def find_element(self, by, value):
         return Body(self.page)
@@ -662,9 +662,11 @@ def test_the_page_is_read_only_once_its_sections_have_rendered(monkeypatch):
     class Loading(FakeDriver):
         reads = 0
 
-        def find_element(self, by, value):
-            self.reads += 1
-            return Body(header if self.reads < 3 else full)
+        def execute_script(self, script):
+            if 'createTreeWalker' in script:
+                self.reads += 1
+                return header if self.reads < 3 else full
+            return None
 
     driver = Loading(header)
     assert profile_agent._read_profile(driver, BOARD) == full
@@ -672,9 +674,11 @@ def test_the_page_is_read_only_once_its_sections_have_rendered(monkeypatch):
     class Short(FakeDriver):
         reads = 0
 
-        def find_element(self, by, value):
-            self.reads += 1
-            return Body(self.page)
+        def execute_script(self, script):
+            if 'createTreeWalker' in script:
+                self.reads += 1
+                return self.page
+            return None
 
     short = Short("a profile with little on it")
     assert profile_agent._read_profile(short, BOARD) == short.page
@@ -736,8 +740,15 @@ def test_the_page_is_read_with_a_space_between_chips():
 
     assert profile_agent.page_text(Chips("Key skills PythonJavascriptMongoDB")) == \
         "Key skills Python Javascript MongoDB"
-    assert profile_agent.page_text(FakeDriver("Key skills PythonJavascriptMongoDB")) == \
-        "Key skills PythonJavascriptMongoDB", "a driver without scripts still gives the body text"
+    class NoScripts(FakeDriver):
+        def execute_script(self, script):
+            return None
+    assert profile_agent.page_text(NoScripts("Key skills PythonJavascriptMongoDB")) == "", \
+        "body text does not prove which form values were selected"
+    class BrokenScripts(FakeDriver):
+        def execute_script(self, script):
+            raise RuntimeError('script evaluation failed')
+    assert profile_agent.page_text(BrokenScripts('Notice period 15 days 30 days')) == ''
     spaced, run_together = "Key skills Python Javascript MongoDB", "Key skills PythonJavascriptMongoDB"
     assert profile_agent.verify("Python, Javascript, MongoDB", spaced, "Key skills") == (True, [])
     assert profile_agent.verify("Python, Javascript, MongoDB", run_together, "Key skills")[0] is False
@@ -1079,3 +1090,118 @@ def test_linkedin_projects_are_verified_on_their_detail_page(monkeypatch):
     assert profile_agent.verify('B.Tech Computer Science Example University', page)[0] is True
     assert profile_agent.verify('A completely different trading platform with automated market analysis.',
                                 page, *profile_agent._locate('Project: Morrow'))[0] is False
+
+
+def test_cutshort_reads_own_talent_card_and_survey_not_only_dashboard(monkeypatch):
+    from cutshort_bot.board import BOARD as cutshort
+    card_id = '1234567890abcdef12345678'
+    edit = 'https://cutshort.io/profile/edit-signal/' + card_id
+    survey = 'https://cutshort.io/profile/matches/c/' + card_id + '?view=survey'
+    pages = {cutshort.profile_url: 'Your talent card ' + edit + ' Edit talent card Skills Python 12 More',
+             cutshort.profile_pages[0]: 'Headline AI Engineer',
+             edit: 'Skills Python LangChain FastAPI Resume onboarding.pdf',
+             survey: 'Your achievements I build reliable AI applications.'}
+    driver = _wizard(monkeypatch, pages)
+    page = profile_agent._read_profile(driver, cutshort)
+    assert driver.opened == [cutshort.profile_url, cutshort.profile_pages[0], edit, survey, cutshort.profile_url]
+    assert profile_agent.verify('Python, LangChain, FastAPI', page, 'Skills') == (True, [])
+    assert profile_agent.verify('I build reliable AI applications.', page)[0] is True
+    assert profile_agent.verify('An unsaved summary.', page)[0] is False
+
+
+def test_cutshort_does_not_guess_a_talent_card_or_follow_another_host(monkeypatch):
+    from cutshort_bot.board import BOARD as cutshort
+    card = 'https://cutshort.io/profile/edit-signal/'
+    for text in ('https://evil.example/profile/edit-signal/1234567890abcdef12345678',
+                 card + '1234567890abcdef12345678 ' + card + '2234567890abcdef12345678'):
+        driver = _wizard(monkeypatch, {cutshort.profile_url: text, cutshort.profile_pages[0]: 'Headline Saved'})
+        profile_agent._read_profile(driver, cutshort)
+        assert driver.opened == [cutshort.profile_url, cutshort.profile_pages[0], cutshort.profile_url]
+
+
+def test_wellfound_reads_preferences_and_resume_and_returns_to_overview(monkeypatch):
+    from wellfound_bot.board import BOARD as wellfound
+    pages = {wellfound.profile_url: 'About Saved bio',
+             'https://wellfound.com/profile/edit/preferences': 'Desired salary INR 2000000',
+             'https://wellfound.com/profile/edit/resume': 'Resume onboarding.pdf'}
+    driver = _wizard(monkeypatch, pages)
+    page = profile_agent._read_profile(driver, wellfound)
+    assert driver.opened == [wellfound.profile_url, *wellfound.profile_pages, wellfound.profile_url]
+    assert 'Desired salary INR 2000000' in page and 'Resume onboarding.pdf' in page
+
+
+def test_absent_board_fields_are_unsupported_but_real_unknown_fields_still_block(monkeypatch, tmp_path):
+    from wellfound_bot.board import BOARD as wellfound
+    monkeypatch.setattr(profile_agent, '_read_profile', lambda *args: 'About Saved bio')
+    monkeypatch.setattr(profile_agent, 'screenshot', lambda *args: None)
+    monkeypatch.setattr(profile_agent, '_viewport', lambda *args: None)
+    report = {'sections': [dict(name='About', action='updated', after='Saved bio'),
+                           dict(name='Project: Example', action='needs_input'),
+                           dict(name='Current salary', action='needs_input'),
+                           dict(name='Social Profiles: Twitter', action='needs_input', note='No account supplied')]}
+    checked = profile_agent.check(object(), wellfound, Settings(), report, None, tmp_path)
+    assert checked.sections[1].action == checked.sections[2].action == 'unsupported'
+    assert checked.coverage['total'] == 2
+    assert not checked.saved and checked.needs_input[0].name == 'Social Profiles: Twitter'
+
+
+def test_updated_supported_targets_do_not_inherit_stale_missing_input_holds():
+    assert not profile_agent._same_blocked_target('Description not supported', 'Example company')
+    assert profile_agent._same_blocked_target('Example company', 'Example company')
+    assert profile_agent._same_blocked_target('A long unchanged target...', 'A long unchanged target with more words')
+    assert not profile_agent._same_blocked_target('', 'A newly supplied target')
+    assert profile_agent._same_section('About / summary', 'Profile summary')
+
+
+def test_yes_no_values_require_their_own_question_and_selected_answer():
+    section = Section('Additional information: Have you handled a team?', 'already_ok', after='No')
+    assert profile_agent.confirm(section, 'Are you willing to relocate? No')[0] is None
+    assert profile_agent.confirm(section, 'Have you handled a team? Yes Are you willing to relocate? No')[0] is False
+    assert profile_agent.confirm(section, 'Have you handled a team? No Are you willing to relocate? Yes')[0] is True
+    # Both choices are visible, but their selected state was unavailable.
+    assert profile_agent.confirm(section, 'Have you handled a team? Yes No')[0] is None
+    assert profile_agent.confirm(section, 'Have you handled a team? No Yes')[0] is None
+
+
+def test_cutshort_supported_company_chip_is_verified_but_unsourced_experience_is_not(monkeypatch, tmp_path):
+    from common.models import Profile
+    from cutshort_bot.board import BOARD as cutshort
+    monkeypatch.setattr(profile_agent, '_read_profile', lambda *args: 'Your current company Example AI Past companies Old Co Full time experience only, excluding internships 2.5 years')
+    monkeypatch.setattr(profile_agent, 'screenshot', lambda *args: None)
+    monkeypatch.setattr(profile_agent, '_viewport', lambda *args: None)
+    report = {'sections': [dict(name='Employment: Example AI', action='unsupported', after='Example AI'),
+                           dict(name='Full time experience only, excluding internships', action='already_ok', after='2.5 years'),
+                           dict(name='Job-search status', action='needs_input', after='Actively interviewing'),
+                           dict(name='Desired job titles', action='needs_input')]}
+    edits = [dict(name='Employment: Example AI', action='update', target='Example AI')]
+    result = profile_agent.check(object(), cutshort, Settings(), report, None, tmp_path, edits,
+                                 profile=Profile(total_experience_years=2.9))
+    assert result.sections[0].action == 'already_ok' and result.sections[0].on_page is True
+    assert result.sections[1].action == 'needs_input' and result.sections[1].on_page is None
+    assert result.sections[2].action == 'excluded'
+    assert result.sections[3].action == 'unsupported'
+    assert not result.saved
+
+
+def test_cutshort_experience_aliases_cannot_verify_old_values_without_supplied_facts(monkeypatch, tmp_path):
+    from common.models import Profile
+    from cutshort_bot.board import BOARD as cutshort
+    from sites_bot import profile_contract
+    page = 'Full time experience only, excluding internships 2.5 years Internship experience 3 months'
+    monkeypatch.setattr(profile_agent, '_read_profile', lambda *args: page)
+    monkeypatch.setattr(profile_agent, 'screenshot', lambda *args: None)
+    monkeypatch.setattr(profile_agent, '_viewport', lambda *args: None)
+    report = {'sections': [dict(name='Work experience: Full time experience only, excluding internships', action='already_ok', after='2.5 years'),
+                           dict(name='Work experience: Internship experience', action='already_ok', after='3 months')]}
+    profile = Profile(total_experience_years=2.9)
+    result = profile_agent.check(object(), cutshort, Settings(), report, None, tmp_path,
+                                 profile_contract.fact_edits(profile, 'cutshort'), profile=profile)
+    assert all(s.action == 'needs_input' and s.on_page is None for s in result.sections[:2])
+    assert not result.coverage['complete']
+
+
+def test_successful_empty_dom_read_does_not_restore_hidden_values_from_body_text():
+    class HiddenPage(FakeDriver):
+        def execute_script(self, script):
+            return ''
+    assert profile_agent.page_text(HiddenPage('Hidden old summary and salary 16 LPA')) == ''

@@ -17,6 +17,14 @@ experience, current designation, location and notice period.
 
 ## Hirist specifics
 
-- Some fields are dropdowns with fixed values (experience, notice period, salary bands): pick the option
-  that matches the facts exactly, or the nearest band that contains the stated value.
+- Some fields are dropdowns with fixed values: pick an exact value or an explicitly labelled band
+  containing the fact. `1 month` is not `15 days`; do not select it as an approximation. If no matching
+  notice option exists, keep the existing value and report needs_review with the unavailable fact.
+- Decimal experience uses separate year/month selectors: `2.9 years` is `2 years 11 months` after
+  rounding once. Read the selected values, not every available dropdown option.
+- Certifications require institute, course type and course dates in the inspected editor. Missing
+  mandatory facts are needs_input; never invent dates to finish the form. Optional exam scores,
+  stock compensation and travel preferences must remain empty unless the saved facts answer them.
+- Reopen every registration step used after saving, then return to `/myprofile` for the final overview.
+  About must match the approved short summary, not the longer summary intended for other boards.
 - Do not apply to jobs or answer recruiter chats. Do not change the email or phone.

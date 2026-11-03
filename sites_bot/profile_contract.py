@@ -16,12 +16,30 @@ def key(value: str) -> str:
     return re.sub(r"[^a-z0-9]+", " ", str(value).casefold()).strip()
 
 
+def _fit_text(text: str, limit: int) -> str:
+    """Fit approved prose, preferring complete words and sentences."""
+    text = str(text or '').strip()
+    if len(text) <= limit:
+        return text
+    prefix = text[:limit + 1].rsplit(' ', 1)[0]
+    if len(prefix) > limit:
+        prefix = text[:limit]
+    sentence = re.search(r'^(.+[.!?])\s+[^.!?]*$', prefix)
+    return sentence.group(1) if sentence else prefix.rstrip(' ,;:/|-')
+
+
+def _summary_section(name: str) -> bool:
+    return bool(re.fullmatch(r'(?:your\s+)?(?:about|profile summary|achievements)(?:\s*[/()]\s*'
+                             r'(?:about|profile summary|summary|your achievements)\)?)?', name, re.I))
+
+
 def protected(name: str) -> bool:
     if re.match(r'^(?:project|employment|experience|education|certification|skills?)\s*:', name, re.I):
         return False
     return bool(re.search(r"\b(?:photo|picture|password|privacy|pronouns|gender|diversity|marital|"
                           r"date of birth|email|phone|contact info|open to work|visibility|"
-                          r"public profile|featured|services|profile language)\b", name, re.I))
+                          r"public profile|featured|services|profile language|job[- ]search status|"
+                          r"show current salary and minimum expected salary to employers|declaration checkbox)\b", name, re.I))
 
 
 def exclusion_reason(profile: Any, name: str) -> str:
@@ -51,11 +69,16 @@ def fact_edits(profile: Any, board: str) -> List[Dict[str, str]]:
     # LinkedIn exposes current location, but no compensation/notice/total-experience editors.
     if board == "linkedin":
         fields = fields[:1]
+    elif board == 'cutshort':
+        fields[1:2] = [('Full time experience only, excluding internships', 'full_time_experience_years', ' years'),
+                       ('Internship experience', 'internship_experience_months', ' months')]
     edits = []
     for label, attr, unit in fields:
         if board == "instahyre" and attr == "expected_ctc_lpa":
             continue
-        value = getattr(profile, attr, None)
+        value = ((getattr(profile, 'extra_facts', {}) or {}).get(attr)
+                 if attr in ('full_time_experience_years', 'internship_experience_months')
+                 else getattr(profile, attr, None))
         if value is None or value == "":
             edits.append({"name": label, "action": "skip", "target": "", "current": "",
                           "why": "needs input: profile.yaml has no %s" % attr, "fact_key": attr})
@@ -68,7 +91,7 @@ def fact_edits(profile: Any, board: str) -> List[Dict[str, str]]:
             if not number.is_finite() or number < 0 or isinstance(value, bool):
                 raise ValueError("profile.yaml %s must be a nonnegative finite number" % attr)
         precision = ''
-        if attr == 'total_experience_years':
+        if attr in ('total_experience_years', 'full_time_experience_years'):
             months = round(Decimal(str(value)) * 12)
             precision = (' This is decimal years: use %d years and %d months in separate selectors. '
                          'Do not interpret the decimal digits as months. If the site only accepts whole years, '
@@ -80,11 +103,13 @@ def fact_edits(profile: Any, board: str) -> List[Dict[str, str]]:
 
 
 _LABELS = {
-    'current_location': r'(?:current\s+location|currently\s+located\s+in|\blocationOt\b)',
+    'current_location': r'(?:(?:your\s+)?current\s+(?:location|city)|currently\s+located\s+in|where are you based\??|\blocationOt\b)',
     'total_experience_years': r'(?:(?:total|overall)\s+(?:(?:work|professional)\s+)?experience(?:\s+of)?|\bexperienceOneTheme\b)',
-    'current_ctc_lpa': r'(?:(?:annual\s+)?current\s+(?:annual\s+)?(?:salary|ctc|compensation)|\bwalletOneTheme\b)',
+    'current_ctc_lpa': r'(?:(?:annual\s+)?current\s+(?:or\s+last\s+drawn\s+)?(?:annual\s+)?(?:salary|ctc|compensation)|\bwalletOneTheme\b)',
     'expected_ctc_lpa': r'(?:annual\s+)?expected\s+(?:annual\s+)?(?:salary|ctc|compensation)',
     'notice_period_days': r'(?:notice\s+period|can\s+start\s+working)',
+    'full_time_experience_years': r'full[ -]time experience(?: only,? excluding internships)?',
+    'internship_experience_months': r'internship experience',
 }
 _NUMBER = r'\d[\d,]*(?:\.\d+)?'
 
@@ -128,7 +153,10 @@ def verify_fact(field: str, target: str, page: str):
         return found, [] if found else [target]
     if not values:
         return None, []
-    expected = Decimal(re.search(_NUMBER, target).group().replace(',', ''))
+    target_number = re.search(_NUMBER, target)
+    if target_number is None or (target_number.start() and target[target_number.start() - 1] == '-'):
+        return None, []
+    expected = Decimal(target_number.group().replace(',', ''))
     for value in values:
         number = re.search(_NUMBER, value)
         if not number:
@@ -149,7 +177,10 @@ def verify_fact(field: str, target: str, page: str):
                 continue  # Never silently equate a calendar month with 30 days.
             if not re.match(r'\s*days?\b', tail, re.I):
                 continue
-        elif field == 'total_experience_years':
+        elif field == 'internship_experience_months':
+            if not re.match(r'\s*months?\b', tail, re.I):
+                continue
+        elif field in ('total_experience_years', 'full_time_experience_years'):
             months = re.match(r'\s*years?\s+(\d+)\s*months?', tail, re.I)
             if months:
                 # Compare the board's integer months to the explicitly saved
@@ -224,9 +255,24 @@ def reconcile(edits: List[Dict[str, str]], profile: Any, board: str, plan: Any) 
     result = [dict(e) for e in edits]
     if board == 'hirist' and plan is not None:
         for edit in result:
-            if re.fullmatch(r'(?:about|profile summary|about / profile summary|about \(profile summary\))', edit['name'], re.I):
-                edit['target'] = getattr(plan, 'short_summary', '')
+            if _summary_section(edit['name']):
+                edit['target'] = _fit_text(getattr(plan, 'short_summary', ''), 500)
                 edit['why'] = 'Use the approved short summary in the 500-character About field.'
+    if board == 'wellfound' and plan is not None:
+        for edit in result:
+            if re.fullmatch(r'(?:your )?bio(?: / (?:one-line )?headline)?|(?:one-line )?headline', edit['name'], re.I):
+                edit['target'] = _fit_text(getattr(plan, 'headline', ''), 160)
+    if board == 'cutshort' and plan is not None:
+        # Its talent card stores company chips, not per-role prose or dates.
+        # Keep company history in scope while verifying only the supported field.
+        for entry in getattr(plan, 'experience', []) or []:
+            company = re.sub(r'\s*\(formerly[^)]*\)', '', str(entry.get('company', '')), flags=re.I).strip()
+            if not company:
+                continue
+            for edit in result:
+                if re.match(r'^(?:employment|work experience):', edit['name'], re.I) and key(company) in key(edit['name']):
+                    edit.update(target=company, action='update',
+                                why='Verify this company chip. Cutshort has no per-role description or date editor.')
     for fact in fact_edits(profile, board):
         # Only replace an atomic field. A combined card remains an independent
         # task, with an explicit instruction that these atomic facts take priority.
@@ -237,12 +283,14 @@ def reconcile(edits: List[Dict[str, str]], profile: Any, board: str, plan: Any) 
         else:
             result.append(fact)
     if plan is not None:
-        basics = [("Headline", getattr(plan, 'headline', '')),
+        basics = [("Headline", _fit_text(getattr(plan, 'headline', ''), 160) if board == 'wellfound' else getattr(plan, 'headline', '')),
                   ("Skills", ", ".join((getattr(plan, 'key_skills', []) or [])[:20 if board == 'instahyre' else 15 if board == 'hirist' else 100])),
                   ("About" if board == 'linkedin' else "Profile summary",
-                   getattr(plan, 'about' if board == 'linkedin' else 'short_summary' if board == 'hirist' else 'summary', ''))]
+                   _fit_text(getattr(plan, 'short_summary', ''), 500) if board == 'hirist' else
+                   getattr(plan, 'about' if board == 'linkedin' else 'summary', ''))]
         for name, target in basics:
-            if target and not any(key(name) in key(e['name']) or key(e['name']) in key(name) for e in result):
+            if target and not any(key(name) in key(e['name']) or key(e['name']) in key(name)
+                                  or (_summary_section(name) and _summary_section(e['name'])) for e in result):
                 result.append(dict(name=name, target=target, action='update', current='',
                                    why='Required by the saved profile plan; inspect and update the existing section.'))
         for kind, entries in (("Project", getattr(plan, 'projects', []) or []),
@@ -255,6 +303,8 @@ def reconcile(edits: List[Dict[str, str]], profile: Any, board: str, plan: Any) 
                 if any(key(canonical) in key(e['name']) for e in result):
                     continue
                 target = str(entry.get('description') or entry.get('title') or name)
+                if kind == 'Employment' and board == 'cutshort':
+                    target = canonical
                 if kind == 'Employment' and board in ('hirist', 'instahyre'):
                     target = ', '.join(str(entry.get(k, '')) for k in ('title', 'company', 'start', 'end') if entry.get(k))
                 result.append(dict(name=kind + ': ' + name, target=target, action='update', current='',
@@ -277,7 +327,7 @@ def reconcile(edits: List[Dict[str, str]], profile: Any, board: str, plan: Any) 
         excluded = exclusion_reason(profile, edit['name'])
         if excluded:
             edit.update(action='skip', target='', why=excluded)
-        identity = key(edit['name'])
+        identity = 'profile summary' if _summary_section(edit['name']) else key(edit['name'])
         if identity in unique and unique[identity].get('target') != edit.get('target'):
             unique[identity].update(action='skip', why='needs review: conflicting targets for the same field')
         else:

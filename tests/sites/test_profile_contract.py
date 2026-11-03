@@ -259,3 +259,92 @@ def test_parallel_boards_do_not_overwrite_each_others_reports(tmp_path):
         list(pool.map(lambda record: profile_record.save(record, tmp_path), records))
     assert len(profile_record.load(tmp_path)) == len(records)
     assert len(profile_record.history(tmp_path)) == len(records)
+
+
+def test_cutshort_keeps_company_history_without_asking_for_unavailable_role_prose():
+    from cutshort_bot.board import BOARD as cutshort
+    plan = ProfilePlan(experience=[dict(company='Example AI (formerly Old Co)', title='Engineer', description='Long prose')])
+    edits = [dict(name='Employment: Example AI', target='Long prose', action='skip')]
+    result = contract.reconcile(edits, None, 'cutshort', plan)
+    assert result[0]['target'] == 'Example AI' and result[0]['action'] == 'update'
+    assert not agent.unsupported_section(cutshort, 'Employment: Example AI')
+
+
+def test_summary_alias_does_not_add_a_second_task_for_the_same_editor():
+    plan = ProfilePlan(summary='Saved summary')
+    edits = [dict(name='About / summary', target='Saved summary', action='update')]
+    result = contract.reconcile(edits, None, 'cutshort', plan)
+    assert len(result) == 1
+
+
+def test_board_character_limits_keep_verification_target_equal_to_entered_text():
+    headline = 'Software Engineer building reliable applications with Python and TypeScript. ' * 4
+    plan = ProfilePlan(headline=headline, short_summary='I build reliable applications. ' * 30)
+    edits = contract.reconcile([dict(name='Your bio / Headline', target=headline, action='update')],
+                               None, 'wellfound', plan)
+    assert len(edits[0]['target']) <= 160 and headline.startswith(edits[0]['target'])
+    summary = contract.reconcile([dict(name='Profile summary (About)', target='wrong full summary', action='update')],
+                                 None, 'hirist', plan)[0]['target']
+    assert len(summary) <= 500 and plan.short_summary.startswith(summary)
+
+
+def test_live_board_city_labels_are_verified_without_using_preferred_cities():
+    assert contract.verify_fact('current_location', 'Gurugram, India',
+                                'Your current city Gurugram Office preference Pune')[0] is True
+    assert contract.verify_fact('current_location', 'Gurugram, India',
+                                'Where are you based? Pune Preferred location Gurugram')[0] is False
+
+
+def test_cutshort_current_salary_alias_keeps_units_and_separate_expected_salary():
+    assert contract.verify_fact('current_ctc_lpa', '16 LPA',
+                                'Your current or last drawn salary ? INR 16 Lacs per year')[0] is True
+    assert contract.verify_fact('current_ctc_lpa', '16 LPA',
+                                'Your current or last drawn salary ? INR 1.6 Lacs per year Expected salary 16 LPA')[0] is False
+
+
+def test_cutshort_does_not_copy_total_experience_into_full_time_only_field():
+    edits = contract.fact_edits(Profile(total_experience_years=2.9), 'cutshort')
+    assert not any(edit.get('fact_key') == 'total_experience_years' for edit in edits)
+    for field in ('full_time_experience_years', 'internship_experience_months'):
+        experience = next(edit for edit in edits if edit.get('fact_key') == field)
+        assert experience['action'] == 'skip' and field in experience['why']
+    assert contract._summary_section('Your achievements')
+    assert agent._same_section('Your achievements', 'Profile summary')
+    assert contract.protected('Job-search status')
+    assert contract.protected('Show current salary and minimum expected salary to employers')
+
+
+def test_cutshort_supplied_experience_breakdown_is_used_and_verified_with_its_own_units():
+    profile = Profile(total_experience_years=2.9, extra_facts={
+        'full_time_experience_years': 2.5, 'internship_experience_months': 3})
+    edits = contract.fact_edits(profile, 'cutshort')
+    fulltime = next(e for e in edits if e.get('fact_key') == 'full_time_experience_years')
+    internship = next(e for e in edits if e.get('fact_key') == 'internship_experience_months')
+    assert fulltime['action'] == internship['action'] == 'update'
+    assert fulltime['target'] == '2.5 years' and internship['target'] == '3 months'
+    page = 'Full time experience only, excluding internships 2.5 years Internship experience 3 months'
+    assert contract.verify_fact('full_time_experience_years', '2.5 years', page) == (True, [])
+    assert contract.verify_fact('internship_experience_months', '3 months', page) == (True, [])
+    assert contract.verify_fact('internship_experience_months', '3 months', page.replace('3 months', '3 years'))[0] is False
+    assert contract.verify_fact('full_time_experience_years', '2.9 years', page)[0] is False
+
+
+@pytest.mark.parametrize('target', ['Not provided', 'Unknown', '-3 years'])
+def test_malformed_numeric_report_targets_are_unverified_instead_of_crashing(target):
+    assert contract.verify_fact('full_time_experience_years', target,
+                                'Full time experience only, excluding internships 3 years') == (None, [])
+
+
+def test_long_single_word_still_respects_board_character_limit():
+    assert len(contract._fit_text('X' * 200, 160)) == 160
+
+
+@pytest.mark.parametrize('reported', [[], [agent.Section('Notice period', 'already_ok', after='15 days', on_page=True)]])
+def test_skip_for_missing_facts_cannot_be_promoted_by_a_matching_page_value(reported):
+    result = agent.ProfileCheck(False, '', sections=reported)
+    edits = [dict(name='Notice period', action='skip', target='15 days', fact_key='notice_period_days',
+                  why='needs review: conflicting saved facts')]
+    agent.add_planned(result, edits, 'Notice period 15 days')
+    assert result.sections[0].action == 'needs_review'
+    assert result.sections[0].on_page is None
+    assert not result.coverage['complete']
