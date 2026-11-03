@@ -20,7 +20,13 @@ from common.llm import LLMClient
 from common.models import JobPosting, Profile, ScoredJob, Settings, Verdict
 
 
-logger = logging.getLogger(__name__)
+# This module ranks for Naukri, the job boards and the startup bot alike, so its
+# lines are not Naukri's: they carry the name of whatever source is being ranked.
+logger = logging.getLogger("ranking")
+
+
+def _who(source: str) -> str:
+    return source or "Ranking"
 
 
 _BASE_SCORE = 20.0
@@ -174,7 +180,7 @@ def lexical_score(profile: Profile, job: JobPosting) -> Tuple[float, List[str]]:
     return round(max(0.0, min(100.0, score)), 2), reasons
 
 
-def prefilter(profile: Profile, jobs: List[JobPosting], limit: int) -> List[ScoredJob]:
+def prefilter(profile: Profile, jobs: List[JobPosting], limit: int, source: str = "") -> List[ScoredJob]:
     """Lexically score every job and return the highest-scoring candidates.
 
     When this cuts, it cuts on lexical score alone, and the final score is
@@ -194,9 +200,10 @@ def prefilter(profile: Profile, jobs: List[JobPosting], limit: int) -> List[Scor
     if len(scored) > keep:
         dropped = scored[keep:]
         logger.warning(
-            "LLM_RANK_TOP_N=%d cut %d of %d candidates before ranking; the best "
+            "%s: LLM_RANK_TOP_N=%d cut %d of %d candidates before ranking; the best "
             "one dropped scored %.1f lexically against %.1f for the last one "
             "kept. Raise LLM_RANK_TOP_N if those are close.",
+            _who(source),
             limit,
             len(dropped),
             len(scored),
@@ -211,29 +218,33 @@ def rank(
     jobs: List[JobPosting],
     client: LLMClient,
     settings: Settings,
+    source: str = "",
 ) -> List[ScoredJob]:
     """Rank the lexical shortlist, blending optional LLM scores when available."""
+    who = _who(source)
     if settings.any_location and profile.preferred_locations:
         logger.info(
-            "ANY_LOCATION is on: scoring every city alike, ignoring %s",
+            "%s: ANY_LOCATION is on, so every city scores alike and the preferred "
+            "locations (%s) are ignored",
+            who,
             ", ".join(profile.preferred_locations),
         )
         profile = replace(profile, preferred_locations=[])
-    shortlist = prefilter(profile, jobs, settings.llm_rank_top_n)
+    shortlist = prefilter(profile, jobs, settings.llm_rank_top_n, source)
     llm_results: Dict[str, Dict[str, Any]] = {}
     try:
         client_available = client.available()
         if client_available:
             llm_results = llm.score_jobs(client, profile, [item.job for item in shortlist])
     except Exception as error:  # noqa: BROAD_EXCEPT_OK - optional boundary must not stop applications
-        logger.warning("LLM ranking failed; ranking is lexical-only: %s", error)
+        logger.warning("%s: LLM ranking failed; ranking is lexical-only: %s", who, error)
         client_available = False
         llm_results = {}
 
     if not client_available:
-        logger.warning("LLM unavailable; ranking is lexical-only")
+        logger.warning("%s: LLM unavailable; ranking is lexical-only", who)
     elif not llm_results:
-        logger.warning("LLM returned no scores; ranking is lexical-only")
+        logger.warning("%s: LLM returned no scores; ranking is lexical-only", who)
 
     for candidate in shortlist:
         llm_result = llm_results.get(candidate.job.job_id)
@@ -275,7 +286,7 @@ def rank(
 
 
 def drop_stale_candidates(
-    jobs: List[JobPosting], settings: Settings
+    jobs: List[JobPosting], settings: Settings, source: str = ""
 ) -> Tuple[List[JobPosting], int]:
     """Remove jobs too old to be applied to, before they are sent to the LLM.
 
@@ -297,8 +308,9 @@ def drop_stale_candidates(
     dropped = len(jobs) - len(kept)
     if dropped:
         logger.info(
-            "Dropped %d of %d candidates older than %d days before ranking; "
+            "%s: dropped %d of %d candidates older than %d days before ranking; "
             "%d go to the LLM",
+            _who(source),
             dropped,
             len(jobs),
             limit,
@@ -308,7 +320,7 @@ def drop_stale_candidates(
 
 
 def select_for_application(
-    ranked: List[ScoredJob], settings: Settings, is_already_applied
+    ranked: List[ScoredJob], settings: Settings, is_already_applied, source: str = ""
 ) -> List[ScoredJob]:
     """Return every applicable candidate, best score first.
 
@@ -343,9 +355,11 @@ def select_for_application(
 
     selected.sort(key=lambda candidate: candidate.score, reverse=True)
 
+    who = _who(source)
     logger.info(
-        "Application selection dropped %d already applied, %d scoring under "
+        "%s: selection dropped %d already applied, %d scoring under "
         "%.0f, and %d older than %d days; %d eligible for a target of %d",
+        who,
         dropped_applied,
         dropped_score,
         settings.min_score,
@@ -354,13 +368,14 @@ def select_for_application(
         len(selected),
         settings.target_applications,
     )
-    _report_near_misses(ranked, settings, is_already_applied)
+    _report_near_misses(ranked, settings, is_already_applied, source=source)
 
     if len(selected) < settings.target_applications:
         logger.warning(
-            "Only %d jobs are eligible, short of the target of %d. Every one "
+            "%s: only %d jobs are eligible, short of the target of %d. Every one "
             "would have to be applicable to reach it, so expect fewer. Lower "
             "MIN_SCORE or raise MAX_DAYS_OLD to widen the pool.",
+            who,
             len(selected),
             settings.target_applications,
         )
@@ -368,7 +383,8 @@ def select_for_application(
 
 
 def _report_near_misses(
-    ranked: List[ScoredJob], settings: Settings, is_already_applied, margin: float = 10.0
+    ranked: List[ScoredJob], settings: Settings, is_already_applied, margin: float = 10.0,
+    source: str = "",
 ) -> None:
     """Log the jobs that only just failed the score bar.
 
@@ -388,7 +404,8 @@ def _report_near_misses(
     if not near:
         return
     logger.info(
-        "--- %d job(s) within %.0f points below the bar of %.0f, best first ---",
+        "--- %s: %d job(s) within %.0f points below the bar of %.0f, best first ---",
+        _who(source),
         len(near),
         margin,
         bar,

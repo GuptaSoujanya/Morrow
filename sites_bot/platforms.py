@@ -695,12 +695,13 @@ def run_board(
         summary.collected = len(jobs)
         for job in jobs:
             ledger.record_seen(job)
-        jobs, summary.too_old = ranking.drop_stale_candidates(jobs, settings)
-        ranked = ranking.rank(profile, jobs, client, settings)
+        jobs, summary.too_old = ranking.drop_stale_candidates(jobs, settings, source=board.label)
+        ranked = ranking.rank(profile, jobs, client, settings, source=board.label)
         summary.ranked = len(ranked)
         for scored in ranked:
             ledger.record_seen(scored.job, scored.score, scored.gaps)
-        selected = ranking.select_for_application(ranked, replace(settings, target_applications=limit), ledger.has_applied)
+        selected = ranking.select_for_application(ranked, replace(settings, target_applications=limit),
+                                                  ledger.has_applied, source=board.label)
         facts = answers_module.facts_fingerprint(profile, settings)
         held = ledger.waiting_on_you(facts) | ledger.sent_unconfirmed()
         summary.held_back = sum(1 for scored in selected if scored.job.job_id in held)

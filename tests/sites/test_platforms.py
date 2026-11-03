@@ -203,7 +203,7 @@ def test_a_board_run_applies_up_to_the_limit_without_touching_naukri_quota(board
 
     jobs = [_job(str(n)) for n in range(1, 5)]
     monkeypatch.setattr(pf, "collect", lambda driver, board, keywords, limit, pages=1, locations=(): jobs)
-    monkeypatch.setattr(ranking, "rank", lambda profile, found, client, settings: [
+    monkeypatch.setattr(ranking, "rank", lambda profile, found, client, settings, source="": [
         ScoredJob(job=job, score=80.0 - i, reasons=[]) for i, job in enumerate(found)])
     monkeypatch.setattr("naukri_bot.cli._pause_between_applications", lambda settings: None)
     settings = _settings(tmp_path, db_path=str(tmp_path / "t.db"), min_score=50.0)
@@ -271,7 +271,7 @@ def test_a_browser_that_closed_mid_run_is_reopened_and_the_run_goes_on(board_pag
 
     jobs = [_job(str(n)) for n in range(1, 4)]
     monkeypatch.setattr(pf, "collect", lambda driver, board, keywords, limit, pages=1, locations=(): jobs)
-    monkeypatch.setattr(ranking, "rank", lambda profile, found, client, settings: [
+    monkeypatch.setattr(ranking, "rank", lambda profile, found, client, settings, source="": [
         ScoredJob(job=job, score=80.0 - i, reasons=[]) for i, job in enumerate(found)])
     monkeypatch.setattr("naukri_bot.cli._pause_between_applications", lambda settings: None)
     used = []
@@ -292,7 +292,7 @@ def test_without_a_way_to_reopen_the_browser_the_board_stops(board_page, tmp_pat
     from naukri_bot import ranking
 
     monkeypatch.setattr(pf, "collect", lambda driver, board, keywords, limit, pages=1, locations=(): [_job("1")])
-    monkeypatch.setattr(ranking, "rank", lambda profile, found, client, settings: [
+    monkeypatch.setattr(ranking, "rank", lambda profile, found, client, settings, source="": [
         ScoredJob(job=job, score=80.0, reasons=[]) for job in found])
     monkeypatch.setattr(pf, "apply_to", lambda *a: pytest.fail("applied without a browser"))
     settings = _settings(tmp_path, db_path=str(tmp_path / "t.db"), min_score=50.0)
@@ -332,7 +332,7 @@ def test_two_applications_the_board_never_confirmed_stop_the_board(board_page, t
 
     jobs = [_job(str(n)) for n in range(1, 5)]
     monkeypatch.setattr(pf, "collect", lambda driver, board, keywords, limit, pages=1, locations=(): jobs)
-    monkeypatch.setattr(ranking, "rank", lambda profile, found, client, settings: [
+    monkeypatch.setattr(ranking, "rank", lambda profile, found, client, settings, source="": [
         ScoredJob(job=job, score=80.0 - i, reasons=[]) for i, job in enumerate(found)])
     board_page["landed"], board_page["verified"] = "applied", False
     settings = _settings(tmp_path, db_path=str(tmp_path / "t.db"), min_score=50.0)
@@ -779,7 +779,7 @@ def test_a_board_whose_pages_come_up_empty_pauses_once_then_stops(board_page, tm
 
     jobs = [_job(str(n)) for n in range(1, 13)]
     monkeypatch.setattr(pf, "collect", lambda driver, board, keywords, limit, pages=1, locations=(): jobs)
-    monkeypatch.setattr(ranking, "rank", lambda profile, found, client, settings: [
+    monkeypatch.setattr(ranking, "rank", lambda profile, found, client, settings, source="": [
         ScoredJob(job=job, score=80.0, reasons=[]) for job in found])
     monkeypatch.setattr("naukri_bot.cli._pause_between_applications", lambda settings: None)
     monkeypatch.setattr(pf, "apply_to", lambda driver, board, job, *a: pf._result(
@@ -801,7 +801,7 @@ def test_a_page_with_no_apply_button_but_other_controls_is_just_skipped(board_pa
 
     jobs = [_job(str(n)) for n in range(1, 13)]
     monkeypatch.setattr(pf, "collect", lambda driver, board, keywords, limit, pages=1, locations=(): jobs)
-    monkeypatch.setattr(ranking, "rank", lambda profile, found, client, settings: [
+    monkeypatch.setattr(ranking, "rank", lambda profile, found, client, settings, source="": [
         ScoredJob(job=job, score=80.0, reasons=[]) for job in found])
     monkeypatch.setattr("naukri_bot.cli._pause_between_applications", lambda settings: None)
     monkeypatch.setattr(pf, "apply_to", lambda driver, board, job, *a: pf._result(
@@ -894,7 +894,7 @@ def test_job_pages_that_will_not_open_count_as_a_stall_too(board_page, tmp_path,
 
     jobs = [_job(str(n)) for n in range(1, 13)]
     monkeypatch.setattr(pf, "collect", lambda driver, board, keywords, limit, pages=1, locations=(): jobs)
-    monkeypatch.setattr(ranking, "rank", lambda profile, found, client, settings: [
+    monkeypatch.setattr(ranking, "rank", lambda profile, found, client, settings, source="": [
         ScoredJob(job=job, score=80.0, reasons=[]) for job in found])
     monkeypatch.setattr("naukri_bot.cli._pause_between_applications", lambda settings: None)
     monkeypatch.setattr(pf, "apply_to", lambda driver, board, job, *a: pf._result(

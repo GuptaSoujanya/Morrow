@@ -710,7 +710,7 @@ def run(
 
         # Age is a hard gate, so applying it before ranking rather than after
         # keeps the LLM budget on jobs that can actually be applied to.
-        candidates, dropped_stale = ranking.drop_stale_candidates(candidates, settings)
+        candidates, dropped_stale = ranking.drop_stale_candidates(candidates, settings, source="Naukri")
         summary.too_old = dropped_stale
         if not candidates:
             logger.warning(
@@ -722,7 +722,7 @@ def run(
             summary.quota_after = ledger.quota_used()
             return summary
 
-        ranked = ranking.rank(profile, candidates, client, settings)
+        ranked = ranking.rank(profile, candidates, client, settings, source="Naukri")
         summary.ranked = len(ranked)
         summary.not_ranked = len(candidates) - len(ranked)
         for scored in ranked:
@@ -762,7 +762,7 @@ def run(
             return summary
 
         selected = ranking.select_for_application(
-            ranked, settings, ledger.has_applied
+            ranked, settings, ledger.has_applied, source="Naukri"
         )
         facts = answers_module.facts_fingerprint(profile, settings)
         waiting = ledger.waiting_on_you(facts)
