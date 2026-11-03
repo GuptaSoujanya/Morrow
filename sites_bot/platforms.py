@@ -46,6 +46,8 @@ logger = logging.getLogger(__name__)
 
 DRY_RUN = "dry_run"
 PAGE_WAIT_S = 4.0
+#: How long a reloaded job page gets to show its Applied marker after a submit.
+VERIFY_WAIT_S = 20.0
 AFTER_CLICK_WAIT_S = 15.0
 POLL_S = 0.5
 MAX_FORM_PAGES = 6
@@ -521,11 +523,37 @@ def _wait_for_controls(driver: Any, pattern: str, timeout_s: float) -> List[Any]
 
 
 def _verified(driver: Any, board: Board, job: JobPosting) -> bool:
-    """Reload the job page in the board's tab and look for its Applied marker."""
-    if not safe_get(driver, job.url):
+    """Reload the job page in the board's tab and look for its Applied marker.
+
+    Boards write the marker late: Wellfound reloaded right after Submit still
+    showed the Apply button while the application was already on record. The
+    page is given VERIFY_WAIT_S to catch up, then reloaded once more.
+    """
+    for _ in range(2):
+        if not safe_get(driver, job.url):
+            return False
+        deadline = time.monotonic() + VERIFY_WAIT_S
+        while True:
+            time.sleep(PAGE_WAIT_S)
+            if shows_applied(driver, board):
+                return True
+            if time.monotonic() >= deadline:
+                break
+    return _listed_as_application(driver, board, job)
+
+
+_APPLICATIONS_PAGE = {"wellfound": "https://wellfound.com/jobs/applications"}
+
+
+def _listed_as_application(driver: Any, board: Board, job: JobPosting) -> bool:
+    """The board's own list of sent applications names this job (Wellfound lists it as Pending minutes before the job page shows Applied)."""
+    page = _APPLICATIONS_PAGE.get(board.name)
+    title = " ".join((job.title or "").split()).casefold()
+    if not page or len(title) < 8 or not safe_get(driver, page):
         return False
     time.sleep(PAGE_WAIT_S)
-    return shows_applied(driver, board)
+    text = " ".join(_page_text(driver).split()).casefold()
+    return title in text
 
 
 def apply_to(
