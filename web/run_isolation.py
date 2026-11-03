@@ -5,12 +5,14 @@ import os
 from pathlib import Path
 from common import paths
 
-BOARD_LANES = ("hirist", "instahyre", "cutshort", "wellfound")
+BOARD_LANES = ("hirist", "instahyre", "cutshort", "wellfound", "startups")
 OUTPUT_ACTIONS = frozenset(("naukri", "profile", "boards", "external", "resume", "cold_email", "pipeline",
-                            "linkedin", "linkedin_profile", "assist"))
+                            "linkedin", "linkedin_profile", "assist", "startups"))
 
 
 def board_site(command, action):
+    if action == "startups":
+        return "startups"
     if action != "boards":
         return None
     args = command.argv

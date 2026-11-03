@@ -27,7 +27,8 @@ from common import connections
 
 
 logger = logging.getLogger(__name__)
-BOARD_LANES = ("hirist", "instahyre", "cutshort", "wellfound")
+# "startups" is the startup bot's own browser, so it can run while Naukri does.
+BOARD_LANES = ("hirist", "instahyre", "cutshort", "wellfound", "startups")
 _OWN_PROFILE = frozenset(("naukri", "linkedin"))
 _LANES = frozenset(BOARD_LANES) | _OWN_PROFILE
 _OMIT = frozenset(name.casefold() for name in (
