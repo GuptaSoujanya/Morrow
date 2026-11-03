@@ -199,6 +199,38 @@ def test_continue_preserves_historical_plan_without_adding_new_catalogue_stages(
     assert "brief:goal" not in memory.today["stages"]
 
 
+def test_full_continue_adds_enabled_boards_without_repeating_completed_work(tmp_path):
+    memory = Memory(tmp_path, DAY)
+    previous = ["profile:hirist", "apply:hirist"]
+    memory.plan(previous)
+    for name in previous:
+        memory.mark(name, DONE)
+    completed = {name: dict(memory.stage(name)) for name in previous}
+    calls = []
+    additions = ["profile:cutshort", "profile:wellfound", "apply:cutshort",
+                 "apply:wellfound", "apply:startups"]
+    stages = [run.Stage(name, lambda name=name: calls.append(name) or 0)
+              for name in previous + additions]
+
+    assert run.run_day(args(command="continue"), stages, memory) == 0
+    saved = Memory(tmp_path, DAY)
+    assert calls == additions
+    assert saved.planned() == previous + additions
+    assert saved.day_status() == "done"
+    assert all(saved.stage(name) == completed[name] for name in previous)
+
+    calls.clear()
+    assert run.run_day(args(command="continue"), stages, saved) == 0
+    assert calls == []
+
+    # Tomorrow uses the expanded daily plan; yesterday's history remains intact.
+    tomorrow = Memory(tmp_path, date(2026, 10, 23))
+    assert run.run_day(args(command="continue"), stages, tomorrow) == 0
+    assert calls == previous + additions
+    yesterday = Memory(tmp_path, DAY)
+    assert all(yesterday.stage(name)["attempts"] == 1 for name in previous + additions)
+
+
 def test_first_partial_workflow_records_only_selected_steps_for_future_resume(tmp_path):
     memory = Memory(tmp_path, DAY)
     catalogue = ["learn", "profile:naukri", "apply:naukri", "research:resume", "brief:goal"]

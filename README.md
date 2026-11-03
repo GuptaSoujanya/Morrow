@@ -117,6 +117,22 @@ scripts/morrow install && morrow start
 | `morrow logs` | follow the dashboard log |
 | `python3 -m pipeline` | run the whole morning: study, profiles, applications, briefings (picks up where it stopped) |
 
+The daily pipeline uses the latest installed bot code and your saved settings on
+each run. Set `PLATFORMS=hirist,instahyre,cutshort,wellfound` to include all four
+boards, and `STARTUP_JOBS=true` to include YC and Hacker News. Naukri applications
+and the Naukri/LinkedIn profile reviews are already part of the full pipeline.
+Each board reviews its profile before applying; Cutshort checks pending recruiter
+questionnaires before looking for new jobs. Existing application records and
+questionnaire records carry forward between days to prevent repeat submissions.
+
+A full run on a new day builds its plan from the current settings. Continuing a
+full run on the same day adds newly enabled boards and skips completed stages.
+The dashboard's **Resume workflow** keeps that saved workflow's exact scope; use
+a new full pipeline run to include newly enabled boards. `DRY_RUN=true` previews
+bot work without marking the daily plan complete, and the dashboard's Practice
+choice controls the mode explicitly. These commands run the pipeline when
+started; they do not install a daily clock schedule.
+
 > [!TIP]
 > The first real run on each site opens a visible Chrome window so you can enter the OTP. After that the session is saved under `user/browser/` and later runs sign in on their own.
 >

@@ -39,7 +39,10 @@ user/research/daily/<date>/ as soon as it is done; see pipeline/briefing.py.
 A stage counts as done only when its tool exits 0 and the files it wrote are still
 there. When every stage is done the day is marked done in user/memory/ and another run
 that day only prints the checkpoint (--fresh starts over). Boards come from PLATFORMS
-in .env. The briefing agents ask claude and kiro-cli together and merge their answers;
+in .env. Runs that include bots inherit DRY_RUN from settings; --dry-run always
+previews, and previews never complete a checkpoint. Study-only runs keep saving
+their lessons and progress independently of the application setting.
+The briefing agents ask claude and kiro-cli together and merge their answers;
 the other writing stages use claude (--cli claude|kiro or PIPELINE_AI_CLI picks one).
 """
 
@@ -533,6 +536,23 @@ def main(argv: Optional[List[str]] = None, today: Optional[date] = None) -> int:
     if not stages:
         logger.error("No stage matches --only/--skip.")
         return EXIT_CONFIG
+    if not args.dry_run and any(stage.command or stage.name == "read:replies" for stage in stages):
+        # The bot CLIs differ in whether they read DRY_RUN from settings or
+        # only from their flags. Resolve it here for the selected workflow so
+        # every bot gets the same mode, and a preview cannot mark work done.
+        # Pure study/research selections still save their normal checkpoints.
+        from common import config
+        try:
+            args.dry_run = config.load_settings(args.env).dry_run
+        except Exception as exc:
+            logger.error("Could not load settings: %s", exc)
+            return EXIT_CONFIG
+        if args.dry_run:
+            logger.info("[pipeline] DRY_RUN is enabled: previewing bots without completing checkpoints.")
+            # Stage construction has no side effects; rebuild the callbacks
+            # and isolated-process commands with the resolved --dry-run flag.
+            every = build_stages(args, boards)
+            stages = selected(every, args.only, args.skip)
     return run_day(args, stages, mem, [s.name for s in every])
 
 
