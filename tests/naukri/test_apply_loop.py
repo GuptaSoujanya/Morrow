@@ -411,6 +411,60 @@ def test_naukris_own_quota_does_not_stop_the_employers_sites(fake_naukri, tmp_pa
     assert summary.applied_external == 4
 
 
+def test_native_and_company_site_submissions_share_the_run_limit(fake_naukri, tmp_path, monkeypatch):
+    from sites_bot import external as external_module
+    from sites_bot.external import ExternalResult
+
+    install, attempted = fake_naukri
+    queue = [_scored(80.0 - i, 1, "j%02d" % i) for i in range(8)]
+    install(queue, {"j00": ApplyStatus.EXTERNAL_SKIPPED, "j02": ApplyStatus.EXTERNAL_SKIPPED})
+    sites = []
+
+    def on_site(driver, job, profile, engine, settings, pdf):
+        sites.append(job.job_id)
+        return ExternalResult(status=ApplyStatus.APPLIED_EXTERNAL, url=job.url, detail="Application confirmed")
+
+    monkeypatch.setattr(external_module, "apply_on_company_site", on_site)
+    summary = _run(tmp_path, _settings(target_applications=3, external_apply=True, external_apply_limit=10))
+
+    assert attempted == ["j00", "j01", "j02"], "the next job must not open once both routes fill the target"
+    assert sites == ["j00", "j02"]
+    assert (summary.applied, summary.applied_external) == (1, 2)
+
+
+@pytest.mark.parametrize("quota_used", [2, 3])
+def test_company_sites_fill_only_the_remaining_run_budget_after_native_quota(
+        fake_naukri, tmp_path, monkeypatch, quota_used):
+    """The native quota can expire during the run or already be exhausted."""
+    from common.ledger import Ledger
+    from sites_bot import external as external_module
+    from sites_bot.external import ExternalResult
+
+    install, attempted = fake_naukri
+    queue = [_scored(80.0 - i, 1, "j%02d" % i) for i in range(8)]
+    install(queue, {})
+    ledger = Ledger(str(tmp_path / "test.db"))
+    for i in range(quota_used):
+        ledger.record_attempt(_result(_scored(80, 1, "earlier-%d" % i).job, ApplyStatus.APPLIED))
+    ledger.close()
+    monkeypatch.setattr(apply_module, "apply_button_kind", lambda driver, job: "external")
+    sites = []
+
+    def on_site(driver, job, profile, engine, settings, pdf):
+        sites.append(job.job_id)
+        return ExternalResult(status=ApplyStatus.APPLIED_EXTERNAL, url=job.url, detail="Application confirmed")
+
+    monkeypatch.setattr(external_module, "apply_on_company_site", on_site)
+    summary = _run(tmp_path, _settings(daily_quota=3, target_applications=3,
+                                     external_apply=True, external_apply_limit=10))
+
+    assert attempted == (["j00"] if quota_used == 2 else [])
+    assert sites == (["j01", "j02"] if quota_used == 2 else ["j00", "j01", "j02"])
+    assert summary.applied == 3 - quota_used
+    assert summary.applied + summary.applied_external == 3
+    assert summary.quota_after == 3, "company-site submissions must not consume Naukri's native quota"
+
+
 def test_a_used_up_naukri_quota_stops_the_run_when_company_sites_are_off(fake_naukri, tmp_path):
     install, attempted = fake_naukri
     queue = [_scored(80.0 - i, 1, "j%02d" % i) for i in range(5)]

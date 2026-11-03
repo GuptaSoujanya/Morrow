@@ -842,10 +842,17 @@ def run(
             # answers, so once the model is out these postings are worth more
             # tomorrow than as failures today.
             return (settings.external_apply
+                    and summary.applied + summary.applied_external < wanted
                     and company_site_tries < settings.external_apply_limit
                     and not llm.out_of_quota())
 
         for scored in selected:
+            # The requested run limit covers both submission routes. Naukri's
+            # smaller daily allowance can still leave room for company sites.
+            if summary.applied + summary.applied_external >= wanted:
+                logger.info("Reached this run's limit of %d applications (%d Naukri, %d company sites).",
+                            wanted, summary.applied, summary.applied_external)
+                break
             if naukri_open:
                 closed = ""
                 if summary.applied >= settings.target_applications:
@@ -973,6 +980,7 @@ def run(
                 sent
                 and not settings.dry_run
                 and summary.applied < settings.target_applications
+                and summary.applied + summary.applied_external < wanted
             ):
                 _pause_between_applications(settings)
 
