@@ -230,6 +230,27 @@ def test_the_per_run_limit_holds(claude, settings, profile, job):
     assert agent.tasks_left(settings) == 1
 
 
+def test_a_higher_run_limit_allows_more_than_fifty_tasks(settings, monkeypatch):
+    settings.browser_agent_limit = 200
+    monkeypatch.setattr(agent, "_started", 50)
+    assert agent.should_take_over(settings, _stuck())
+    assert agent.tasks_left(settings) == 150
+    monkeypatch.setattr(agent, "_started", 200)
+    assert not agent.should_take_over(settings, _stuck())
+
+
+def test_zero_budget_runs_without_a_dollar_cap(claude, settings, profile, job, tmp_path):
+    settings.browser_agent_budget_usd = 0
+    claude.report = {"status": "submitted", "why": "done", "confirmation": THANKS}
+    driver = _Driver({"naukri": "Naukri", "site": "Acme Labs " + THANKS})
+
+    result = agent.take_over(driver, job, profile, settings, _resume(tmp_path), False, _stuck())
+
+    assert len(claude.calls) == 1
+    assert "--max-budget-usd" not in claude.calls[0].command
+    assert result.status == ApplyStatus.APPLIED_EXTERNAL
+
+
 # ---------------------------------------------------------------------------
 # What the agent is told and allowed
 # ---------------------------------------------------------------------------

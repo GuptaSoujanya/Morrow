@@ -354,8 +354,11 @@ def claude_command(settings: Settings, prompt: str, config_path: Path, system: s
         # One JSON event per line, so every browser step lands in transcript.jsonl.
         "--output-format", "stream-json", "--verbose",
         "--no-session-persistence",
-        "--max-budget-usd", "%g" % settings.browser_agent_budget_usd,
     ]
+    # Zero disables the app's dollar cap; Claude's account usage limits remain.
+    # Omit the flag entirely: passing 0 to Claude would impose a zero budget.
+    if settings.browser_agent_budget_usd != 0:
+        command += ["--max-budget-usd", "%g" % settings.browser_agent_budget_usd]
     if system:
         # The agent's role and standing instructions, kept apart from the task itself.
         command += ["--append-system-prompt", system]

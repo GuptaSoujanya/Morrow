@@ -428,6 +428,7 @@ class Settings:
     browser_agent: bool = False
     browser_agent_limit: int = 5
     browser_agent_timeout_s: int = 900
+    # Optional app-set dollar cap for an application task. 0 omits the cap.
     browser_agent_budget_usd: float = 5.0
     browser_agent_model: str = ""
     # The MCP server command, pinned so a run never waits on a fresh download.

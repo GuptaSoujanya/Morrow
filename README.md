@@ -255,6 +255,18 @@ has a direct source and quote; missing fields remain visible. Application rows l
 company record with Pending, Researching, Found, Partial, Not found or Failed status.
 These local automation records are available only to the local workspace or its explicit owner.
 
+Select company rows, then choose **Draft selected** to prepare pitches for that exact selection
+(up to 50 companies). Selections survive searching and pagination. After confirmation, the
+Drafts view shows each recipient, pitch, attached résumé and save result. Only verified public
+hiring addresses are used; companies without one remain marked as missing.
+
+The company draft saver reuses the verified **Google / Gmail** session in Connections when
+its account matches the sender. It checks the active Gmail account, uploads the PDF résumé,
+then reopens the saved draft to verify the recipient, body and attachment. An existing Gmail
+app-password connection is also supported. The shared automation browser must be available;
+the dashboard prevents another workflow from using it during the save. Interrupted or
+ambiguous saves require review, and existing drafts are reused. **This action never sends email.**
+
 The final daily stage, `research:companies`, researches up to 10 remaining employers after all
 application lanes finish. A remaining backlog keeps the stage pending for the next continuation.
 Previously researched employers are reused; failed research backs off and stops automatic retries
@@ -268,7 +280,11 @@ venv/bin/python -m pipeline continue --only research:companies
 ```
 
 Application assistance respects `BROWSER_AGENT`, `BROWSER_AGENT_LIMIT`,
-`BROWSER_AGENT_TIMEOUT_S` and `BROWSER_AGENT_BUDGET_USD`. A fresh website layout, inaccessible
+`BROWSER_AGENT_TIMEOUT_S` and `BROWSER_AGENT_BUDGET_USD`. Set
+`BROWSER_AGENT_BUDGET_USD=0` to remove the app's per-application dollar cap; positive
+values pass a dollar cap to Claude Code. Your Claude account usage limits still
+apply, and billing follows the CLI's login or API credentials. This does not change
+the separate profile-agent budget. A fresh website layout, inaccessible
 source, MFA or CAPTCHA can still require review; neither a model report nor missing public data
 is presented as a verified success.
 

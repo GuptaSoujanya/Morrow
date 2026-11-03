@@ -7,6 +7,7 @@ postings written down as errors.
 """
 
 import subprocess
+from types import SimpleNamespace
 
 import pytest
 
@@ -90,9 +91,21 @@ class _Driver:
     current_url = "https://example.com/apply"
     window_handles = ["one"]
 
+    def find_element(self, by, value):
+        assert (by, value) == ("tag name", "body")
+        return SimpleNamespace(text="Application form: Address Line 1*")
 
-def _agent_settings():
-    return Settings(browser_agent=True, browser_agent_limit=50)
+    def execute_script(self, script):
+        return []
+
+
+def _agent_settings(tmp_path):
+    return Settings(
+        browser_agent=True, browser_agent_limit=50,
+        data_dir=str(tmp_path / "inputs"),
+        report_dir=str(tmp_path / "reports"),
+        resume_out_dir=str(tmp_path / "resume"),
+    )
 
 
 def _hand_over(monkeypatch, tmp_path, run):
@@ -102,7 +115,7 @@ def _hand_over(monkeypatch, tmp_path, run):
     browser_agent.reset()
     monkeypatch.setattr(browser_agent, "run_agent", lambda *a, **k: run)
     monkeypatch.setattr(browser_agent, "workdir_for", lambda settings, label: tmp_path)
-    settings = _agent_settings()
+    settings = _agent_settings(tmp_path)
     before = browser_agent.tasks_left(settings)
     browser_agent.finish_application(
         driver=_Driver(),
@@ -112,13 +125,13 @@ def _hand_over(monkeypatch, tmp_path, run):
     return before, browser_agent.tasks_left(settings)
 
 
-def test_the_agent_stands_down_while_the_model_is_out():
+def test_the_agent_stands_down_while_the_model_is_out(tmp_path):
     from sites_bot import browser_agent
 
     browser_agent.reset()
-    assert browser_agent.should_take_over(_agent_settings(), _stopped_short()) is True
+    assert browser_agent.should_take_over(_agent_settings(tmp_path), _stopped_short()) is True
     llm.note_out_of_quota(SESSION_LIMIT)
-    assert browser_agent.should_take_over(_agent_settings(), _stopped_short()) is False
+    assert browser_agent.should_take_over(_agent_settings(tmp_path), _stopped_short()) is False
 
 
 def test_a_try_the_spent_window_wasted_is_given_back(monkeypatch, tmp_path):
