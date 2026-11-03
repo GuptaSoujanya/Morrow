@@ -269,10 +269,7 @@ def _submit_create(driver: Any, email: str, password: str, profile: Profile) -> 
 
 
 def _google_button_shown(driver: Any) -> bool:
-    try:
-        return any(element.is_displayed() for element in driver.find_elements(By.XPATH, ext._GOOGLE_BUTTON_XPATH))
-    except WebDriverException:
-        return False
+    return bool(ext.google_sign_in_controls(driver))
 
 
 def _clear_verification(driver: Any, settings: Settings, host: str) -> str:

@@ -222,7 +222,14 @@ def _confirmation_url(url: str) -> bool:
 
 _LOWER = "translate(normalize-space(.),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')"
 _CLICKABLE_XPATH = "//*[self::button or self::a or @role='button' or @type='submit']"
-_GOOGLE_BUTTON_XPATH = "%s[contains(%s,'google')]" % (_CLICKABLE_XPATH, _LOWER)
+_GOOGLE_SIGN_IN_LABEL = re.compile(
+    r"(?:(?:sign[ -]?in|log[ -]?in|sign[ -]?up|register|continue|connect|authenticate) "
+    r"(?:with|using|via) (?:your )?google(?: account)?|use (?:your )?google account)", re.I)
+_CONTROL_FURNITURE_SCRIPT = """
+const el = arguments[0];
+return !el.closest('[role="dialog"], dialog') &&
+  Boolean(el.closest('header, footer, nav, [role="navigation"], [role="banner"], [role="contentinfo"]'));
+"""
 
 # One round trip returns every usable control with the text a person would read
 # as its label, so the Python side never has to walk the DOM element by element.
@@ -691,6 +698,36 @@ def _control_text(element: Any) -> str:
         return ""
 
 
+def _control_in_furniture(driver: Any, element: Any) -> bool:
+    try:
+        return driver.execute_script(_CONTROL_FURNITURE_SCRIPT, element) is True
+    except WebDriverException:
+        return False
+
+
+def google_sign_in_controls(driver: Any) -> List[Any]:
+    """Only explicit Google authentication actions, never Google product links."""
+    controls = []
+    for element in _visible_controls(driver):
+        if _control_in_furniture(driver, element):
+            continue
+        try:
+            labels = [_control_text(element), _clean(element.get_attribute("aria-label") or "")]
+            if any(_GOOGLE_SIGN_IN_LABEL.fullmatch(label) for label in labels):
+                controls.append(element)
+                continue
+            # Icon-only provider buttons may say just "Google". They need an
+            # actual authentication destination, rather than /search-api etc.
+            link = urlparse(element.get_attribute("href") or "")
+            if any(label.casefold() == "google" for label in labels) and (
+                    (link.hostname or "").lower() == "accounts.google.com"
+                    or re.search(r"/(?:auth|oauth|login|signin)/google(?:_oauth2)?/?$", link.path, re.I)):
+                controls.append(element)
+        except WebDriverException:
+            continue
+    return controls
+
+
 def _click(driver: Any, element: Any) -> None:
     try:
         driver.execute_script(_SCROLL_SCRIPT, element)
@@ -979,6 +1016,11 @@ def reveal_form(driver: Any, settle_s: Optional[float] = None) -> List[Field]:
         yc_job = _yc_job_url(_current_url(driver))
         for control in _visible_controls(driver):
             text = _control_text(control)
+            try:
+                if (control.get_attribute("href") or "").lower().startswith("mailto:"):
+                    continue  # An email route must never launch the OS mail app.
+            except WebDriverException:
+                continue
             if yc_job:
                 # YC's header "Apply" starts a founder/funding application.
                 # A job listing instead has its own "Apply to role ›" link.
@@ -1031,9 +1073,12 @@ def find_form_with_help(
     time, up to page_brain.MAX_STEPS.
     """
     from . import page_brain
+    from .application_brain import mailbox
 
     client = getattr(answer_engine, "client", None)
     for _ in range(page_brain.MAX_STEPS):
+        if mailbox(driver):
+            return [], ""
         text = _page_text(driver)
         gone = page_brain.dead_reason(text)
         if gone:
@@ -1072,7 +1117,7 @@ def find_form_with_help(
         if new:
             driver.switch_to.window(new[-1])
         fields = application_fields(reveal_form(driver))
-        if len(fields) >= 2 or wants_account(driver, fields):
+        if len(fields) >= 2 or mailbox(driver) or wants_account(driver, fields):
             return fields, ""
     return [], "the page brain clicked %d time(s) and still found no form on %s" % (page_brain.MAX_STEPS, _current_url(driver))
 
@@ -1083,39 +1128,86 @@ def wants_account(driver: Any, fields: List[Field]) -> bool:
         return not any(item.kind == "file" for item in fields)
     if len(fields) >= 2:
         return False
-    texts = " | ".join(_control_text(control) for control in _visible_controls(driver))
+    # A product site's navigation can offer customer sign-in while the career
+    # page itself is public. That does not make this application an account wall.
+    texts = " | ".join(_control_text(control) for control in _visible_controls(driver)
+                       if not _control_in_furniture(driver, control))
     return bool(_SIGN_IN.search(texts))
+
+
+def _google_account_page(url: str) -> bool:
+    return (urlparse(url).hostname or "").lower() == "accounts.google.com"
+
+
+def _google_application_state(driver: Any) -> Tuple[Any, ...]:
+    fields = application_fields(discover_fields(driver))
+    return (tuple((item.kind, item.question, item.name) for item in fields),
+            any(re.fullmatch(r"sign out|log out|logout", _control_text(control), re.I)
+                for control in _visible_controls(driver)),
+            tuple(_control_text(control) for control in google_sign_in_controls(driver)))
+
+
+def _google_application_ready(driver: Any, start_url: str, before: Tuple[Any, ...]) -> bool:
+    """Require changed application/session evidence on the employer's site."""
+    if (urlparse(_current_url(driver)).hostname or "").lower() != (urlparse(start_url).hostname or "").lower():
+        return False
+    after = _google_application_state(driver)
+    if after == before:
+        return False
+    fields = application_fields(discover_fields(driver))
+    if len(fields) >= 2 and not wants_account(driver, fields) and (
+            any(item.kind == "file" for item in fields) or not after[2]):
+        return True
+    return after[1] and not before[1]
 
 
 def google_sign_in(driver: Any, settings: Settings, timeout_s: float = MANUAL_LOGIN_TIMEOUT_S) -> Tuple[bool, str]:
     """Use the Google session already in the browser profile; never type a Google password."""
-    buttons = [element for element in driver.find_elements(By.XPATH, _GOOGLE_BUTTON_XPATH) if element.is_displayed()]
+    buttons = google_sign_in_controls(driver)
     if not buttons:
         return False, "no Google sign-in button"
     if not settings.google_email:
         return False, "GOOGLE_EMAIL is not set, so the account to pick is unknown"
     main = driver.current_window_handle
+    start_url = _current_url(driver)
+    initial_application = _google_application_state(driver)
     before = set(driver.window_handles)
     _click(driver, buttons[0])
 
     deadline = time.monotonic() + GOOGLE_WAIT_S
     popup = None  # type: Optional[str]
     while time.monotonic() < deadline:
+        if popup is not None and popup not in driver.window_handles:
+            driver.switch_to.window(main)
         new = [handle for handle in driver.window_handles if handle not in before]
         if new:
             popup = new[-1]
             driver.switch_to.window(popup)
-        if "accounts.google.com" in _current_url(driver) or (popup is None and _current_url(driver) != ""):
+        if _google_account_page(_current_url(driver)):
             break
+        if _google_application_ready(driver, start_url, initial_application):
+            _leave_popup(driver, popup, main)
+            return True, "google"
         time.sleep(POLL_S)
+    else:
+        _leave_popup(driver, popup, main)
+        return False, "Google sign-in did not open or show a signed-in application"
 
     wanted = settings.google_email.casefold()
     chooser_deadline = time.monotonic() + GOOGLE_WAIT_S
     asked_person = False
     while True:
+        if popup is not None and popup not in driver.window_handles:
+            driver.switch_to.window(main)
         url = _current_url(driver)
-        if "accounts.google.com" not in url:
-            break
+        if not _google_account_page(url):
+            if _google_application_ready(driver, start_url, initial_application):
+                break
+            if time.monotonic() >= chooser_deadline:
+                _leave_popup(driver, popup, main)
+                return False, "Google returned without a verified application or signed-in session"
+            time.sleep(POLL_S)
+            continue
         try:
             accounts = [
                 element
@@ -1815,6 +1907,11 @@ def apply_here(
     from .page_brain import dead_reason
 
     fields = application_fields(reveal_form(driver))
+    recipient = mailbox(driver)
+    if recipient:
+        result.url = _current_url(driver)
+        result.detail = 'this employer takes applications by email only: %s' % recipient
+        return result
     stuck = ""
     if len(fields) < 2:
         gone = dead_reason(_page_text(driver))
@@ -1832,6 +1929,13 @@ def apply_here(
             if stuck.startswith("the posting is gone"):
                 result.status, result.detail = GONE, stuck
                 return result
+    # Opening a role from a careers index may reveal a mailto application.
+    # Detect it before customer-account navigation can take the tab elsewhere.
+    recipient = mailbox(driver)
+    if recipient:
+        result.url = _current_url(driver)
+        result.detail = 'this employer takes applications by email only: %s' % recipient
+        return result
     # Workday asks for a new account's password once more right after creating it.
     for _ in range(2):
         if not wants_account(driver, fields):

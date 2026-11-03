@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from common import paths
-from common.models import ApplyStatus, JobPosting, Settings
+from common.models import ApplyResult, ApplyStatus, JobPosting, Settings
 from sites_bot import startup_jobs
 from sites_bot.startup_jobs import StartupPost
 
@@ -33,17 +33,61 @@ logger = logging.getLogger(__name__)
 PENDING_FILE = "startup_jobs.md"
 #: apply_on_site's status when the site only takes email and a draft was written instead.
 EMAILED = "emailed"
-_EMAIL_APPLICATION = re.compile(r"(?:email|e-mail|mail)\b[^.;|]{0,80}?\b([a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,24})", re.I)
+_ACCESS_NEEDED = re.compile(
+    r"\bsign[ -]?in\b|\blog[ -]?in\b|\bsigned out\b|\bpassword\b|\botp\b|\bcaptcha\b"
+    r"|\b(?:human|browser) verification\b|\b(?:verification|security|one[- ]time) code\b"
+    r"|\bcreate (?:an? )?account\b|\baccount (?:creation|registration)\b", re.I)
 
 
-def emailed_to(result: Any) -> str:
-    """The address a site said to apply to by email, from the applier's or browser agent's report; or ''."""
-    text = " ".join([result.detail or ""] + list(result.missing or []))
-    match = _EMAIL_APPLICATION.search(text)
-    if not match:
+def emailed_to(driver: Any, settings: Settings, profile: Any) -> str:
+    """Only a visible, published application mailto can supply a draft recipient.
+
+    Agent diagnostics often contain the candidate's own sign-in address. They
+    are not evidence that the employer accepts applications at that address.
+    """
+    from sites_bot.application_brain import mailbox
+
+    address = mailbox(driver).strip().lower()
+    own = {str(value).strip().lower() for value in (
+        settings.email, settings.google_email, settings.company_site_email,
+        settings.cold_email_from, getattr(profile, "email", "")) if value}
+    if address in own or re.match(r"(?:no-?reply|privacy|legal|support|press|sales)@", address):
         return ""
-    address = match.group(1).lower().rstrip(".")
-    return "" if re.match(r"(?:no-?reply|privacy|legal|support|press|sales)@", address) else address
+    return address
+
+
+def _drafted_jobs(settings: Settings) -> set:
+    """Saved drafts are unfinished applications, not new work for another run."""
+    from sites_bot.cold_email import read_records
+
+    return {(str(row.get("job_url", "")).strip(), " ".join(str(row.get("title", "")).casefold().split()))
+            for row in read_records(settings) if isinstance(row, dict)
+            and row.get("job_url") and row.get("title") and row.get("email")
+            and row.get("drafted_at") and (row.get("eml") or row.get("gmail_draft"))}
+
+
+def _record_attempt(ledger: Any, result: Any, job: JobPosting, profile: Any, settings: Settings) -> None:
+    """Keep answer-dependent stops held until facts change, but allow access fixes."""
+    from common.answers import facts_fingerprint
+
+    facts = facts_fingerprint(profile, settings)
+    detail = " ".join([result.detail or "", *list(result.missing or [])])
+    if result.status == ApplyStatus.EXTERNAL_MANUAL:
+        if _ACCESS_NEEDED.search(detail):
+            # Signing in changes the browser session, not the saved profile facts.
+            facts = ""
+        elif result.missing or re.search(r"\bneeds[_ ]you\b", detail, re.I):
+            if "needs you for" not in (result.detail or "").casefold():
+                result = replace(result, detail="needs you for: " + (result.detail or "; ".join(result.missing)))
+    ledger.record_attempt(result.to_apply_result(job), title=job.title, company=job.company, facts=facts)
+
+
+def _record_draft(ledger: Any, job: JobPosting, address: str, profile: Any, settings: Settings) -> None:
+    from common.answers import facts_fingerprint
+
+    ledger.record_attempt(ApplyResult(job_id=job.job_id, url=job.url, status=ApplyStatus.EXTERNAL_MANUAL,
+        detail="needs you for: Review the saved email draft to %s. No application has been submitted." % address),
+        title=job.title, company=job.company, facts=facts_fingerprint(profile, settings))
 
 
 def choose(settings: Settings, profile: Any, ledger: Any, client: Any, limit: int,
@@ -57,14 +101,16 @@ def choose(settings: Settings, profile: Any, ledger: Any, client: Any, limit: in
     jobs = [post.job for post in posts.values()]
     for job in jobs:
         ledger.record_seen(job)
-    jobs, _ = ranking.drop_stale_candidates(jobs, settings)
-    ranked = ranking.rank(profile, jobs, client, settings)
+    drafts = _drafted_jobs(settings)
+    held = ledger.waiting_on_you(answers_module.facts_fingerprint(profile, settings)) | ledger.sent_unconfirmed()
+    jobs = [job for job in jobs if job.job_id not in held and not blocked(settings, job)
+            and (job.url.strip(), " ".join(job.title.casefold().split())) not in drafts]
+    jobs, _ = ranking.drop_stale_candidates(jobs, settings, source="Startup jobs")
+    ranked = ranking.rank(profile, jobs, client, settings, source="Startup jobs")
     for scored in ranked:
         ledger.record_seen(scored.job, scored.score, scored.gaps)
-    held = ledger.waiting_on_you(answers_module.facts_fingerprint(profile, settings)) | ledger.sent_unconfirmed()
-    ranked = [s for s in ranked if s.job.job_id not in held and not blocked(settings, s.job)]
     selected = ranking.select_for_application(ranked, replace(settings, target_applications=limit),
-                                              ledger.has_applied)
+                                              ledger.has_applied, source="Startup jobs")
     chosen = [(posts[s.job.job_id], s.score) for s in selected[:limit]]
     logger.info("Startup jobs: %d found, %d ranked, %d chosen", len(posts), len(ranked), len(chosen))
     choose.last = {"collected": len(posts), "ranked": len(ranked), "eligible": len(chosen)}
@@ -111,10 +157,14 @@ def forget_pending(settings: Settings, job: JobPosting) -> None:
 def apply_on_site(driver: Any, settings: Settings, profile: Any, engine: Any, client: Any, ledger: Any,
                   post: StartupPost, dry_run: bool, no_tailor: bool) -> str:
     """Apply on the post's own page; the status it ended with."""
-    from sites_bot import browser_agent
+    from sites_bot import application_brain, browser_agent
     from sites_bot import external as ext
 
     job = post.job
+    prior = application_brain.blocked(settings, job)
+    if prior or job.job_id in ledger.sent_unconfirmed():
+        logger.info("      -> skipped: a saved application outcome needs review before retrying")
+        return ApplyStatus.ALREADY_APPLIED if prior == "confirmed" else ApplyStatus.EXTERNAL_MANUAL
     engine.set_job_context(job)
     resume_pdf = ext.resume_to_attach(settings, client, job, no_tailor)
     if not ext.safe_get(driver, post.apply_url):
@@ -124,19 +174,25 @@ def apply_on_site(driver: Any, settings: Settings, profile: Any, engine: Any, cl
     result = ext.apply_here(driver, job, profile, engine, settings, resume_pdf, dry_run)
     result = browser_agent.take_over(driver, job, profile, settings, resume_pdf, dry_run, result)
     logger.info("      -> %s (%s)", result.status, (result.detail or "")[:250])
-    address = emailed_to(result)
-    if address and result.status != ApplyStatus.APPLIED_EXTERNAL:
+    address = emailed_to(driver, settings, profile)
+    if (address and result.status == ApplyStatus.EXTERNAL_MANUAL
+            and not application_brain.blocked(settings, job)
+            and job.job_id not in ledger.sent_unconfirmed()):
         # The site says "email us": that is the application, so it becomes a draft for you to send.
         post.contacts.insert(0, startup_jobs.Contact(address, "hiring"))
         drafted = draft_emails(settings, profile, client, [post], dry_run, driver).get("drafted", 0)
         logger.info("      -> takes applications by email: %s draft for %s", "a" if drafted else "no", address)
         if drafted:
             if not dry_run:
+                _record_draft(ledger, job, address, profile, settings)
                 forget_pending(settings, job)
             return EMAILED
     if dry_run:
         return result.status
-    ledger.record_attempt(result.to_apply_result(job), title=job.title, company=job.company)
+    if job.job_id in ledger.sent_unconfirmed():
+        # A concurrent saved uncertainty must remain the latest ledger entry.
+        return ApplyStatus.EXTERNAL_MANUAL
+    _record_attempt(ledger, result, job, profile, settings)
     if result.status in (ApplyStatus.APPLIED_EXTERNAL, ApplyStatus.ALREADY_APPLIED, ext.GONE):
         forget_pending(settings, job)
     else:

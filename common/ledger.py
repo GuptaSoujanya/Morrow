@@ -59,6 +59,7 @@ class Ledger:
             self._ensure_fingerprint_column()
             self._ensure_facts_column()
             self._ensure_gaps_column()
+            self._ensure_description_column()
         except sqlite3.Error:
             logger.exception("failed to open ledger database at %s", db_path)
             raise
@@ -100,6 +101,13 @@ class Ledger:
                 self._connection.execute(
                     "ALTER TABLE jobs_seen ADD COLUMN gaps_json TEXT"
                 )
+
+    def _ensure_description_column(self) -> None:
+        with self._lock, self._connection:
+            self._connection.execute("BEGIN IMMEDIATE")
+            columns = {row[1] for row in self._connection.execute("PRAGMA table_info(jobs_seen)")}
+            if "description" not in columns:
+                self._connection.execute("ALTER TABLE jobs_seen ADD COLUMN description TEXT NOT NULL DEFAULT ''")
 
     def _set_journal_mode(self, mode: str) -> None:
         """Switch the journal mode only when it differs; a switch needs the file to itself, so when
@@ -246,15 +254,16 @@ class Ledger:
             with self._lock, self._connection:
                 self._connection.execute(
                     """INSERT INTO jobs_seen(
-                           job_id, url, title, company, source, first_seen, last_seen, score, gaps_json
-                       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                           job_id, url, title, company, source, first_seen, last_seen, score, gaps_json, description
+                       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                        ON CONFLICT(job_id) DO UPDATE SET
                            last_seen = excluded.last_seen,
                            score = COALESCE(excluded.score, score),
-                           gaps_json = COALESCE(excluded.gaps_json, gaps_json)""",
+                           gaps_json = COALESCE(excluded.gaps_json, gaps_json),
+                           description = CASE WHEN excluded.description != '' THEN excluded.description ELSE description END""",
                     (
                         job.job_id, job.url, job.title, job.company, job.source,
-                        seen_at, seen_at, score, gaps_json,
+                        seen_at, seen_at, score, gaps_json, (job.description or '')[:12000],
                     ),
                 )
         except sqlite3.Error:

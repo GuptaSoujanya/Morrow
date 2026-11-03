@@ -253,7 +253,7 @@ def test_cutshort_apply_run_checks_questionnaires_even_with_no_new_jobs(tmp_path
     monkeypatch.setattr(pf.time, "sleep", lambda *a: None)
     monkeypatch.setattr(pf, "signed_out", lambda *a: False)
     monkeypatch.setattr(pf, "collect", lambda *a: [])
-    monkeypatch.setattr(ranking, "rank", lambda *a: [])
+    monkeypatch.setattr(ranking, "rank", lambda *a, **kw: [])
     monkeypatch.setattr(q, "finish_pending", lambda *a, limit: calls.append(limit))
     with Ledger(config.db_path) as ledger:
         summary = pf.run_board(Driver(), pf.BOARDS["cutshort"], config, Profile(), ledger, None, None,
@@ -329,7 +329,7 @@ def test_questionnaire_storage_error_does_not_abort_new_applications(tmp_path, m
     monkeypatch.setattr(pf.time, 'sleep', lambda *a: None)
     monkeypatch.setattr(pf, 'signed_out', lambda *a: False)
     monkeypatch.setattr(pf, 'collect', lambda *a: collected.append(True) or [])
-    monkeypatch.setattr(ranking, 'rank', lambda *a: [])
+    monkeypatch.setattr(ranking, 'rank', lambda *a, **kw: [])
     def fail(*a, **kw):
         raise PermissionError('questionnaire journal unavailable')
     monkeypatch.setattr(q, 'finish_pending', fail)
