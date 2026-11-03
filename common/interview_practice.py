@@ -13,13 +13,19 @@ TRACKS = (('ai_ml', 'AI & ML', 'ai'), ('system_design', 'System design', 'system
 
 
 def subject(day, track):
-    interview_course.day_spec(day)
+    spec = interview_course.day_spec(day)
     from . import interview_ai_interviews, interview_system_interviews, interview_fullstack_interviews
     modules = dict(zip((key for key, _, _ in TRACKS),
                        (interview_ai_interviews, interview_system_interviews, interview_fullstack_interviews)))
     if track not in modules:
         raise ValueError('Choose AI & ML, system design or full-stack.')
-    return modules[track].lesson(day)
+    entry = modules[track].lesson(day)
+    if day == 1:
+        from .interview_engineering import kickoff_questions
+        entry['questions'] = kickoff_questions(track)
+        guide = next(item for item in spec['learning_path'] if item['key'] == track)
+        entry['drill'], entry['checks'] = guide['task'], guide['checks'][:]
+    return entry
 
 
 def references():

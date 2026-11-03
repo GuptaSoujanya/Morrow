@@ -61,18 +61,21 @@ def test_main_reading_embeds_only_matched_technical_sections():
 
 
 def test_first_implementation_example_runs_and_rejects_boundary_errors():
-    text = interview_engineering.notebook(1, 'full_stack')['text']
+    text = interview_engineering.implementation_lab(1)
     code = next(token.content for token in MarkdownIt().parse(text) if token.type == 'fence' and token.info == 'python')
     namespace = {}
     exec(compile(code, '<authored-course-example>', 'exec'), namespace)
-    predict = namespace['baseline_minutes']
-    assert predict(5) == 10 and predict(3, 60) == 3
-    for bad in (True, '5', -1, float('nan'), float('inf')):
+    summary, handle = namespace['summarise_sessions'], namespace['handle_summary']
+    assert summary([20, 30, 40]) == {'count': 3, 'total_minutes': 90, 'mean_minutes': 30}
+    assert summary([]) == {'count': 0, 'total_minutes': 0, 'mean_minutes': None}
+    assert summary([0])['mean_minutes'] == 0
+    assert summary([20, 20])['total_minutes'] == 40  # Equal durations are distinct sessions.
+    for values in (True, '20', [True], ['20'], [-1], [1441], [float('nan')], [float('inf')], [0] * 10001):
         with pytest.raises(ValueError):
-            predict(bad)
-    for bad in (True, '30', 0, -1, float('nan'), float('inf')):
-        with pytest.raises(ValueError):
-            predict(5, bad)
+            summary(values)
+        assert handle({'minutes': values})[0] == 400
+    assert handle({'minutes': [20, 30, 40]})[0] == 200
+    assert handle({'minutes': [20], 'owner': 'someone-else'})[0] == 400
 
 
 def test_deeper_teaching_changes_neither_syllabus_identity_nor_progress():
@@ -80,7 +83,7 @@ def test_deeper_teaching_changes_neither_syllabus_identity_nor_progress():
     interview_course.record_completion(progress, 1, True)
     before = interview_course.completed_days(progress)
     info = interview_course.course_info()
-    assert info['version'] == 1 and interview_course.TEACHING_VERSION == 4
+    assert info['version'] == 1 and interview_course.TEACHING_VERSION == 5
     assert info['daily_minutes'] == sum(item['minutes'] for item in info['daily_session']) == 240
     assert '3 years' in info['audience'] and 'not a limit' in info['study_note']
     interview_lessons.lesson(1, PUBLIC)

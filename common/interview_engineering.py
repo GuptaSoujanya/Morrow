@@ -11,84 +11,61 @@ from . import interview_course
 
 _NOTEBOOKS = (
     {
-        'title': 'A prediction feature from browser to model',
-        'ai_ml': '''A model is only one part of a prediction feature. Start by writing the decision it supports. For a delivery estimate, the output is minutes remaining, not “an accurate AI”. At prediction time you know distance and current traffic. You do not know the final arrival time. That arrival time becomes the label later. This timing rule prevents a misleading training result.
-
-Separate three operations: learning parameters from old examples, choosing a version using validation examples, and measuring the chosen version on held-out examples. If you keep changing the model after seeing the final test result, that test has become part of model selection. You need another honest evaluation.
+        'title': '''A study tracker from input to evidence''',
+        'ai_ml': '''The tracker has two different outputs. Its summary reports observed study time. Its prediction estimates the duration of an unseen lesson. Use an exact calculation for the first and evaluate whether a learned model is useful for the second. Keeping these outputs separate prevents a guessed value from being presented as a saved fact.
 
 ```mermaid
 flowchart TD
-  A[Past deliveries] --> B[Split by delivery date]
-  B --> C[Training examples]
-  B --> D[Validation examples]
-  B --> E[Held-out test]
-  C --> F[Fit baseline and model]
-  F --> G[Choose using validation]
-  D --> G
-  G --> H[Final test comparison]
-  E --> H
+  A[Earlier study sessions] --> B[Define features and duration label]
+  B --> C[Split earlier and later examples]
+  C --> D[Fit a baseline and candidate]
+  D --> E[Choose with validation examples]
+  E --> F[Measure on held-out sessions]
+  F --> G[Compare errors and decide]
 ```
 
-Trace a baseline before adding a model. Actual delivery times are 20, 30 and 40 minutes. A fixed prediction of 25 gives absolute errors 5, 5 and 15. The mean absolute error is `(5 + 5 + 15) / 3 = 8.33` minutes. A model predicting 22, 28 and 35 gives errors 2, 2 and 5: an average of 3 minutes. These three observations explain the calculation; they are far too few to establish production quality.
+A feature must be available when planning the next lesson: its word count and topic can be known in advance, while its final duration cannot. A label is the duration observed afterwards. Record when each value becomes available. This timing check often matters more than the choice of model.
 
-Now inspect groups. Does the improvement hold for long journeys and rush hour? Record input fields, units, label definition, split dates and the baseline. A convincing interview answer includes these details before naming an algorithm. A simpler rule may be preferable if the learned model's extra cost buys little improvement.''',
-        'system_design': '''Follow one request all the way through the system. The browser resolves the host name, establishes a connection, sends an HTTP request, and waits for the service. An existing connection or cached DNS result can skip some setup. The service validates input, checks identity and permissions when needed, calls the prediction code, then returns a response. Storage and model calls can fail independently.
+Separate learning parameters, choosing a version and evaluating the chosen version. Validation examples help choose among candidates. The held-out test checks the selected candidate. If you keep changing the model after seeing the final test result, that test has become part of selection and you need another honest evaluation.
+
+Use the worked error calculation in this subject to compare a fixed 25-minute baseline with a candidate. Then inspect groups: does the improvement hold for short lessons, long lessons and unfamiliar topics? A tiny example explains the arithmetic but cannot establish production quality. Save a result table with the split rule, number of observations, baseline and metric so another engineer can repeat the comparison.''',
+        'system_design': '''Start with the summary feature before adding prediction or storage. Its request includes a list of minutes, its boundary checks the list, and its calculation returns a summary. The arrows must explain actual information: do not draw a model service or database when this operation needs neither.
 
 ```mermaid
 sequenceDiagram
   participant Browser
   participant API
-  participant Model
-  participant Store
-  Browser->>API: POST delivery estimate
-  API->>API: Validate fields and permissions
-  API->>Model: Predict with a named version
-  Model-->>API: Estimate and version
-  API->>Store: Record request outcome
-  API-->>Browser: Result or useful error
+  participant Summary
+  Browser->>API: POST minutes 20, 30, 40
+  API->>API: Check JSON, types and limits
+  API->>Summary: Valid durations
+  Summary-->>API: Count 3, total 90, mean 30
+  API-->>Browser: 200 with summary
 ```
 
-Write a latency budget, meaning how you divide the allowed response time. For a teaching example, allow 300 milliseconds: 50 for network travel, 30 for API work, 170 for prediction and 50 for spare capacity. These are assumptions to measure, not universal targets. Parallel steps use the duration of the slowest branch; sequential steps add. Averages do not describe slow requests well, so examine percentiles and error rates too.
+Write the contract beside this diagram: the list limit, duration units, empty-list behavior and invalid-input response. A network failure before the request arrives and a lost response after calculation can look identical to the browser. Repeating this pure summary is safe because it changes no stored state. A future saved-session endpoint has different retry requirements.
 
-At 100 requests per second and an average time in the system of 0.2 seconds, Little's Law suggests an average of about 20 requests in flight under stable conditions. This is not a safe maximum capacity. Bursts and slow dependencies can raise it sharply. Bound concurrent work and choose a timeout. If the model is unavailable, return an explicit failure or a labelled baseline estimate. Never silently present an old estimate as a fresh model result.
+Write a latency budget, meaning how you divide the allowed response time. For an illustrative 300 ms target, allow 100 ms for network travel, 50 ms for parsing and validation, 50 ms for computation, and 100 ms spare. Measure before treating these numbers as capacity facts. Sequential steps add; parallel branches contribute the slowest branch on the critical path. Averages can hide slow requests, so examine percentiles and errors.
 
-In an interview, draw the normal path first. Then cross out the model and explain what the user sees, what is retried, and what is recorded.''',
-        'full_stack': '''Treat the browser and server as separate programs with a contract. A successful button click is not proof of a saved result. Track input, pending work, success and failure explicitly. Validate in the browser for helpful feedback and again on the server because another client can bypass the page.
+At 100 requests per second and an average time in the system of 0.2 seconds, Little's Law gives an average of about 20 requests in flight under stable conditions. This is not a safe maximum. Bursts and slow dependencies can raise concurrency. Bound work and timeouts. When the project later saves sessions, add identity, ownership checks, durable storage and a duplicate-request policy explicitly.''',
+        'full_stack': '''Treat the page and server as separate programs with one documented contract. The page owns the draft input and visible request state. The server owns validation and the returned summary. A button click is not proof of a response, and a summary response is not proof of a saved study session.
 
 ```mermaid
 flowchart TD
-  A[User enters distance] --> B{Valid number and unit?}
-  B -->|No| C[Show field error]
+  A[Enter study-session minutes] --> B{Input shape and values valid?}
+  B -->|No| C[Keep input and show field error]
   B -->|Yes| D[Show pending state]
-  D --> E[Send request]
-  E --> F{Response valid?}
-  F -->|Yes| G[Show estimate and version]
-  F -->|No| H[Show retry action]
+  D --> E[Request the summary]
+  E --> F{Valid successful response?}
+  F -->|Yes| G[Show count, total and mean]
+  F -->|No| H[Keep input and offer retry]
 ```
 
-Keep calculation separate from HTTP and display code. This Python function is an illustrative baseline, not a trained model:
+Keep calculation separate from receiving HTTP and drawing the page. The implementation lab below returns a value from a pure function and uses a small handler to map validation failure to a client error. This makes tests fast and keeps the same arithmetic usable from a command line, a web handler or a later batch job.
 
-```python
-import math
+Validate in the browser for helpful feedback and again on the server because another caller can bypass the page. Preserve the learner's typed data when a request fails. Distinguish an empty observed list from a request that never completed. For the empty list, count and total are zero and mean is absent; for a failed request, no summary is available.
 
-def baseline_minutes(distance_km, speed_kph=30):
-    if type(distance_km) not in (int, float):
-        raise ValueError("distance must be a number")
-    if not math.isfinite(distance_km) or distance_km < 0:
-        raise ValueError("distance must be finite and non-negative")
-    if type(speed_kph) not in (int, float):
-        raise ValueError("speed must be a number")
-    if not math.isfinite(speed_kph) or speed_kph <= 0:
-        raise ValueError("speed must be finite and positive")
-    return round(60 * distance_km / speed_kph, 1)
-
-assert baseline_minutes(5) == 10.0
-assert baseline_minutes(0) == 0.0
-```
-
-The type checks reject booleans as numbers. The finite checks reject infinity and missing-number values. Division converts distance and speed to hours, then multiplication converts hours to minutes. A server adapter translates a validation failure into a documented client error; it must not expose a stack trace.
-
-Test invalid text, negative distance, zero speed and a failed request. For the page, also test keyboard submission and two requests finishing in reverse order. Only the latest request should update the visible estimate. Abort obsolete work where possible and still guard which response may update state.''',
+Test two requests finishing in reverse order. Only the latest requested summary should update the current result. Abort obsolete work where possible and still check response ownership. On later days, connect an accessible form, JSON requests and stored sessions to this same tested calculation rather than rebuilding its rules in each layer.''',
     },
     {
         'title': 'A dashboard whose numbers can be trusted',
@@ -816,3 +793,334 @@ def notebook(day, track):
         'text': text,
         'focus': spec[track],
     }
+
+# Short implementation cases complement the conceptual notebooks. Each case is
+# shared honestly across its week; daily tasks and interviews remain distinct.
+_IMPLEMENTATION_LABS = (
+'''#### Implementation lab: a summary with a clear contract
+
+Build the calculation before connecting a web framework. Input is a list of study-session durations in minutes. Allow zero; reject negative numbers, text, booleans, infinity and NaN (a special value meaning “not a number”). A duration cannot exceed 1,440 minutes in this exercise. Limit the list to 10,000 entries so a request cannot ask for unbounded work. These are chosen product limits, not Python limits.
+
+```python
+import math
+
+def summarise_sessions(minutes):
+    if type(minutes) is not list or len(minutes) > 10_000:
+        raise ValueError("minutes must be a list of at most 10000 values")
+    total = 0.0
+    for value in minutes:
+        if type(value) not in (int, float):
+            raise ValueError("each duration must be a number")
+        if not 0 <= value <= 1440 or not math.isfinite(value):
+            raise ValueError("each duration must be finite and between 0 and 1440")
+        total += value
+    count = len(minutes)
+    return {"count": count, "total_minutes": total,
+            "mean_minutes": total / count if count else None}
+
+def handle_summary(payload):
+    if type(payload) is not dict or set(payload) != {"minutes"}:
+        return 400, {"error": "send an object containing only minutes"}
+    try:
+        return 200, summarise_sessions(payload["minutes"])
+    except ValueError as error:
+        return 400, {"error": str(error)}
+
+assert summarise_sessions([20, 30, 40]) == {
+    "count": 3, "total_minutes": 90.0, "mean_minutes": 30.0}
+assert summarise_sessions([])["mean_minutes"] is None
+assert handle_summary({"minutes": [True]})[0] == 400
+```
+
+Save the code in `study_summary.py` and run `python3 study_summary.py`. No output means these assertions passed. Add your own failing cases before changing the code. This is a calculation and a request-handler function, not a running HTTP server. A framework adapter must still parse the JSON body, enforce a body-size limit, call `handle_summary`, and serialize its status and result.
+
+Read the loop slowly: `total` starts at zero; each valid value is added exactly once; `count` is the list length. For `[20, 30, 40]`, the total moves through `0 → 20 → 50 → 90`; dividing 90 by 3 gives 30. The empty case returns `None`, which JSON represents as `null`, because the mean of no observations is undefined. Showing zero would falsely report a measured zero-minute mean.
+
+This code does not save a session and does not train a model. Its result is a summary of known facts. Floating-point addition can round decimal values; do not use exact equality for arbitrary decimal totals. A financial total would need a deliberate representation such as integer minor units. Keep that choice separate from today's minute-summary contract.
+
+Try invalid cases `["20"]`, `[True]`, `[-1]`, `[float("nan")]`, `[float("inf")]` and a list longer than 10,000. Expect a useful validation error, with no partial result. Test `[0]` separately: it is a valid observed zero.''',
+'''#### Implementation lab: include people with no sessions
+
+A report should distinguish a known zero from a failed query. Assume `learners(id, name)` and `sessions(id, learner_id, minutes, started_at)`. Store UTC timestamps in a consistent database type. Bind `:start` and `:end` as parameters; do not build SQL by joining user text.
+
+```sql
+SELECT l.id, l.name, COALESCE(SUM(s.minutes), 0) AS total_minutes
+FROM learners AS l
+LEFT JOIN sessions AS s
+  ON s.learner_id = l.id
+ AND s.started_at >= :start
+ AND s.started_at < :end
+GROUP BY l.id, l.name
+ORDER BY l.id;
+```
+
+The date filter belongs in the join condition here. Putting `s.started_at >= :start` in a `WHERE` clause would discard the unmatched rows and hide learners with no sessions. Group by the stable ID as well as the name; two people can have the same name. The half-open time range includes the start and excludes the end, so adjacent reports do not double-count a boundary session.
+
+Build a fixture with two learners: one has sessions of 20 and 30 minutes, and one has none. Expect totals of 50 and 0. Add a session exactly at `:end`; it belongs to the next interval. Add another table with multiple rows per session and explain why a careless extra join could multiply the total. Return an error if the query fails; never convert a database failure into an empty report.''',
+'''#### Implementation lab: turn scores into decisions
+
+For a classifier, a score is not yet a decision. Choose a threshold and compare predictions with known outcomes. Here 1 means the positive class and 0 means the negative class. This function is an evaluation helper; it does not train a model.
+
+```python
+def confusion(labels, scores, threshold):
+    if len(labels) != len(scores) or not labels:
+        raise ValueError("labels and scores need the same nonzero length")
+    if type(threshold) not in (int, float) or not 0 <= threshold <= 1:
+        raise ValueError("threshold must be between 0 and 1")
+    counts = {"tp": 0, "fp": 0, "tn": 0, "fn": 0}
+    for actual, score in zip(labels, scores):
+        if type(actual) is not int or actual not in (0, 1):
+            raise ValueError("labels must be 0 or 1")
+        if type(score) not in (int, float) or not 0 <= score <= 1:
+            raise ValueError("scores must be numbers between 0 and 1")
+        positive = score >= threshold
+        key = ("tp" if positive else "fn") if actual else ("fp" if positive else "tn")
+        counts[key] += 1
+    return counts
+
+assert confusion([1, 0, 1, 0], [.9, .7, .4, .1], .5) == {
+    "tp": 1, "fp": 1, "tn": 1, "fn": 1}
+```
+
+At threshold 0.5, precision is `1/(1+1) = 0.5` and recall is also 0.5. At threshold 0.8, the false positive disappears but the missed positive remains: precision becomes 1 and recall stays 0.5. A smaller threshold of 0.3 finds both positives and still includes one false positive. Explain which error matters more for your feature. If a denominator is zero, report the metric as undefined under your chosen reporting convention instead of crashing or silently inventing success.''',
+'''#### Implementation lab: claim a job once
+
+A queue message may arrive twice. Give the job a stable ID and keep its state in durable storage. The following SQL illustrates a conditional transition, not a complete worker implementation.
+
+```sql
+UPDATE jobs
+SET status = 'running', worker_id = :worker,
+    lease_until = :lease_until
+WHERE id = :job_id AND status = 'queued'
+RETURNING id, input_json;
+```
+
+Exactly one worker can change a particular queued row to running when concurrent updates follow the database's locking rules. A worker that receives no returned row did not acquire this job and must not run its effect. This alone does not solve crashes: if the winning worker stops, its lease needs expiry and recovery. A lease is a time-limited ownership claim.
+
+Store the completed output and an operation ID. If an external tool accepts a request but its response is lost, mark the outcome unknown and reconcile with that tool before retrying. A local transaction cannot atomically commit a remote side effect. Test duplicate delivery, a crash before the effect, and a crash after the effect but before the completion record. Explain which cases are safe to retry and which require reconciliation.''',
+'''#### Implementation lab: configuration is part of the release
+
+Keep environment variables as text at the boundary, then validate and convert once. The rest of the program should receive checked values. Do not log secret values when a check fails.
+
+```python
+def serving_config(env):
+    raw = env.get("MAX_IN_FLIGHT", "8")
+    if not isinstance(raw, str) or not raw.isascii() or not raw.isdigit():
+        raise ValueError("MAX_IN_FLIGHT must be a whole number")
+    limit = int(raw)
+    if not 1 <= limit <= 128:
+        raise ValueError("MAX_IN_FLIGHT must be between 1 and 128")
+    version = env.get("MODEL_VERSION", "")
+    if not isinstance(version, str) or not version.strip():
+        raise ValueError("MODEL_VERSION is required")
+    return {"max_in_flight": limit, "model_version": version}
+
+assert serving_config({"MODEL_VERSION": "v3"})["max_in_flight"] == 8
+```
+
+The numeric range is a teaching deployment policy; measure the right limit for your model and hardware. A process can be alive while its model has not loaded. Return ready only after the named model and its compatible preprocessing are available. A configuration error should stop startup with the field name, rather than start an apparently healthy server that fails every request. Test missing version, zero concurrency, text instead of a number and a deliberately failed model load. A rollback restores the compatible build, model and configuration together.''',
+'''#### Implementation lab: a late response must not win
+
+This browser example assumes an existing `showResult` function, a `showError` function and an API that accepts `q`. Each new request gets a larger number. The result is displayed only if that number still belongs to the latest request.
+
+```javascript
+let currentRequest = 0;
+let activeController;
+async function search(query) {
+  const request = ++currentRequest;
+  activeController?.abort();
+  const controller = new AbortController();
+  activeController = controller;
+  try {
+    const response = await fetch('/api/search?q=' + encodeURIComponent(query),
+      { signal: controller.signal });
+    if (!response.ok) throw new Error('Search failed');
+    const result = await response.json();
+    if (request === currentRequest) showResult(result);
+  } catch (error) {
+    if (request === currentRequest && error.name !== 'AbortError') {
+      showError('Search could not finish. Try again.');
+    }
+  }
+}
+```
+
+Cancellation saves work when supported. The request-number check protects the screen even when earlier work has already completed or cannot be cancelled. Test request A taking 500 ms and request B taking 50 ms after A starts. The final screen must show B. Test a malformed successful response separately: production code still needs runtime shape validation before `showResult`. For a streaming answer, apply the same ownership check to each arriving chunk, and mark a disconnected stream as incomplete.''',
+'''#### Implementation lab: chunks need source positions
+
+The following word-based splitter teaches overlap and metadata. It is not a tokenizer for a particular model. Real token budgets need that model's tokenizer, and documents with tables or headings need boundaries that respect structure.
+
+```python
+def word_chunks(text, size=4, overlap=1):
+    if type(size) is not int or type(overlap) is not int or not 0 <= overlap < size:
+        raise ValueError("require 0 <= overlap < size")
+    words = text.split()
+    chunks = []
+    start = 0
+    while start < len(words):
+        end = min(start + size, len(words))
+        chunks.append({"start_word": start, "end_word": end,
+                       "text": " ".join(words[start:end])})
+        if end == len(words):
+            break
+        start = end - overlap
+    return chunks
+
+assert [c["text"] for c in word_chunks("a b c d e f")] == ["a b c d", "d e f"]
+```
+
+`end_word` is exclusive. The word at position 3 appears in both chunks because overlap is one. Empty input produces no chunks. Store a document ID and version beside these positions so a citation points to the exact source used during retrieval. Test zero overlap, overlap equal to size, one word and a changed source document. Never use overlapping chunks as independent evidence of two different sources.''',
+'''#### Implementation lab: record an uncertain outcome
+
+A workflow transition is a permitted move between named states. Keep the transition rule separate from the code that calls an external tool. This small function checks the rule; a real service must store the state change transactionally.
+
+```python
+ALLOWED = {
+    "queued": {"running", "cancelled"},
+    "running": {"succeeded", "failed", "unknown"},
+    "unknown": {"succeeded", "failed"},
+    "succeeded": set(), "failed": set(), "cancelled": set(),
+}
+
+def transition(current, following):
+    if current not in ALLOWED or following not in ALLOWED[current]:
+        raise ValueError("invalid workflow transition")
+    return following
+
+assert transition("running", "unknown") == "unknown"
+```
+
+Use `unknown` when a tool might have changed external state but no reliable response arrived. It is different from `failed before sending`. Reconcile using the external operation ID, a receipt or another authoritative check. Do not turn unknown into queued merely to make a retry button work. Test that a succeeded operation cannot run again, that cancellation before execution is allowed, and that an unknown outcome needs a resolution. Authorize the particular action and target before tool execution; valid JSON is not permission.''',
+'''#### Implementation lab: serving must use the same feature contract
+
+A model expects a named and ordered set of features. A mapping prevents callers from silently deciding column order. A version identifies the feature definition, not only the model artifact.
+
+```python
+import math
+FEATURES = ("distance_km", "stops")
+
+def serving_vector(record, schema_version):
+    if schema_version != "delivery-features-v1":
+        raise ValueError("unsupported feature schema")
+    if type(record) is not dict or set(record) != set(FEATURES):
+        raise ValueError("unexpected feature names")
+    result = []
+    for name in FEATURES:
+        value = record[name]
+        if type(value) not in (int, float) or not math.isfinite(value) or value < 0:
+            raise ValueError("features must be finite non-negative numbers")
+        result.append(float(value))
+    return result
+
+assert serving_vector({"stops": 2, "distance_km": 4}, "delivery-features-v1") == [4.0, 2.0]
+```
+
+The output order stays `[distance_km, stops]` even if input keys arrive in a different order. This teaching contract does not enforce an integer stop count; add that rule if the product requires it. Reuse the feature transformation in training and serving, record its version, and compare a known example through both paths. Test missing names, extra names, changed units and an incompatible version. Detecting schema mismatches does not prove that the incoming feature distribution has stayed stable.''',
+'''#### Implementation lab: stable experiment assignment
+
+Assign a signed-in user on the server using a stable user identifier and experiment identifier. Do not use Python's built-in `hash`, whose result is not a cross-process assignment contract.
+
+```python
+import hashlib
+
+def experiment_group(user_id, experiment_id):
+    if any(type(value) is not str or not value or "\\0" in value for value in (user_id, experiment_id)):
+        raise ValueError("stable user and experiment IDs are required")
+    value = (experiment_id + "\\0" + user_id).encode("utf-8")
+    bucket = int.from_bytes(hashlib.sha256(value).digest()[:8], "big") % 100
+    return "treatment" if bucket < 50 else "control"
+
+assert experiment_group("user-7", "rank-v2") == experiment_group("user-7", "rank-v2")
+```
+
+This is a simple deterministic 50/50 assignment, not a guarantee that a small sample has exactly equal group sizes. Keep the algorithm and experiment ID fixed during the test. Record which version a user actually saw, because assignment without exposure can mislead analysis. Do not let the browser select its own group for a server-side effect. Test repeat visits, separate experiments, missing identities and a disabled feature flag. Predefine guardrails and stop rules before looking at favorable metrics.''',
+'''#### Implementation lab: a measured release gate
+
+Separate the measurement from the decision. State the sample and percentile rule. This helper uses the nearest-rank definition: sort `n` values and select position `ceil(0.95*n)`, counting positions from one.
+
+```python
+import math
+
+def p95_ms(samples):
+    if not samples:
+        raise ValueError("measure at least one completed request")
+    if any(type(x) not in (int, float) or not math.isfinite(x) or x < 0 for x in samples):
+        raise ValueError("latency samples must be finite non-negative numbers")
+    ordered = sorted(samples)
+    return ordered[math.ceil(.95 * len(ordered)) - 1]
+
+assert p95_ms(list(range(1, 101))) == 95
+```
+
+This list contains milliseconds from 1 to 100, so the selected value is 95 ms. With very few observations, a percentile estimate is unstable. Record the traffic conditions, sample size, time window and error rate beside latency. Do not improve latency by silently dropping slow failures from every reported outcome. Define a release gate that includes a quality check and a failure-rate check as well as latency, then document why those limits matter to the user.''',
+'''#### Implementation lab: use evidence to repair a slow screen
+
+Work a debugging case under a 20-minute limit. A search page takes two seconds after each keystroke. The browser starts a request on every input event; the server scans all rows; old responses sometimes replace new results. These are three separate defects, so one “performance fix” will not explain all symptoms.
+
+First reproduce the problem with a fixed query and record the request count, network duration and database plan. Add a suitable index only after checking the filter and ordering. Reduce needless requests with a deliberate input policy such as debouncing; this means waiting briefly after typing stops. Guard stale results using request ownership even after cancellation. Measure again with the same conditions.
+
+Your repair is ready when the result remains correct during rapid typing, the query uses the intended access path, errors remain visible and the measured improvement has a recorded baseline. Explain which change reduced server work and which change fixed correctness. A faster incorrect result is still a defect. In a mock interview, spend the last two minutes on the regression case and the limitation you have not yet tested.''',
+'''#### Implementation lab: a fresh interview rehearsal
+
+Choose a project change you have not rehearsed word for word. For example: a study tracker must now support corrections to previously saved sessions while keeping weekly totals correct. Spend five minutes clarifying whether a correction replaces a row or appends an adjustment, then draw the read and write paths. Spend fifteen minutes implementing one small part and five minutes testing and explaining it.
+
+Use a fixture with sessions of 20 and 30 minutes. Correct 20 to 25; the total must become 55, not 75 or 30. Repeat the same correction and verify that it does not add another adjustment. Reject a correction from a different learner. Explain what happens if the response is lost after the save.
+
+Write an honest review with three fields: the decision you made, the evidence from the trace or test, and what you would improve next. A correct explanation without working code and working code without an explanation reveal different practice needs. Keep those separate. Finish with one new example for your weakest concept; do not mark a skill mastered because you recognized a memorized answer.''',
+)
+
+
+def implementation_lab(day):
+    """A connected weekly implementation, available without network or user data."""
+    spec = interview_course.day_spec(day)
+    text = _IMPLEMENTATION_LABS[spec['week'] - 1]
+    sources = {
+        1: ('Python numerical and boolean types', 'https://docs.python.org/3/library/stdtypes.html#boolean-type-bool'),
+        2: ('PostgreSQL joins', 'https://www.postgresql.org/docs/current/tutorial-join.html'),
+        4: ('PostgreSQL conditional updates and RETURNING', 'https://www.postgresql.org/docs/current/sql-update.html'),
+        6: ('React guidance on stale request results', 'https://react.dev/learn/synchronizing-with-effects#fetching-data'),
+    }
+    if source := sources.get(spec['week']):
+        text += f'\n\nImplementation reference: [{source[0]}]({source[1]}).'
+    return text
+
+_KICKOFF_QUESTIONS = {
+    'ai_ml': [
+        {'question': 'Which part of the study tracker needs machine learning, and which part should remain a rule?',
+         'answer': 'Adding observed session minutes is an exact calculation. Estimating the duration of an unseen lesson is uncertain and may benefit from learning patterns. Start that estimate with a simple baseline, define its error on later observations, and add complexity only when the evidence supports it.',
+         'follow_up': 'The candidate has mean absolute error 3 minutes on three examples. Is that enough to release it?',
+         'follow_up_answer': 'No. The calculation is correct for those examples, but the sample is too small to establish reliable performance. Check the split, compare with the fixed baseline on more representative later sessions, inspect important groups, and measure the user-facing cost and latency.'},
+        {'question': 'Why is the final session duration an invalid input for predicting that same duration?',
+         'answer': 'It is not known when the learner asks for an estimate. Using it during evaluation leaks the answer and makes the reported result unlike the production task. Record when every feature becomes available and apply the same timing rule to training and evaluation.',
+         'follow_up': 'Could a previous session duration be a valid input?',
+         'follow_up_answer': 'Yes, if that previous session genuinely finished before the prediction and the value is available in the serving system. Preserve timestamps and learner boundaries so future sessions are not accidentally used as past information.'},
+    ],
+    'system_design': [
+        {'question': 'Trace POST /api/study-summary from the browser to the visible result.',
+         'answer': 'The browser sends JSON through an HTTP connection. The server enforces size and method rules, parses and validates the body, calls the summary calculation, and returns a status plus structured data. The page validates the response and updates only the current request. This endpoint does not save a session.',
+         'follow_up': 'Where would ownership checks go when the next version reads saved sessions?',
+         'follow_up_answer': 'On the server, before reading the learner’s records. Derive identity from the authenticated request and filter by that identity; a learner ID supplied by the browser is not permission.'},
+        {'question': 'The response is lost. What does the client know, and when is retry safe?',
+         'answer': 'The client knows that it did not receive a reliable result. It does not know whether the server finished. Repeating this stateless summary is safe because it changes no stored state. A write operation needs its own duplicate-handling contract.',
+         'follow_up': 'How would you safely retry creating a study session?',
+         'follow_up_answer': 'Use a stable operation identifier with a uniqueness rule and a saved result on the server. A repeated request returns that result instead of creating another session. Define retention and what happens if the same identifier is reused with different input.'},
+    ],
+    'full_stack': [
+        {'question': 'How would you separate the HTTP boundary from the summary calculation?',
+         'answer': 'Keep summarise_sessions responsible for validated numerical behavior and a clear output. The handler validates the request object, maps expected validation errors to a documented client response, and returns the result. The framework adapter handles HTTP parsing and serialization. Test the calculation without a server and test the adapter contract separately.',
+         'follow_up': 'Why does an ordinary integer type check accept True in Python?',
+         'follow_up_answer': 'Python bool is a subclass of int. If the product contract rejects booleans, use an exact type check or an explicit boolean rejection before numerical validation. A value that can participate in arithmetic is not automatically a valid duration.'},
+        {'question': 'Why return null for the mean of an empty list instead of returning zero?',
+         'answer': 'An empty list has no observations, so there is no mean to report. Zero is a valid measured duration and communicates different information. The page should show an empty state for null, while preserving a genuine zero result for a list containing zero.',
+         'follow_up': 'An existing client assumes mean is always a number. How would you change this contract?',
+         'follow_up_answer': 'Identify the callers, document the new empty-state behavior and update validation and rendering tests. Coordinate the rollout or version the response if compatibility requires it. Do not silently switch semantics and hope older clients cope.'},
+    ],
+}
+
+
+def kickoff_questions(track):
+    """Day-one questions shared by the chapter and bank, with stable IDs."""
+    from copy import deepcopy
+    if track not in _KICKOFF_QUESTIONS:
+        raise ValueError('Choose AI & ML, system design or full-stack.')
+    return deepcopy(_KICKOFF_QUESTIONS[track])

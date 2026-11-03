@@ -326,13 +326,185 @@ def _reading(spec, key, folder, course_root):
             'route': route, 'match': match, 'topic': topic}
 
 
+_DAY_ONE = {
+    'ai_ml': {
+        'title': 'Decide what the study tracker should predict',
+        'words': {'rule': 'Steps a developer writes directly, such as adding session minutes.',
+                  'model': 'A function whose behavior can be learned from examples.',
+                  'feature': 'An input available when a prediction is made.',
+                  'label': 'The observed answer used to train or check a prediction.',
+                  'baseline': 'A simple method measured before a more complex method.',
+                  'mean absolute error': 'The average size of a numerical prediction error, ignoring its direction.'},
+        'idea': '''The project is a study tracker. It records completed sessions and helps a learner plan the next one. These are two different jobs. “How many minutes have I already studied?” is an exact calculation over saved records. “How long will my next lesson take?” is uncertain. A prediction may help with the second question, but it is not needed for the first.
+
+Machine learning uses examples to choose a model's behavior. For this prediction, one example could contain the lesson length, its topic and the learner's earlier experience. These are features if they are known before the session starts. The actual time taken is the label, observed after the session. Supervised learning means learning from examples that include an observed answer. Predicting a number is regression. Predicting a category, such as “likely to take more than 30 minutes”, is classification. Both require a precise target.
+
+Write the timing of the decision before picking an algorithm. Using the session's final duration as an input when predicting that same duration leaks the answer. A high test score produced this way would not help a real learner. Also decide whether the prediction is personalized: mixing one learner's past and future sessions randomly can make a test more optimistic than a real future prediction.
+
+First compare a simple baseline with a candidate model. A baseline might always predict a typical duration measured from earlier training records. The candidate might use lesson length and experience. Keep the final test examples separate from choosing the method. Today you will calculate error and describe the evaluation; you do not need to train a neural network.
+
+At work, explain the decision, data available at that moment, baseline, success measure and limits. “We used AI” does not answer whether the feature improved planning. A model that saves one minute of average error but doubles latency may not be the right choice.''',
+        'example': '''Assume a baseline was fixed at 25 minutes using earlier records. On three separate evaluation sessions, actual durations are `[20, 30, 40]`. Baseline predictions `[25, 25, 25]` have absolute errors `[5, 5, 15]`, giving `(5 + 5 + 15) / 3 = 8.33` minutes.
+
+A candidate predicts `[22, 28, 35]`. Its errors are `[2, 2, 5]`, giving `3` minutes. On these examples it has lower mean absolute error. This does not establish reliable improvement on the population: there are only three observations, and we have not checked different topics or learners.
+
+```python
+def mean_absolute_error(actual, predicted):
+    if len(actual) != len(predicted) or not actual:
+        raise ValueError("provide equal, non-empty observation lists")
+    return sum(abs(a - p) for a, p in zip(actual, predicted)) / len(actual)
+
+assert mean_absolute_error([20, 30, 40], [22, 28, 35]) == 3
+```
+
+This calculation assumes already validated, finite numerical inputs. `zip` pairs the corresponding actual and predicted values. `abs` removes the sign of each error; adding and dividing produces the average error in minutes. Input validation is a separate boundary, as in today's full-stack implementation. See the [scikit-learn metric definition](https://scikit-learn.org/stable/modules/model_evaluation.html#mean-absolute-error) and [data-leakage guide](https://scikit-learn.org/stable/common_pitfalls.html#data-leakage).''',
+        'steps': ["Name the user's decision before naming a model.",
+                  'List what is known before prediction and what becomes known afterwards.',
+                  'Fix a baseline using earlier examples, then compare errors on separate evaluation examples.',
+                  'State what this tiny experiment cannot prove and what evidence you would gather next.'],
+        'task': 'Explain why adding recorded session minutes needs a rule, while estimating an unseen session may use a learned model.',
+        'answer': 'Adding known minutes has an exact rule and a checkable answer. A future duration is not known, so a model can estimate it from inputs available in advance. Compare that estimate with a baseline using later observed durations; neither a model nor its score makes the future certain.',
+    },
+    'system_design': {
+        'title': 'Trace the study-summary request',
+        'words': {'API': 'A contract one program uses to ask another program for an action or data.',
+                  'HTTP request': 'A message with a method, an address, headers and sometimes a body.',
+                  'validation': 'Checking that incoming data meets an explicit contract.',
+                  'response': 'The status and data sent back to the caller.',
+                  'durable': 'Stored so it can survive the process stopping.',
+                  'stateless calculation': 'A calculation whose result depends on the supplied input, without remembering an earlier request.'},
+        'idea': '''Follow one action: the learner asks for a summary of three study sessions. The browser sends `POST /api/study-summary` with a JSON body `{"minutes": [20, 30, 40]}`. POST is used here to submit data for processing. This endpoint only calculates; it does not create a saved session.
+
+Before the application sees that message, the browser resolves the server name when necessary, establishes or reuses a connection, and uses TLS for an HTTPS connection. DNS maps a name to network information. TLS protects data in transit and helps the client verify the server. These steps may be reused from earlier requests; they are not guaranteed to repeat for every click.
+
+The application checks the path and method, enforces a body-size limit, parses JSON, and validates its fields. Then it calls the summary function. A successful response has status 200 and a body containing count, total minutes and mean minutes. Invalid duration data receives a documented client error such as 400. A server fault is different from a user's invalid input and should be recorded internally without exposing its stack trace.
+
+A successful calculation is not evidence of a saved record. On Day 6 the project connects the page, API and storage. That write path needs an identity, permission checks and a policy for duplicate requests. If a response is lost after a write, the browser cannot infer whether the save happened just from its timeout.
+
+Keep the current design small. A web process and a pure calculation are enough for this endpoint. Adding a queue, cache and separate model server before measuring a need creates more failure paths. For a future prediction endpoint, add the model version, evaluation and fallback behavior deliberately.''',
+        'example': '''Trace the normal case and a failure without changing the story:
+
+| Step | Valid request | Invalid request |
+| --- | --- | --- |
+| Browser sends | `{"minutes": [20, 30, 40]}` | `{"minutes": [20, "later"]}` |
+| Boundary check | All durations pass | Text is rejected |
+| Calculation | Count 3; total 90; mean 30 | Not called with invalid values |
+| Response | 200 and the summary | 400 and a field error |
+| Screen | Shows the returned summary | Keeps the input and explains the problem |
+
+Suppose the request takes 120 ms of network time and 5 ms in the application. Optimizing the addition loop from 1 ms to 0.5 ms barely changes the user experience. Measure the critical path before choosing a performance fix. These times are illustrative assumptions, not benchmark results.''',
+        'steps': ['Write the exact request and success response.', 'Trace parsing, validation and calculation in order.',
+                  'Explain what the screen should do for invalid input, server failure and a lost response.',
+                  'State which operation stores data and which only calculates.'],
+        'task': 'The browser times out after sending the summary request. Can it repeat the calculation? Can the same reasoning automatically justify repeating a saved-session creation?',
+        'answer': 'Repeating this stateless summary calculation has no saved side effect. A creation request may already have committed, so a safe retry needs a stable operation identifier and server-side duplicate handling, or a check of the saved outcome. HTTP method alone does not tell you whether your implementation is safe to repeat.',
+    },
+    'full_stack': {
+        'title': 'Build a summary you can test',
+        'words': {'function': 'A named unit of code that receives inputs and returns a result.',
+                  'contract': 'The allowed inputs, outputs and failure behavior of a function or API.',
+                  'boundary': 'Where information enters from another program or an untrusted caller.',
+                  'pure calculation': 'A computation that returns a result without changing stored state or calling external services.',
+                  'assertion': 'A check that stops the example if an expected result is false.'},
+        'idea': '''A developer with experience should be able to separate three responsibilities: receiving outside input, calculating a result, and storing a change. Today, implement the first two for a study summary. Storage comes later. This separation lets you test the calculation without starting a browser, database or web server.
+
+Define the contract before the code. `minutes` is a list of finite numbers between 0 and 1,440, with at most 10,000 entries. Return `count`, `total_minutes` and `mean_minutes`. For an empty list, count and total are zero, but mean is `None`: there was no observation to average. Do not turn missing information into a made-up zero.
+
+Validation is part of behavior, not a decorative check. Python treats a boolean as a kind of integer, so `isinstance(True, int)` is true. The exact-type check in the implementation rejects it. A successful JSON parse also does not prove that a field has the right shape or type. Reject malformed input before any state change.
+
+Read the implementation below, then close it and rebuild the function. The request handler translates a validation failure into a status and an error object. It does not print an answer and hope the browser can find it. The function returns a value that another caller can serialize, display or test.
+
+For the next project step, attach this behavior to your web framework. Define how it receives a JSON body and returns the status and fields. Keep the calculation unchanged. If moving from a unit test to an HTTP handler requires rewriting the arithmetic, the responsibilities are still mixed.''',
+        'example': '''For `[20, 30, 40]`, the returned object is `{"count": 3, "total_minutes": 90.0, "mean_minutes": 30.0}`. For `[]`, it is `{"count": 0, "total_minutes": 0.0, "mean_minutes": null}` after JSON serialization. For `[True]`, `[-1]` or `["20"]`, the handler returns a client error.
+
+The implementation lab includes a calculation function and a handler. Run its assertions before adding any web framework. Then change one input at a time and predict the result before running it. This is how you connect readable code with observable behavior.''',
+        'steps': ['Write the input and output contract in a short comment.', 'Implement validation before arithmetic.',
+                  'Run normal, empty, zero and invalid-input checks.', 'Explain how an HTTP adapter will call the same function.'],
+        'task': 'Why should an empty list return no mean instead of zero, and why should True be rejected as a duration?',
+        'answer': 'No mean exists for no observations; zero is a real observed value and would tell a different story. True is a boolean, even though Python permits it in arithmetic. The application contract expects numerical durations, so the boundary rejects it instead of silently recording one minute.',
+    },
+}
+
+
+def _dsa_material(spec, course_root):
+    """Read an actual pattern chapter; label reused chapter context honestly."""
+    if spec['day'] == 1:
+        return '''### One scan, with a reason it works
+
+Use the same study durations as the API: `[20, 30, 40]`. An array is an ordered collection; Python's list is the collection used in the example. Read one value at a time and keep a running total. You do not need to sort these values to add them.
+
+| Values already visited | Count | Running total |
+| --- | --- | --- |
+| none | 0 | 0 |
+| 20 | 1 | 20 |
+| 20, 30 | 2 | 50 |
+| 20, 30, 40 | 3 | 90 |
+
+The invariant is a statement that remains true as the loop runs: **after visiting the first k values, total is their sum**. Initially no values have been visited and the sum is zero. Adding the next value makes the statement true for k+1. When the loop ends, all values have been visited, so total is the required sum. This is a short correctness argument, not just a claim that a test passed.
+
+The scan takes O(n) time because it visits n values once. It uses O(1) extra memory because total and count do not grow into another collection; this excludes the input and returned object. An empty input has total zero and no mean. A valid zero value is still an observation. Repeated values count repeatedly because two sessions may have the same duration; removing duplicates would change the question.
+
+Implement the scan yourself, then compare it with the full-stack function. Test `[]`, `[0]`, `[20]`, `[20, 20]` and `[20, 30, 40]`. Say the expected count and total before running the test. Finally explain why sorting first adds work without helping this task.
+
+### Coding follow-up
+
+If session minutes arrive one at a time, can you keep a running mean without storing the whole history? Keep a count and total, then derive the mean when count is nonzero. If the product allows correcting an earlier session, that small state alone cannot identify which old value to replace; you need the original record or a correction event. A changed requirement changes the information you must retain.'''
+    topic = spec['dsa'].lower()
+    rules = (
+        (r'dynamic programming|knapsack|subsequence|grids', '09-dynamic-programming'),
+        (r'trie|bit manipulation', '11-tries-bit-manipulation'),
+        (r'backtracking|subsets|combinations', '08-backtracking'),
+        (r'tree|recursion', '05-trees-bst'),
+        (r'graph|breadth.first|depth.first|topological|shortest|union.find', '07-graphs'),
+        (r'heap|top k|scheduling', '06-heaps-priority-queues'),
+        (r'interval|greedy', '10-greedy-intervals'),
+        (r'binary search|sorting', '04-binary-search'),
+        (r'two pointers|sliding window|window interview', '02-two-pointers-sliding-window'),
+        (r'stack|queue|linked list', '03-stack-queue-linkedlist'),
+        (r'array|string|hash|maps|prefix sums', '01-arrays-strings-hashing'),
+    )
+    chapter = next((name for pattern, name in rules if re.search(pattern, topic)), '12-mock-interview-sets')
+    path = Path(course_root) / '02-dsa' / (chapter + '.md')
+    route = '/course/#/02-dsa/' + chapter
+    if not path.is_file() or not path.resolve().is_relative_to(Path(course_root).resolve()):
+        return 'Write a small example for **' + spec['dsa'] + '**. Explain a correct baseline, its invariant and its cost, then test a boundary case. The public practice chapter is unavailable on this installation; the DSA practice workspace remains linked below.'
+    from pipeline.course import _demote
+    sections = _file_sections(str(path), path.stat().st_mtime_ns)
+    # Shared concept/template sections are labelled as pattern references, not
+    # passed off as 90 separately authored question sets. Worked exercises stay
+    # in the practice chapter and workspace.
+    if chapter == '12-mock-interview-sets':
+        from pipeline.links import headings
+        mocks = [(title, body) for title, body in sections if title.startswith('Mock Set ')]
+        if mocks:
+            title, body = mocks[(spec['day'] - 1) % len(mocks)]
+            marks = [(level, name, start) for level, name, start in headings(body) if level == 3 and name.startswith('Problem ')]
+            prompts = []
+            for index, (_, name, start) in enumerate(marks[:2]):
+                end = marks[index + 1][2] if index + 1 < len(marks) else len(body)
+                prompt = body[start:end].split('**Approach:**', 1)[0].strip()
+                prompts.append(_demote(prompt, 4))
+            return ('### Timed coding practice\n\n'
+                    'Take 35 minutes for these two exercises: five to clarify inputs and outline a correct approach, '
+                    'twenty to implement, and ten to trace boundary cases and explain time and memory cost. '
+                    'These are practice timings, not a claim about a company’s interview.\n\n'
+                    + '\n\n'.join(prompts) + f'\n\nAfter your attempt, [compare the worked solutions in {title}]({route}). '
+                    'Record the first incorrect assumption or failing test, then solve a changed example without the guide.')
+    selected = [(title, body) for title, body in sections if re.search(r'concept|template|complexity summary', title, re.I)]
+    reference = '\n\n'.join(_demote(body, 4) for _, body in selected[:3])
+    return ('### Pattern reference for today\n\n'
+            f'Your focus is **{spec["dsa"]}**. Use this related pattern family and its template below to reason about a problem, '
+            'then solve one suitable exercise in the linked chapter. The chapter is shared across related course days. '
+            'A template is a starting point; explain why its invariant fits the input before using it.\n\n'
+            + reference + f'\n\n[Open the pattern chapter and worked problems]({route})')
+
 def lesson(day, course_root):
     """Join daily teaching with visible technical reading and weekly cases."""
     spec = interview_course.day_spec(day)
     subjects = (
-        ('ai_ml', 'AI and machine learning', interview_ai_basics.lesson(day)),
-        ('system_design', 'System design', interview_system_basics.lesson(day)),
-        ('full_stack', 'Full-stack development', interview_fullstack_basics.lesson(day)),
+        ('ai_ml', 'AI and machine learning', _DAY_ONE['ai_ml'] if day == 1 else interview_ai_basics.lesson(day)),
+        ('system_design', 'System design', _DAY_ONE['system_design'] if day == 1 else interview_system_basics.lesson(day)),
+        ('full_stack', 'Full-stack development', _DAY_ONE['full_stack'] if day == 1 else interview_fullstack_basics.lesson(day)),
     )
     readings = []
     for key, label, folder in _TRACKS:
@@ -353,6 +525,13 @@ def lesson(day, course_root):
     for index, (key, label, entry) in enumerate(subjects, 1):
         practice = interview_practice.subject(day, key)
         notebook = interview_engineering.notebook(day, key)
+        guide = next(item for item in spec['learning_path'] if item['key'] == key)
+        if day == 1:
+            practice['drill'] = guide['task']
+            practice['checks'] = guide['checks']
+            practice['explanation'] = 'Keep today’s exact summary separate from a prediction about a future session.'
+            practice['scenario'] = entry['example']
+            practice['mistake'] = {'ai_ml': 'Do not describe a summary of known minutes as a prediction or use the future duration as an input.', 'system_design': 'Do not report a saved session when this endpoint has only calculated a summary.', 'full_stack': 'Do not show zero for an unavailable mean, or accept a boolean as a duration.'}[key]
         reference = next((item for item in readings if item['track'] == key and item['match'] == 'topic'), None)
         # Keep broad interview lists in the question bank. Embed only actual
         # technical sections, never a fallback chapter under the day's title.
@@ -373,12 +552,15 @@ def lesson(day, course_root):
                   'This case connects the week’s topics. Reuse the same system as you study each new part. '
                   f"Today, focus on **{notebook['focus']}** and explain where it affects the flow.", '',
                   notebook['text'], '',
+                  *([interview_engineering.implementation_lab(day), ''] if key == 'full_stack' else []),
                   '### A small example', '', entry['example'], '',
                   *[f'{step}. {instruction}' for step, instruction in enumerate(entry['steps'], 1)], '',
-                  '#### A real-world case', '', practice['scenario'], '',
+                  *(['#### A real-world case', '', practice['scenario'], ''] if day != 1 else []),
                   '### Your turn', '', practice['drill'], '',
                   'Use the system flow above to trace a successful request and one failure. '
                   'Write down the inputs, state changes, expected output and the reason for your design choice.', '',
+                  '#### Your task is ready when', '',
+                  *['- ' + item for item in practice['checks']], '',
                   '### Check your answer', '',
                   'Check the result against these criteria. Keep evidence such as a trace, test output or a measured comparison.', '',
                   *['- ' + item for item in practice['checks']], '',
@@ -391,12 +573,16 @@ def lesson(day, course_root):
                       '##### Follow-up', '', question['follow_up'], '',
                       '###### Show follow-up answer', '', question['follow_up_answer'], '']
         parts += ['#### Common mistake', '', practice['mistake'], '']
-    parts += ['## Try it yourself', '',
-              'Implement the daily task, then use the engineering notebook to test a failure path. '
-              'Record the input, expected result, actual result and the trade-off you chose. '
-              'Explain one condition under which your design would need to change.', '',
+    parts += ['## Build and test', '',
+              f"**This week’s project:** {spec['project']}", '',
+              f"**Today’s output:** {spec['deliverable']}", '',
+              'Keep one small project folder. Add today’s work to it, with a short record of the input, expected result, actual result and decision. '
+              'This connects the daily exercises into a project you can demonstrate and explain.', '',
+              '### Check today’s build', '',
+              *['- ' + item for item in spec['learning_path'][2]['checks']], '',
               '## DSA practice', '',
               f"**Course practice focus:** {spec['dsa']}", '',
+              _dsa_material(spec, course_root), '',
               'Continue through Learn, Worked example, Practice and Review. '
               'Study the invariant, trace the changing values, then solve the assigned problems before reviewing.', '',
               '### Use an interview routine', '',
@@ -407,7 +593,7 @@ def lesson(day, course_root):
               '5. Explain time cost (how work grows with input size) and space cost (extra memory used).', '',
               '[Continue DSA practice](#/learning/dsa)', '',
               'Your next DSA topic follows your saved practice. If it feels hard, stay on that topic and try again.', '',
-              '## Explain it back', '',
+              '## Interview and recall', '',
               'Close the notes. Say these answers out loud. Simple words are enough.', '',
               '1. What did you learn? Give one example.',
               '2. Why does your solution work, and where can it fail?',
@@ -430,7 +616,12 @@ def lesson(day, course_root):
               *[f"- [{entry['title']}]({entry['route']})" for entry in readings], '',
               'Discover has research papers, GitHub projects, and tech news. '
               'You do not need to read them to finish this lesson.', '',
-              '[Open Discover](#/learning/discover)', '']
+              '[Open Discover](#/learning/discover)', '',
+              '## Review and finish', '',
+              'Finish when you can explain today’s ideas, show your implementation or trace, and describe one failure case. '
+              'Opening a lesson or reading an answer does not mark the day complete. Use the completion control when you are ready.', '',
+              *['- ' + item['outcome'] for item in spec['learning_path']], '',
+              'If one part is still unclear, keep this day open and return to that part. The course advances from your saved completion, not the calendar.', '']
     identifier = f'interview/day-{day}'
     return {'id': identifier, 'key': identifier, 'day': day, 'title': spec['title'],
             'text': '\n'.join(parts), 'category': 'Learning', 'source': 'bundled',

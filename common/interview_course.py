@@ -11,7 +11,7 @@ from datetime import date
 COURSE_ID = 'interview-90'
 COURSE_VERSION = 1
 # Teaching style can improve without changing the syllabus or resetting progress.
-TEACHING_VERSION = 4
+TEACHING_VERSION = 5
 COURSE_TITLE = '90-day interview course'
 TOTAL_DAYS = 90
 
@@ -197,14 +197,112 @@ _INTRODUCTIONS = (
 )
 
 
+# One practical reason for each daily topic. These are learning goals, not
+# claims about any company's questions or a promise of employment.
+_JOB_RELEVANCE = (
+    ('Choose whether a prediction feature needs learning or a clear rule before spending time building it.', 'Follow a failing screen action through the network and server instead of guessing which box is broken.', 'Keep calculations separate from HTTP so the same behavior can be tested without a browser.'),
+    ('Choose inputs that will exist when a real prediction is requested, and define the answer you will measure.', 'Write a request contract that works for browsers, phones and other services.', 'Build a page people can use with a keyboard, with labels that explain each action.'),
+    ('Keep model training out of the request path so users do not wait for a new training run.', 'Give clients reliable success and failure meanings so they can recover correctly.', 'Make user actions change explicit state rather than relying on what happens to be on screen.'),
+    ('Check whether a simple rule already solves the product problem before adding model complexity.', 'Turn a slow-service complaint into separate response-time, traffic and availability measurements.', 'Handle network failures and invalid response data without showing a false success.'),
+    ('Use unseen examples to estimate how the model might behave after release.', 'Choose what must survive a process restart and where it is stored.', 'Store records with stable keys and retrieve the exact rows a feature needs.'),
+    ('Recognize an impressive test score that depends on future information and would fail in production.', "Make requests safe to route between server instances without losing a user's work.", 'Save a change through the browser, API and database and show only confirmed results.'),
+    ('Explain the data, baseline, errors and limits behind a model choice in a technical interview.', 'Explain one working feature from the first request to the saved record and response.', 'Demonstrate a small working product, including a failed request and recovery.'),
+    ('Check feature order and array shapes before a model calculation silently uses the wrong inputs.', 'Estimate traffic and storage from stated assumptions before selecting infrastructure.', 'Reject malformed input before it changes data or produces misleading calculations.'),
+    ('Explain what a probability score does and does not promise to a product team.', 'Choose storage from access patterns and consistency needs rather than fashion.', 'Build useful reports without double-counting joined records or hiding users with no activity.'),
+    ('Inspect the spread of errors so a good average does not hide a badly served group.', 'Explain why a query is slow using its access path instead of adding servers first.', 'Check whether an index helps the real query and justify its write and storage cost.'),
+    ('Find unit errors, duplicates and missing values before they reach a training pipeline.', 'Prevent a partial update from leaving related records inconsistent.', 'Change stored data safely and explain what happens when a migration fails.'),
+    ('Inspect target balance and suspicious patterns before choosing a model or metric.', 'Choose what can be cached and what users should see when it becomes stale.', 'Distinguish loading, empty results and failure so users do not mistake missing data for zero.'),
+    ('Fit data-preparation rules using training data and apply exactly the same rules later.', 'Evolve an API without unexpectedly breaking older clients.', 'Test a function in isolation and also test the behavior across the HTTP boundary.'),
+    ('Explain which findings are supported by the data and which remain uncertain.', 'Define a dashboard number precisely enough that another engineer can verify it.', 'Deliver a dashboard with trustworthy totals, boundary tests and visible failures.'),
+    ('Translate prediction error into a loss that matches the outcome the product needs.', 'Spread requests while deciding how health checks and failed instances affect routing.', 'Choose who owns UI state so components show consistent information.'),
+    ('Trace how an update changes model parameters and identify an unstable learning rate.', 'Explain which bottleneck more instances can solve and which requires a larger machine or redesign.', 'Validate a form in both the browser and server and keep useful error messages.'),
+    ('Explain why a classifier returns a score and how a threshold becomes a product decision.', 'Choose how an authenticated session expires, is revoked and reaches the server.', 'Store passwords appropriately and separate login failure from a server failure.'),
+    ('Choose a metric using the cost of false alarms and missed cases rather than accuracy alone.', 'Enforce what a signed-in user is allowed to read or change.', "Stop a user from accessing another user's data by changing an identifier."),
+    ('Detect a model that memorizes training examples and test whether it generalizes.', 'Protect shared resources from one client consuming all available capacity.', 'Return stable pages and validate filters so large result sets remain usable.'),
+    ('Compare candidate models without repeatedly tuning against the final test set.', 'Use health checks and logs to distinguish a dead instance from a slow dependency.', 'Expose a versioned prediction through a validated API with measurable failures.'),
+    ("Defend whether the model's improvement over a baseline is worth its added complexity.", 'Design a prediction request around latency, model availability and input validation.', 'Show a complete prediction feature with an evaluation result and a failure demo.'),
+    ('Explain when combining models reduces instability and what extra serving cost it adds.', 'Move long work out of a request and explain how a user learns its final outcome.', 'Represent queued, running, failed and finished jobs without claiming early success.'),
+    ('Compare strong tabular baselines fairly before choosing a more complicated learner.', 'Retry temporary failures without multiplying load during an outage.', 'Cancel obsolete work and show a retry action only when repeating is safe.'),
+    ('Set a threshold from rare-event costs and operational capacity, not a default value.', 'Handle duplicate delivery without repeating a payment or another side effect.', 'Make a repeated write return the existing result using a stable request identity.'),
+    ('Choose a useful distance and explain why a cluster is not automatically a real business category.', 'Define event ownership and the consequences of delayed or out-of-order messages.', 'Show live job progress while retaining a reliable final state on the server.'),
+    ('Reduce feature size without discarding information needed for the prediction task.', 'Choose when results must be immediate and when a scheduled batch is simpler.', 'Import many rows with validation, useful error reports and a clear partial-failure policy.'),
+    ('Explain a prediction without pretending an explanation proves causation or correctness.', 'Connect a user-visible failure to logs, metrics and a trace through services.', 'Record enough context to debug failures without putting private data into logs.'),
+    ('Compare classical models using measured quality, operational cost and failure behavior.', 'Draw a queue-based ML service and explain retries, capacity and uncertain outcomes.', 'Demonstrate that a queued job survives a worker failure without duplicate effects.'),
+    ('Explain how layers and nonlinear functions change what a neural network can represent.', 'Keep testing environments separate from real users and production data.', 'Build the same artifact reliably on another machine instead of depending on your laptop.'),
+    ('Trace how an error changes earlier weights and identify a broken gradient path.', 'Release only builds that pass useful checks and can be identified later.', 'Use automated checks to block a broken change before deployment.'),
+    ('Make training experiments repeatable and diagnose unstable updates.', 'Separate configuration from code and keep credentials out of artifacts and logs.', 'Reject missing configuration early and load secrets through a controlled boundary.'),
+    ('Reduce overfitting and explain the difference between training and inference behavior.', 'Serve large files efficiently while defining cache lifetime and access control.', 'Accept uploads with size and type boundaries and store them away from the web process.'),
+    ('Compare learned representations using the task they support instead of a visually pleasing plot.', 'Estimate model memory and concurrency before choosing a serving shape.', 'Check that a deployed process is actually ready to serve requests.'),
+    ('Connect a reported result to the exact data, code and settings that produced it.', 'Restore a compatible previous version when a release fails.', 'Observe a new release and roll it back using evidence rather than hope.'),
+    ('Defend a neural-network experiment with a baseline, split strategy and reproducible result.', 'Explain model loading, readiness, versioning and failure handling in a deployment.', 'Run a reproducible demonstration with clear setup and an observable prediction path.'),
+    ('Explain how token limits affect context, response length and product cost.', 'Deliver partial results while handling disconnection and incomplete work.', 'Render streamed text without confusing a partial answer with a finished one.'),
+    ('Trace how attention combines relevant inputs rather than describing it as magic.', 'Allocate a response-time budget and measure which stage consumes it.', 'Cancel an older request and stop its late response replacing the latest result.'),
+    ("Explain a transformer's main blocks and the resources that grow with sequence length.", 'Bound concurrent work so one slow dependency does not exhaust the service.', 'Choose limits for connections and tasks and explain what happens when they fill up.'),
+    ('Choose prompting, retrieval or tuning from the kind of behavior and knowledge needed.', 'Place responsibilities at boundaries that keep services understandable and independently testable.', 'Use types to help callers while still validating untrusted runtime data.'),
+    ('Define the output contract and validate it before AI output changes application state.', 'Reject bad data at each trust boundary rather than relying on a previous caller.', 'Handle invalid AI output with useful errors and bounded recovery.'),
+    ('Distinguish a plausible answer from an answer supported by evidence.', 'Choose a degraded behavior that remains honest when a dependency fails.', 'Offer a useful fallback while clearly showing that the normal path is unavailable.'),
+    ('Measure an AI feature with realistic tasks, failure cases and user-facing outcomes.', 'Design an assistant whose context, response path and limits can be explained.', 'Demonstrate streaming, cancellation, evaluation and error handling together.'),
+    ('Use retrieval when an answer needs current or private reference material.', 'Define searchable content, access rules, freshness and expected query behavior.', 'Parse documents into a predictable representation and report unsupported files.'),
+    ('Choose chunk boundaries that preserve meaning and can be traced to the source.', 'Keep an index consistent with the source records users are allowed to search.', 'Store source identifiers and positions so retrieved text can be explained and cited.'),
+    ('Understand what similarity ranks and why the nearest vector may still be irrelevant.', 'Choose a retrieval layout from index size, filtering and latency needs.', 'Return ranked evidence through an endpoint with explicit metadata and empty-result handling.'),
+    ('Combine exact-term and semantic retrieval when either alone misses useful evidence.', 'Scale reads without promising that every replica has the newest write.', 'Keep search state, filters and pagination consistent as requests finish asynchronously.'),
+    ('Select evidence under a context budget and explain why reranking helps or fails.', 'Cache only results whose query, permissions and freshness rules match.', 'Attach citations to actual supporting passages rather than decorative links.'),
+    ('Separate retrieval failure from answer-generation failure in an evaluation.', 'Update or remove indexed content without silently serving obsolete evidence.', 'Run a repeatable evaluation that names the cases and records the results.'),
+    ('Defend chunking, retrieval, ranking and answer-quality choices using measurements.', 'Design a document assistant with access controls, citations and freshness handling.', 'Show which questions work, which fail and how the evaluation revealed the difference.'),
+    ('Decide whether a bounded workflow is enough before allowing model-directed actions.', "Represent state transitions so a crash does not leave an operation's outcome ambiguous.", 'Make every workflow transition explicit and reject invalid transitions.'),
+    ('Define tool inputs and results as contracts rather than trusting model-generated arguments.', 'Choose whether a caller should wait or receive a durable job identifier.', 'Validate and authorize tool arguments before executing their effect.'),
+    ('Limit steps and time so a confused agent does not loop indefinitely.', 'Stop repeated calls to an unhealthy dependency and define how recovery is tested.', 'Cancel work across layers and preserve a clear final status.'),
+    ('Choose what to remember, what to retrieve and how stale state is corrected.', 'Resume work from a durable checkpoint without repeating an already completed effect.', 'Persist the minimum state needed to continue and reconcile uncertain outcomes.'),
+    ('Treat retrieved pages and documents as data, not instructions to grant permissions.', 'Draw trust boundaries and decide which component can approve each action.', 'Require an explicit, scoped approval before an action that changes external state.'),
+    ('Use traces and failure examples to improve an agent rather than judging a single attractive demo.', 'Keep evidence of who requested an action and what happened to it.', 'Make a failed tool call understandable and reproducible without leaking secrets.'),
+    ('Compare an agent with a simpler workflow using quality, reliability and maintenance cost.', 'Explain how a workflow recovers when a tool succeeds but its response is lost.', 'Demonstrate a bounded assistant with approved actions, recovery and regression cases.'),
+    ('Detect differences between training features and the values used in real predictions.', 'Separate offline computation from the latency-sensitive online request path.', 'Validate data contracts before a new dataset enters training.'),
+    ('Check whether a feature is available and fresh enough at prediction time.', 'Apply backpressure so producers cannot overwhelm downstream processing.', 'Process batches and events with explicit limits, error handling and progress.'),
+    ('Connect each model version to compatible features, data and evaluation evidence.', 'Choose partition keys from access patterns and avoid concentrating traffic.', 'Reproduce a model result using named versions instead of mutable latest files.'),
+    ('Improve serving efficiency while measuring the delay introduced by batching.', 'Scale from measured bottlenecks rather than assuming more workers always help.', 'Bound a batch by size, wait time and memory and reject oversized work clearly.'),
+    ('Investigate changed inputs and delayed outcomes without treating drift as proof of lower quality.', 'Define an SLO using a meaningful user-facing success measure.', 'Show quality and latency measurements with units, time windows and data freshness.'),
+    ('Release a new model gradually and decide when evidence requires rollback.', 'Restore the service and its compatible data after a failure.', 'Use a small rollout, health checks and a tested rollback procedure.'),
+    ('Explain the whole lifecycle from data ingestion to production evaluation and recovery.', 'Design an ML platform whose versions, dependencies and monitoring fit together.', 'Demonstrate compatible feature and model versions plus a controlled failure recovery.'),
+    ('Start recommendations with a measurable simple policy before adding a ranking model.', 'Choose consistency behavior from what users can tolerate during failures.', 'Serve recommendations with useful empty, loading and error states.'),
+    ('Separate finding candidates from ranking them to control latency and relevance.', 'Avoid hot partitions by understanding how request popularity is distributed.', 'Measure query cost and return stable pages under large result sets.'),
+    ('Help new users or items while detecting feedback loops created by earlier recommendations.', 'Choose how feeds are assembled and where fan-out cost is paid.', 'Record feedback with a stable identity and prevent accidental duplicate events.'),
+    ('Choose ranking metrics that match what users see in the first few results.', 'Define ordering and deduplication rules for events that may be redelivered.', 'Process a repeated event once and handle late events deliberately.'),
+    ('Run an experiment with stable assignment and guardrails against harmful side effects.', 'Build experiment infrastructure that separates assignment from measurement.', 'Keep a user in the same experiment group and make rollback straightforward.'),
+    ('Limit data use to what the feature needs and evaluate who may be harmed.', 'Make retention and deletion reach replicas, indexes and downstream copies.', 'Implement deletion as a verifiable workflow rather than hiding a button.'),
+    ('Defend a recommendation experiment using both offline results and product guardrails.', 'Explain candidate retrieval, ranking, freshness and failure behavior together.', 'Demonstrate the recommendation path and show the evidence behind one design change.'),
+    ('Define the user decision and measurable outcome before selecting an AI technique.', 'Turn a vague request into requirements, constraints and explicit assumptions.', 'Plan a small end-to-end user path with a testable definition of success.'),
+    ('Choose an honest baseline and evaluation set before trying to improve a capstone.', 'Make data ownership and API behavior clear before drawing more services.', 'Build one complete user action from the page through the API.'),
+    ('Integrate a model or retrieval component while keeping its inputs and outputs testable.', 'Estimate scale and locate the likely bottleneck in the critical path.', 'Connect the AI component through a validated contract with useful failure behavior.'),
+    ('Choose an improvement from failure evidence rather than adding features blindly.', 'Recover from a failed dependency or uncertain write without corrupting state.', 'Test permission boundaries, invalid inputs and network failures in the actual product.'),
+    ('Balance measured quality against latency and resource consumption.', 'Monitor the critical user path and define a deployment and rollback strategy.', 'Deploy the same build you tested and record a reproducible measurement.'),
+    ('Document known limitations so another engineer can use the system responsibly.', 'Record why a design was chosen and what evidence would change it.', 'Make the project runnable by someone who has never seen your machine.'),
+    ('Explain how evidence changed a capstone decision and what you would test next.', 'Defend a diagram by tracing real data and challenging its assumptions.', 'Tell a coherent project story backed by a working demonstration.'),
+    ('Answer a foundation question with a clear definition, example and limit.', 'Design a URL shortener while explaining key generation, redirects and hot reads.', 'Explain state ownership and accessibility through a real UI interaction.'),
+    ('Defend a split strategy and metric when the interviewer changes the data conditions.', 'Design notifications with retry, deduplication and delivery-status semantics.', 'Trace authentication, authorization and data access in one API operation.'),
+    ('Explain neural-network training behavior and diagnose a concrete failure.', 'Design file storage with upload boundaries, metadata and durable object storage.', 'Find a performance problem using evidence and verify the repair.'),
+    ('Compare retrieval and tuning while identifying unsupported answers.', 'Design a document assistant whose retrieval and answer paths are evaluated separately.', 'Explain which tests protect a release and how rollback works.'),
+    ('Connect model choices to data, serving and monitoring constraints under time pressure.', 'Design a recommendation feed with freshness, fan-out and ranking trade-offs.', 'Review code against its stated architecture and identify one material risk.'),
+    ('Explain how a bounded agent recovers from tool failures and uncertain outcomes.', 'Design background work with durable jobs, limited retries and useful status.', 'Describe your own contribution to a team decision using concrete evidence.'),
+    ('Repair a weak answer by working a different example and checking the same concept.', 'Revisit an assumption that made a previous design fail.', 'Make the project walkthrough clear enough that a reviewer can verify your claims.'),
+    ('Explain a model concept in ordinary words while retaining its technical meaning.', 'State requirements and trade-offs before proposing components.', 'Show that you understand language and browser behavior underneath a framework.'),
+    ('Explain how language models, retrieval and tools fit together without merging their roles.', 'Reason about reliability and scaling from a specific failure or workload.', 'Connect database, security and test decisions to user-visible behavior.'),
+    ('Defend evaluation choices and identify what the available evidence cannot prove.', 'Complete a timed design while prioritizing the critical path and major risks.', 'Debug a change, explain the cause and show a regression check.'),
+    ('Practice concise AI reasoning with a new scenario and a clear stopping point.', 'Use mock feedback to change an actual design decision.', 'Present the problem, implementation, evidence and limits within five minutes.'),
+    ('Use a new example to check whether a previously weak concept is now understood.', 'Challenge the weakest assumption with a concrete failure scenario.', 'Check that a reviewer can open the links and run the documented setup.'),
+    ('Finish with evidence of what you can explain and build, plus an honest improvement plan.', 'Walk through a complete architecture and defend one alternative.', 'Demonstrate the finished user path and prepare the next practice targets.'),
+)
+
+
 def course_info():
+    from .interview_practice import bank_rows
     return {
         'id': COURSE_ID, 'version': COURSE_VERSION, 'title': COURSE_TITLE,
         'description': 'For developers with around three years of experience: technical explanations, system flows, implementation cases and interview practice in simple English.',
         'shared': True, 'total_days': TOTAL_DAYS, 'daily_minutes': 240,
         'audience': 'Working developers with around 3 years of experience',
         'engineering_notebooks': 13,
-        'interview_questions': 540, 'project_assessments': 13,
+        'interview_questions': len(bank_rows()), 'project_assessments': 13,
+        'session_label': '3–4 hours, at your own pace',
         'study_note': 'Allow around 3–4 hours for detailed reading and practice. This is a guide, not a limit. Split a lesson across sessions when needed; projects and mocks can take longer.',
         'subjects': list(SUBJECTS),
         'phases': [{'title': title, 'start_day': start, 'end_day': end} for title, start, end in PHASES],
@@ -221,20 +319,43 @@ def day_spec(day):
     review = offset == len(rows) - 1
     reading = _READINGS[week]
     explanation, example = _INTRODUCTIONS[week]
+    job_relevance = dict(zip(('ai_ml', 'system_design', 'full_stack'), _JOB_RELEVANCE[day - 1]))
+    job_relevance['dsa'] = 'Explain a correct algorithm, test its boundaries and justify its time and memory costs in a coding interview.'
+    from . import interview_ai_interviews, interview_system_interviews, interview_fullstack_interviews
+    guides = {key: module.lesson(day) for key, module in zip(('ai_ml', 'system_design', 'full_stack'),
+        (interview_ai_interviews, interview_system_interviews, interview_fullstack_interviews))}
+    if day == 1:
+        guides['ai_ml'].update(drill='Compare a 25-minute baseline with predictions of 22, 28 and 35 minutes for actual study times of 20, 30 and 40. Calculate both mean absolute errors and explain what the small sample cannot prove.', checks=['I can separate a rule, a learned model and a measured outcome.', 'I can calculate errors of 8.33 and 3 minutes and explain why three examples do not prove production quality.'])
+        guides['system_design'].update(drill='Trace POST /api/study-summary with minutes [20, 30, 40]. Define success, invalid input and a lost response. Explain why this calculation can be repeated but a saved study session needs separate duplicate handling.', checks=['I can trace the request through validation, calculation and response.', 'I can distinguish a successful calculation from a durable saved record.'])
+        guides['full_stack'].update(drill='Implement summarise_sessions and a request handler. Return count 3, total_minutes 90 and mean_minutes 30 for [20, 30, 40]. Reject invalid types and values, define the empty case, and run the supplied checks.', checks=['I can test the calculation without a web server.', 'I can reject booleans, text, negative and non-finite values and explain each validation check.'])
+    path = []
+    for key, label, _ in DAILY_SESSION[:3]:
+        entry = guides[key]
+        checks = [check.removeprefix('I can ').removeprefix('I ') for check in entry['checks']]
+        path.append({'key': key, 'title': label, 'topic': topics[key],
+                     'outcome': checks[0][0].upper() + checks[0][1:], 'job_use': job_relevance[key],
+                     'task': entry['drill'], 'checks': entry['checks'][:]})
+    path.append({'key': 'dsa', 'title': 'DSA practice', 'topic': topics['dsa'],
+                 'outcome': 'Trace and solve ' + topics['dsa'].lower() + '.', 'job_use': job_relevance['dsa'],
+                 'task': 'Work one example by hand, write a correct solution, then test a boundary case and explain its cost.',
+                 'checks': ['Explain why the algorithm is correct.', 'Test a normal case and an allowed boundary case.',
+                            'State time and extra-memory costs using the input size.']})
+    if day == 1:
+        path[-1].update(outcome='Scan study-session minutes once, keep a running total and prove why it is correct.', task='Trace [20, 30, 40] by hand. Implement a one-pass summary with an empty-input rule, then explain why sorting is unnecessary.', checks=['After each step, the total equals the sum of the values already visited.', 'The scan takes O(n) time and O(1) extra memory, excluding the input and output.', 'Empty input has count 0 and no mean; no division by zero occurs.'])
     return {
         'day': day, 'week': week + 1,
         'title': ('Review and project: ' if review else '') + topics['ai_ml'],
         **topics, 'practice': project if review else topics['full_stack'],
+        'job_relevance': job_relevance, 'learning_path': path,
+        'project': project, 'deliverable': ('A tested study-session summary, an API contract, an array trace and a baseline comparison.' if day == 1 else guides['full_stack']['drill']),
+        'session_label': '3–4 hours, at your own pace',
         'review': review, 'prerequisites': [day - 1] if day > 1 else [],
         'explanation': explanation, 'example': example,
         'reading_paths': {'ai_ml': '04-ml-genai-agents/' + reading[0] + '.md',
                           'system_design': '01-system-design/' + reading[1] + '.md',
                           'full_stack': '03-fullstack-mern-kubernetes/' + reading[2] + '.md'},
         'topics': [{'key': key, 'title': label, 'topic': topics[key]} for key, label, _ in DAILY_SESSION[:4]],
-        'objectives': ['Explain ' + topics['ai_ml'].lower() + ' with an example.',
-                       'Describe ' + topics['system_design'].lower() + ' and one trade-off.',
-                       'Practise ' + topics['full_stack'].lower() + '.',
-                       'Solve and explain ' + topics['dsa'].lower() + ' problems.'],
+        'objectives': [item['outcome'] for item in path],
     }
 
 
@@ -243,9 +364,12 @@ def week_spec(week):
         raise ValueError('Choose a course week from 1 to 13.')
     first = (week - 1) * 7 + 1
     title, project, rows = _WEEKS[week - 1]
+    days = [day_spec(day) for day in range(first, first + len(rows))]
     return {'number': week, 'title': title, 'project': project,
             'start_day': first, 'end_day': first + len(rows) - 1,
-            'days': [day_spec(day) for day in range(first, first + len(rows))]}
+            'milestones': [{'day': item['day'], 'topic': item['full_stack'],
+                            'output': item['deliverable'], 'checks': item['learning_path'][2]['checks'][:]} for item in days],
+            'days': days}
 
 
 def syllabus():
