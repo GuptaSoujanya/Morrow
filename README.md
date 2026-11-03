@@ -248,6 +248,23 @@ Success requires page evidence or a matching message in Gmail Sent. Interrupted 
 AI attempts remain blocked across restarts. After checking the actual outcome, use the panel's
 review buttons to mark it sent or permit a retry. Dry runs never send.
 
+The startup bot follows YC's **Apply to role** link and handles the candidate form or
+Work at a Startup redirect with the saved profile and resume. The separate founder
+funding application is never used. A CAPTCHA or missing candidate sign-in remains a
+manual step, and opening a role form is not counted as a submitted application.
+
+Cutshort application runs also check pending **[Questionnaire]** forms in the candidate's
+Messages. Answers use saved facts and the resume. Ordinary chat messages are not sent.
+Questionnaire progress is tracked separately from the original application so an
+already-applied role can receive its requested answers without applying again.
+Each run can handle up to ten pending questionnaires within the shared AI task limit.
+Uncertain sends and later questionnaires in an already completed thread require review.
+
+Profile checks read the actual Cutshort talent card and the Wellfound Preferences and
+Resume pages, as well as Hirist's profile sections. Fields a board does not support are
+reported separately; missing facts and unverified saves remain visible. A board's own
+completion meter can differ from the number of saved fields the bot can verify.
+
 **Knowledge & Data → Companies** is a searchable database of employers from discovered jobs.
 It shows website, careers, public business email/phone, CEO, CTO, hiring contact, location,
 industry, description, LinkedIn and size when supporting evidence can be checked. Each finding

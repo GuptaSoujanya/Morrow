@@ -23,13 +23,22 @@ def role_for(job):
                  if board in text), 'company')
 
 
-def instructions(job):
+def _yc_role_page(url):
+    parsed = urlsplit(url or '')
+    return (parsed.hostname or '').lower() in ('ycombinator.com', 'www.ycombinator.com') and bool(
+        re.fullmatch(r'/companies/[^/]+/jobs/[^/]+/?', parsed.path))
+
+
+def instructions(job, url=''):
     # form-answers.md holds the free-text rules every board and company site shares.
-    return '\n\n'.join((SKILLS / name).read_text(encoding='utf-8')
-                       for name in ('SKILL.md', 'form-answers.md', role_for(job) + '.md'))
+    files = ['SKILL.md', 'form-answers.md', role_for(job) + '.md']
+    if any(_yc_role_page(page) or (urlsplit(page or '').hostname or '').lower() in
+           ('workatastartup.com', 'www.workatastartup.com') for page in (url, job.url)):
+        files.append('yc.md')
+    return '\n\n'.join((SKILLS / name).read_text(encoding='utf-8') for name in files)
 
 
-def submission_click_recorded(workdir):
+def submission_click_recorded(workdir, application_url=''):
     """Tool evidence overrides an agent claiming it never tried to submit."""
     path = Path(workdir) / 'transcript.jsonl'
     if not path.is_file():
@@ -41,11 +50,22 @@ def submission_click_recorded(workdir):
             continue
         if not isinstance(event, dict):
             continue
-        for block in (event.get('message') or {}).get('content') or []:
+        message = event.get('message')
+        if not isinstance(message, dict) or not isinstance(message.get('content'), list):
+            continue
+        for block in message['content']:
             if not isinstance(block, dict) or block.get('type') != 'tool_use':
                 continue
             name = str(block.get('name', ''))
-            value = json.dumps(block.get('input') or {})
+            arguments = block.get('input') or {}
+            value = json.dumps(arguments)
+            # YC's exact role link opens the application dialog; it cannot send it.
+            # Keep every other Apply/Submit/Send action conservative, including
+            # unknown button descriptions and script-based actions. Never clear an
+            # agent's own submission_attempted=true or an earlier uncertain record.
+            if (_yc_role_page(application_url) and 'browser_click' in name and isinstance(arguments, dict)
+                    and str(arguments.get('element', '')).strip().casefold() == 'apply to role link'):
+                continue
             if ('browser_click' in name or 'browser_press_key' in name or 'browser_run_code' in name
                     or 'browser_evaluate' in name) and re.search(r'\b(submit|send|apply)\b', value, re.I):
                 return True

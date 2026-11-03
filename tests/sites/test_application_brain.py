@@ -115,3 +115,35 @@ def test_startup_jobs_get_the_startup_specialist():
         assert brain.role_for(job) == "startups"
         assert "Startup specialist" in brain.instructions(job)
     assert brain.role_for(SimpleNamespace(job_id="hirist:1", source="hirist:feed", url="")) == "hirist"
+
+
+def test_yc_instructions_follow_the_actual_application_destination(job):
+    prompt = brain.instructions(job, 'https://www.ycombinator.com/companies/acme/jobs/123-engineer')
+    assert 'YC role application' in prompt and 'founder funding application' in prompt
+    assert 'YC role application' in brain.instructions(job, 'https://www.workatastartup.com/application?signup_job_id=123')
+    assert 'YC role application' not in brain.instructions(job, 'https://ycombinator.com.evil.test/companies/acme/jobs/123')
+
+
+def test_yc_open_role_link_is_navigation_but_actual_send_is_still_uncertain(tmp_path):
+    import json
+    path = tmp_path / 'transcript.jsonl'
+    url = 'https://www.ycombinator.com/companies/acme/jobs/123-engineer'
+    def event(label):
+        return json.dumps({'message': {'content': [{'type': 'tool_use', 'name': 'mcp__browser__browser_click',
+                                                   'input': {'element': label}}]}})
+    path.write_text(event('Apply to role link'))
+    assert not brain.submission_click_recorded(tmp_path, url)
+    assert brain.submission_click_recorded(tmp_path, 'https://other.test/jobs/123')
+    path.write_text(event('Apply to role link') + '\n' + event('Submit application'))
+    assert brain.submission_click_recorded(tmp_path, url)
+    path.write_text(event('Apply to role button'))
+    assert brain.submission_click_recorded(tmp_path, url)
+
+
+def test_malformed_transcript_message_does_not_hide_a_later_submission(tmp_path):
+    import json
+    events = [{'message': 'malformed'}, {'message': {'content': 'bad shape'}},
+              {'message': {'content': [{'type': 'tool_use', 'name': 'mcp__browser__browser_click',
+                                       'input': {'element': 'Submit'}}]}}]
+    (tmp_path / 'transcript.jsonl').write_text('\n'.join(json.dumps(event) for event in events))
+    assert brain.submission_click_recorded(tmp_path)

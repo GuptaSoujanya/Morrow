@@ -723,7 +723,7 @@ def test_the_site_reporting_an_error_after_submit_is_not_counted_and_stays_open(
     assert browser_agent.should_take_over(_settings(browser_agent=True), result)
 
 
-def test_a_form_still_asking_for_an_answer_after_submit_was_not_sent(tmp_path, monkeypatch):
+def test_a_form_reset_after_submit_is_uncertain_without_an_explicit_rejection(tmp_path, monkeypatch):
     monkeypatch.setattr(ext, "CONFIRM_WAIT_S", 0.0)
     monkeypatch.setattr(ext, "SETTLE_S", 0.0)
     page = _Page(GREENHOUSE, fields=_form())
@@ -735,9 +735,22 @@ def test_a_form_still_asking_for_an_answer_after_submit_was_not_sent(tmp_path, m
 
     result = ext.apply_here(_browser(page), JOB, PROFILE, _Engine(), _settings(), _resume(tmp_path), dry_run=False)
 
-    assert result.status == ApplyStatus.EXTERNAL_MANUAL
-    assert result.detail == "the site turned the Submit click down: the form is still on screen, unanswered: Phone Number *"
-    assert ext.retryable({"site": GREENHOUSE, "why": result.detail})
+    assert result.status == ApplyStatus.ERROR
+    assert result.detail == "Submit was clicked but no confirmation within 0 seconds"
+    assert not ext.retryable({"site": GREENHOUSE, "why": result.detail})
+    assert not browser_agent.should_take_over(_settings(browser_agent=True), result)
+
+
+@pytest.mark.parametrize('error', ['Something went wrong. Try again.', 'Server error', 'Request timed out'])
+def test_server_error_after_submit_does_not_allow_a_second_send(tmp_path, error):
+    page = _Page(GREENHOUSE, fields=_form())
+    page.buttons = [_Button('Submit application', lambda: page.errors.append(
+        SimpleNamespace(text=error, is_displayed=lambda: True)), kind='submit')]
+    result = ext.apply_here(_browser(page), JOB, PROFILE, _Engine(), _settings(), _resume(tmp_path), dry_run=False)
+    assert result.status == ApplyStatus.ERROR
+    assert result.detail.startswith('Submit was clicked but')
+    assert not browser_agent.should_take_over(_settings(browser_agent=True), result)
+    assert not ext.retryable({'site': GREENHOUSE, 'why': result.detail})
 
 
 def test_a_submit_that_left_no_trace_is_still_held_back_in_case_it_went_through(tmp_path, monkeypatch):
@@ -1383,6 +1396,201 @@ def test_apply_manually_wins_over_apply_again():
 
     assert clicked == ["manual"]
     assert len(fields) == len(_form())
+
+
+@pytest.mark.parametrize("label", ["Apply to role ›", "Apply to role", "Apply to this role →"])
+def test_yc_job_uses_its_role_application_instead_of_the_founder_header(label):
+    page = _Page("https://www.ycombinator.com/companies/mixrank/jobs/Fnwsojk-j")
+    clicked = []
+
+    def apply_to_role():
+        clicked.append("role")
+        page.url = "https://www.workatastartup.com/application?signup_job_id=72514"
+        page.fields = _form()
+
+    page.buttons = [_Button("Apply", lambda: clicked.append("founder")),
+                    _Button(label, apply_to_role),
+                    _Button("Apply", lambda: clicked.append("footer"))]
+
+    fields = ext.reveal_form(_browser(page))
+
+    assert clicked == ["role"]
+    assert len(fields) == len(_form())
+
+
+def test_yc_job_without_a_role_button_never_uses_founder_apply():
+    founder = _Button("Apply", _never)
+    page = _Page("https://www.ycombinator.com/companies/mixrank/jobs/Fnwsojk-j", buttons=[founder])
+
+    assert ext.reveal_form(_browser(page)) == []
+    assert founder.clicks == 0
+
+
+@pytest.mark.parametrize("url, expected", [
+    ("https://www.ycombinator.com/companies/mixrank/jobs/123", "ycombinator"),
+    ("https://www.workatastartup.com/application?signup_job_id=72514", "ycombinator"),
+    ("https://ycombinator.com.example.org/jobs/123", "website"),
+])
+def test_yc_sites_are_recognized_only_by_their_exact_host(url, expected):
+    assert ext.detect_ats(url) == expected
+
+
+def test_yc_fallback_never_offers_the_founder_apply_to_the_page_brain(tmp_path):
+    founder = _Button("Apply", _never)
+    page = _Page("https://www.ycombinator.com/companies/mixrank/jobs/123", buttons=[founder])
+    brain = _PageBrain({"action": "click", "control": 1, "reason": "Apply"})
+
+    result = ext.apply_here(_shooting(page), JOB, PROFILE, _BrainEngine(brain), _settings(), None, dry_run=False)
+
+    assert result.status == ApplyStatus.EXTERNAL_MANUAL
+    assert founder.clicks == 0
+    assert brain.calls == []
+
+
+def test_yc_founder_apply_is_never_used_as_a_final_submit():
+    founder = _Button("Apply", _never)
+    page = _Page("https://www.ycombinator.com/companies/mixrank/jobs/123", fields=_form(), buttons=[founder])
+    assert ext.find_submit(_browser(page)) is None
+
+
+def test_yc_sign_in_wall_never_creates_a_generic_career_site_account(tmp_path, monkeypatch):
+    page = _Page("https://www.workatastartup.com/application?signup_job_id=72514", fields=[
+        _Control("email", "Email", name="email"), _Control("password", "Password", name="password")],
+        buttons=[_Button("Log in", _never), _Button("Create account", _never)])
+    monkeypatch.setattr(acc, "sign_in", lambda *args: pytest.fail("YC must use the existing candidate account"))
+
+    result = ext.apply_here(_browser(page), JOB, PROFILE, _Engine(), _settings(), _resume(tmp_path), dry_run=False)
+
+    assert result.status == ApplyStatus.EXTERNAL_MANUAL
+    assert "existing YC / Work at a Startup candidate account" in result.detail
+    assert "signup_job_id=72514" in result.detail
+    assert all(not item.value for item in page.fields)
+
+
+@pytest.mark.parametrize("phone", ["+91 90000 00000", "+919000000000"])
+def test_yc_phone_select_uses_its_rendered_dial_code_options(tmp_path, phone):
+    code = _Control("select", "Phone Number", required=True, name="dial",
+                    options=["US/Canada (+1)", "India (+91)", "United Kingdom (+44)"])
+    number = _Control("tel", "Phone Number", required=True, name="phone")
+    page = _Page("https://www.ycombinator.com/companies/mixrank/jobs/123", fields=[code, number])
+    browser = _browser(page)
+
+    result = ext.fill_form(browser, ext.discover_fields(browser), replace(PROFILE, phone=phone), _Engine(), None)
+
+    assert result.missing == []
+    assert code.value == "India (+91)"
+    assert number.value == phone
+
+
+def test_yc_phone_code_never_guesses_from_an_ambiguous_shared_code():
+    profile = replace(PROFILE, phone="+7 900 000 0000", extra_facts={})
+    assert ext._yc_phone_option(profile, ["Kazakhstan (+7)", "Russia (+7)"]) is None
+    assert ext._yc_phone_option(replace(profile, extra_facts={"country": "Russia"}),
+                                ["Kazakhstan (+7)", "Russia (+7)"]) == "Russia (+7)"
+
+
+def test_yc_phone_country_works_with_the_real_react_combobox_shape():
+    code = _Combo("Phone Number", ["US/Canada (+1)", "India (+91)", "United Kingdom (+44)"],
+                  required=True, name="countryCode")
+    number = _Control("tel", "Phone Number", required=True, name="phone")
+    page = _Page("https://www.ycombinator.com/companies/acme/jobs/123", fields=[code, number])
+    driver = _browser(page)
+    result = ext.fill_form(driver, ext.discover_fields(driver), PROFILE, _Engine(), None)
+    assert result.missing == []
+    assert code.selected == "India (+91)"
+    assert number.value == PROFILE.phone
+
+
+@pytest.mark.parametrize("text", [
+    "Your application was not successfully submitted",
+    "Error: application submitted: false",
+    "If you have applied before, check your email",
+    "When your application has been submitted, we will email you",
+    "Was your application submitted?",
+    "You have not already applied to this job",
+    "Application sent: false",
+])
+def test_negative_or_conditional_text_never_counts_as_a_submission(text):
+    assert ext.confirmation_words(text) == ""
+    assert ext.already_applied(_browser(_Page(GREENHOUSE, body=text))) == ""
+
+
+def test_a_real_receipt_still_counts_after_a_separate_previous_error_message():
+    assert ext.confirmation_words("Previous upload failed. Your application has been submitted.")
+
+
+def test_yc_reacquires_the_resume_input_after_location_replaces_it(tmp_path):
+    class DetachedFile(_Control):
+        def get_attribute(self, name):
+            raise StaleElementReferenceException("YC replaced this upload input")
+
+        def send_keys(self, text):
+            raise StaleElementReferenceException("YC replaced this upload input")
+
+    stale = DetachedFile("file", "Upload Resume", required=True, name="resume", accept=".pdf")
+    fresh = _Control("file", "Upload Resume", required=True, name="resume", accept=".pdf")
+    cover = _Control("file", "Cover letter", name="cover", accept=".pdf")
+    page = _Page("https://www.ycombinator.com/companies/mixrank/jobs/123", fields=[stale, cover])
+    browser = _browser(page)
+    old_fields = ext.discover_fields(browser)
+    page.fields = [fresh, cover]
+    pdf = _resume(tmp_path)
+
+    result = ext.fill_form(browser, old_fields, PROFILE, _Engine(), pdf)
+
+    assert result.resume_attached
+    assert result.missing == []
+    assert fresh.value == str(pdf.resolve())
+    assert cover.value == ""
+
+
+def test_yc_replaced_upload_with_ambiguous_identity_is_left_for_review(tmp_path):
+    class DetachedFile(_Control):
+        def get_attribute(self, name):
+            raise StaleElementReferenceException("detached")
+
+        def send_keys(self, text):
+            raise StaleElementReferenceException("detached")
+
+    stale = DetachedFile("file", "Upload Resume", required=True, name="resume", accept=".pdf")
+    page = _Page("https://www.ycombinator.com/companies/mixrank/jobs/123", fields=[stale])
+    browser = _browser(page)
+    old_fields = ext.discover_fields(browser)
+    page.fields = [_Control("file", "Upload Resume", name="resume", accept=".pdf"),
+                   _Control("file", "Upload Resume", name="resume", accept=".pdf")]
+
+    result = ext.fill_form(browser, old_fields, PROFILE, _Engine(), _resume(tmp_path))
+
+    assert not result.resume_attached
+    assert result.missing == ["Upload Resume"]
+    assert all(not item.value for item in page.fields)
+
+
+def test_yc_application_is_filled_but_hcaptcha_still_prevents_submission(tmp_path):
+    page = _confirming_page()
+    page.url = "https://www.ycombinator.com/companies/mixrank/jobs/123"
+    page.challenges = [SimpleNamespace(is_displayed=lambda: True)]
+
+    result = ext.apply_here(_browser(page), JOB, PROFILE, _Engine(), _settings(), _resume(tmp_path), dry_run=False)
+
+    assert result.status == ApplyStatus.EXTERNAL_MANUAL
+    assert result.missing == ["captcha (a check only a person may answer)"]
+    assert _by_name(page, "first_name").value == "Jane"
+    assert _by_name(page, "resume").value
+    assert page.buttons[0].clicks == 0
+
+
+@pytest.mark.parametrize("url", ["https://www.ycombinator.com/companies/mixrank/jobs/123",
+                                 "https://www.workatastartup.com/application?signup_job_id=72514"])
+def test_yc_application_counts_only_a_confirmed_submit(tmp_path, url):
+    page = _confirming_page()
+    page.url = url
+
+    result = ext.apply_here(_browser(page), JOB, PROFILE, _Engine(), _settings(), _resume(tmp_path), dry_run=False)
+
+    assert result.status == ApplyStatus.APPLIED_EXTERNAL
+    assert result.ats == "ycombinator"
+    assert page.buttons[0].clicks == 1
 
 
 def test_a_honeypot_box_is_never_filled(tmp_path):

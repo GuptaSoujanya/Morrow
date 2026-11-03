@@ -93,8 +93,19 @@ _ALREADY_APPLIED = re.compile(
 
 def already_applied(driver: Any) -> str:
     """The page's own words saying this application is in, or "" when it does not."""
-    found = _ALREADY_APPLIED.search(_page_text(driver))
-    return found.group(0) if found else ""
+    text = _page_text(driver)
+    return next((found.group(0) for found in _ALREADY_APPLIED.finditer(text)
+                 if _affirmative_marker(text, found.start(), found.end())), "")
+
+
+def _affirmative_marker(text: str, start: int, end: int) -> bool:
+    """A receipt phrase inside a rejection or conditional instruction is not a receipt."""
+    prefix = re.split(r"[.!?\n]", text[:start])[-1][-100:]
+    if re.search(r"\b(?:not|never|unable|cannot|couldn't|didn't|wasn't|isn't|failed|error|"
+                 r"if|when|once|until|unless)\b", prefix, re.I):
+        return False
+    suffix = text[end:]
+    return not re.match(r"\s*(?:\?|:\s*(?:no|false|failed|error)\b)", suffix, re.I)
 
 _FIELD_RULES = (
     (re.compile(r"\bfirst\s*name\b|\bgiven\s*name\b|\bforename\b", re.I), "first_name"),
@@ -479,11 +490,50 @@ def _norm(value: str) -> str:
 
 
 def detect_ats(url: str) -> str:
-    host = (urlparse(url).netloc or "").lower()
+    location = urlparse(url)
+    if location.hostname in ("ycombinator.com", "www.ycombinator.com", "workatastartup.com", "www.workatastartup.com"):
+        return "ycombinator"
+    host = (location.netloc or "").lower()
     for needle, name in ATS_HOSTS:
         if needle in host:
             return name
     return "website"
+
+
+def _yc_job_url(url: str) -> bool:
+    location = urlparse(url)
+    return location.hostname in ("ycombinator.com", "www.ycombinator.com") and bool(
+        re.match(r"^/companies/[^/]+/jobs/[^/]+", location.path))
+
+
+def _yc_role_label(label: str) -> bool:
+    label = re.sub(r"\s*[›»→]+\s*$", "", label)
+    return bool(re.fullmatch(r"apply (?:to|for) (?:this )?role", label, re.I))
+
+
+def _yc_phone_option(profile: Profile, options: List[str]) -> Optional[str]:
+    """YC labels the dial-code select 'Phone Number', just like the number input.
+
+    Recognize it from its rendered country/code options. Match the saved
+    international number, without guessing a country from the current location.
+    """
+    codes = [re.search(r"\(\+(\d{1,4})\)\s*$", option) for option in options]
+    if len(options) < 2 or not all(codes):
+        return None
+    phone = re.sub(r"[\s().-]", "", profile.phone or "")
+    if not re.fullmatch(r"\+\d+", phone):
+        return None
+    matches = [(option, code.group(1)) for option, code in zip(options, codes)
+               if code is not None and phone[1:].startswith(code.group(1))]
+    if not matches:
+        return None
+    longest = max(len(code) for _, code in matches)
+    choices = [option for option, code in matches if len(code) == longest]
+    if len(choices) == 1:
+        return choices[0]
+    country = _norm((profile.extra_facts or {}).get("country", ""))
+    exact = [option for option in choices if _norm(re.sub(r"\s*\(\+\d+\)\s*$", "", option)) == country]
+    return exact[0] if len(exact) == 1 else None
 
 
 def known_values(profile: Profile) -> Dict[str, str]:
@@ -810,6 +860,27 @@ def attach_file(driver: Any, element: Any, path: Path) -> bool:
         time.sleep(POLL_S)
 
 
+def _current_upload(driver: Any, item: Field) -> Field:
+    """Reacquire a replaced React file input by its own identity, never by position."""
+    try:
+        item.element.get_attribute("type")
+        return item
+    except StaleElementReferenceException:
+        candidates = [fresh for fresh in application_fields(discover_fields(driver)) if fresh.kind == "file"]
+        for attr in ("ident", "name", "question"):
+            value = getattr(item, attr)
+            if value:
+                matches = [fresh for fresh in candidates if getattr(fresh, attr) == value]
+                if len(matches) == 1:
+                    return matches[0]
+                # A non-unique id/name must not fall back to a broader label.
+                if matches:
+                    break
+    except WebDriverException:
+        pass
+    return item
+
+
 def _set_checked(driver: Any, element: Any, checked: bool) -> bool:
     try:
         if bool(element.is_selected()) != checked:
@@ -905,8 +976,15 @@ def reveal_form(driver: Any, settle_s: Optional[float] = None) -> List[Field]:
     for _ in range(2):
         before = set(driver.window_handles)
         candidates = []
+        yc_job = _yc_job_url(_current_url(driver))
         for control in _visible_controls(driver):
             text = _control_text(control)
+            if yc_job:
+                # YC's header "Apply" starts a founder/funding application.
+                # A job listing instead has its own "Apply to role ›" link.
+                if _yc_role_label(text):
+                    candidates.append((0, len(candidates), control))
+                continue
             if _REVEAL_TEXT.match(text) and not re.search(r"linkedin|indeed|autofill|with", text, re.I):
                 # Workday's "Apply" opens a choice; "Apply Manually" is the way on.
                 candidates.append((0 if re.search(r"manual", text, re.I) else 1, len(candidates), control))
@@ -969,6 +1047,10 @@ def find_form_with_help(
             return [], ""
         controls = [(control, _control_text(control)) for control in _visible_controls(driver)]
         controls = [(control, label) for control, label in controls if label]
+        if _yc_job_url(_current_url(driver)):
+            # The fallback must obey the same job-only navigation rule as reveal_form.
+            controls = [(control, label) for control, label in controls
+                        if not re.match(r"^apply\b", label, re.I) or _yc_role_label(label)]
         if not controls:
             return [], ""
         shot = page_brain.save_screenshot(driver, settings, "stuck")
@@ -1409,6 +1491,9 @@ def fill_form(
         if item.kind in ("radio", "checkbox"):
             continue
         if item.kind == "file":
+            if detect_ats(_current_url(driver)) == "ycombinator":
+                # Selecting a location on YC remounts the resume input.
+                item = _current_upload(driver, item)
             # The id often says what a generic "Attach" label does not (resume, cover_letter).
             hint = " ".join((label, item.name, item.ident))
             for_resume = bool(_RESUME.search(label)) or (not _COVER.search(label) and bool(_RESUME.search(hint)))
@@ -1449,6 +1534,11 @@ def fill_form(
             (outcome.missing if item.required else outcome.skipped).append(label)
             continue
         options = real_options(combobox_options(driver, item.element) if item.is_combobox else item.options)
+        if (item.kind == "select" or item.is_combobox) and detect_ats(_current_url(driver)) == "ycombinator":
+            phone_option = _yc_phone_option(profile, options)
+            if phone_option is not None:
+                _fill_choice(driver, item, phone_option, options, answer_engine, outcome)
+                continue
         if _EEO.search(label):
             chosen = decline_option(options) if options else None
             if chosen is not None and _choose(driver, item, chosen):
@@ -1515,6 +1605,10 @@ def find_submit(driver: Any) -> Optional[Any]:
     best_rank = 3
     for control in _visible_controls(driver):
         text = _control_text(control)
+        if _yc_job_url(_current_url(driver)) and re.match(r"^apply\b", text, re.I):
+            # The only final control in the YC role dialog is Submit. The page's
+            # generic Apply starts a founder application, even while the form loads.
+            continue
         if re.search(r"linkedin|indeed|autofill|google|with ", text, re.I):
             continue
         try:
@@ -1637,7 +1731,11 @@ def repair_refused(driver: Any, engine: Any, error: str) -> List[str]:
 def confirmation_words(text: str) -> str:
     """The confirmation phrase a page or a quote of one holds, or "" when it holds none."""
     lowered = _clean(text).lower()
-    return next((marker for marker in _CONFIRMED if marker in lowered), "")
+    for marker in _CONFIRMED:
+        for found in re.finditer(re.escape(marker), lowered):
+            if _affirmative_marker(lowered, found.start(), found.end()):
+                return marker
+    return ""
 
 
 def wait_for_confirmation(driver: Any, timeout_s: float = CONFIRM_WAIT_S) -> Tuple[bool, str]:
@@ -1738,6 +1836,12 @@ def apply_here(
     for _ in range(2):
         if not wants_account(driver, fields):
             break
+        if ats == "ycombinator" or detect_ats(_current_url(driver)) == "ycombinator":
+            # YC uses the candidate's existing shared account, not a generated
+            # per-employer password. A saved signed-in session needs no action.
+            result.detail = ("Sign in to your existing YC / Work at a Startup candidate account in this browser, "
+                             "then retry this role: %s" % url)
+            return result
         ok, how = sign_in(driver, settings, profile, dry_run)
         if not ok:
             result.detail = "the site asks for an account: %s" % how
@@ -1850,22 +1954,21 @@ def apply_here(
 def _submit_refused(driver: Any, said: str) -> str:
     """Why a clicked Submit sent nothing, or "" when a quiet success cannot be ruled out.
 
-    Both gates that decide what to try again refuse anything whose reason says the Submit
-    was clicked, because applying twice is worse than not applying. A site that answered
-    the click with an error of its own, or that is still showing the form with required
-    boxes empty, plainly has nothing on file, so those two are told apart here and left
-    open instead of being retired.
+    Only an explicit validation rejection permits a correction and another click.
+    A form can reset after a successful send, so empty fields alone are not evidence
+    that nothing was sent.
     """
     if said.startswith("the site reported"):
-        return said
-    blank = [
-        item.question or item.name
-        for item in application_fields(settled_fields(driver))
-        if item.required and not item.value
-    ]
-    if not blank:
-        return ""
-    return "the form is still on screen, unanswered: %s" % ", ".join(blank[:6])
+        message = said.partition(":")[2]
+        if re.search(r"timeout|timed out|server|network|connection|something went wrong|try again", message, re.I):
+            return ""
+        field = re.search(r"\b(?:phone|email|e-mail|name|resume|cv|attachment|file|field|answer|question|"
+                          r"date|salary|experience|location|address|number|selection|upload)\b", message, re.I)
+        invalid = re.search(r"\b(?:invalid|required|missing|must|empty|too large|too long|too short)\b|"
+                            r"please (?:enter|select|provide|attach)", message, re.I)
+        if field and invalid:
+            return said
+    return ""
 
 
 def _confirmed_by_brain(driver: Any, job: JobPosting, settings: Settings, answer_engine: Any) -> str:
