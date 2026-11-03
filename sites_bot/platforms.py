@@ -34,7 +34,7 @@ from urllib3.exceptions import HTTPError as TransportError
 from . import browser_agent, profile_agent
 from . import external as ext
 from .board import Board
-from common import llm, memory, profile_plan
+from common import guardrails, llm, memory, profile_plan
 from common.browser import BrowserError, human_pause, safe_get
 from common.models import ApplyResult, ApplyStatus, JobPosting, Profile, RunSummary, Settings
 from cutshort_bot.board import BOARD as CUTSHORT
@@ -541,6 +541,9 @@ def apply_to(
     """Apply to one job on the board; APPLIED_PLATFORM only when the board shows it applied after a reload."""
     from .page_brain import dead_reason
     from .application_brain import blocked
+    own = guardrails.guard_job(profile, job)
+    if own:
+        return _result(job, ApplyStatus.OWN_COMPANY, guardrails.refusal(own))
     prior = blocked(settings, job)
     if prior:
         return _result(job, ApplyStatus.ALREADY_APPLIED if prior == 'confirmed' else ApplyStatus.EXTERNAL_MANUAL,
@@ -695,6 +698,7 @@ def run_board(
         summary.collected = len(jobs)
         for job in jobs:
             ledger.record_seen(job)
+        jobs, summary.own_company = guardrails.drop_own_company(jobs, profile, source=board.label)
         jobs, summary.too_old = ranking.drop_stale_candidates(jobs, settings, source=board.label)
         ranked = ranking.rank(profile, jobs, client, settings, source=board.label)
         summary.ranked = len(ranked)
@@ -729,6 +733,9 @@ def run_board(
                     raise
                 result = _result(job, ApplyStatus.ERROR, "the job page stopped answering")
             logger.info("      -> %s (%s)", result.status, result.detail[:250])
+            if result.status == ApplyStatus.OWN_COMPANY:
+                _count(summary, result)
+                continue
             summary.attempted += 1
             if result.status == DRY_RUN:
                 sent += 1
@@ -773,6 +780,8 @@ def _count(summary: RunSummary, result: ApplyResult) -> None:
         summary.external_manual += 1
     elif result.status == ApplyStatus.ABSTAINED:
         summary.skipped_abstained += 1
+    elif result.status == ApplyStatus.OWN_COMPANY:
+        summary.own_company += 1
     else:
         summary.errors += 1
     summary.results.append(result)

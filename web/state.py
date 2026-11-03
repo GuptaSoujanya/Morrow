@@ -561,7 +561,8 @@ _CHANNELS = {
 _NAUKRI_SOURCES = {"search", "recommended"}
 _RUN_FIELDS = (
     "collected", "too_old", "not_ranked", "ranked", "below_score", "already_applied", "held_back",
-    "eligible", "attempted", "applied", "applied_external", "external_manual", "skipped_abstained", "errors",
+    "own_company", "eligible", "attempted", "applied", "applied_external", "external_manual",
+    "skipped_abstained", "errors",
 )
 
 
@@ -653,6 +654,7 @@ def _funnel(totals: Counter, runs: int) -> Dict[str, Any]:
             ("Under the minimum score", totals["below_score"]),
             ("Applied before", totals["already_applied"]),
             ("Held for your answers", totals["held_back"]),
+            ("Your current employer", totals["own_company"]),
         )),
         "unsent": counts((
             ("Left for you on a company site", totals["external_manual"]),

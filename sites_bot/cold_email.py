@@ -446,12 +446,17 @@ def own_addresses(settings: Settings, profile: Profile) -> set:
 
 def unique_leads(settings: Settings, profile: Profile, leads: List[Lead]) -> List[Lead]:
     """One lead per address, never their own; the posting saved for that job is used when there is one."""
+    from common import guardrails
     from common.resume import saved_tailoring_dir
 
     own = own_addresses(settings, profile)
     kept = {}  # type: Dict[str, Lead]
     for lead in leads:
         if lead.email in own:
+            continue
+        employer = guardrails.own_company(profile, company=lead.company, url=lead.job_url, email=lead.email)
+        if employer:
+            logger.warning("No draft to %s (%s): %s", lead.email, lead.company or "?", guardrails.refusal(employer))
             continue
         folder = saved_tailoring_dir(settings, lead.job()) if lead.company or lead.title else None
         saved = folder / "posting.txt" if folder is not None else None

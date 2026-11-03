@@ -15,7 +15,7 @@ from email.parser import BytesParser
 from pathlib import Path
 from urllib.parse import quote, urlsplit
 
-from . import company_store as store, company_research, resume, outreach_progress as progress
+from . import company_store as store, company_research, guardrails, resume, outreach_progress as progress
 from .public_web import fetch_page
 from sites_bot import cold_email as mail
 
@@ -81,6 +81,18 @@ def claim(db, company, recipient, sender):
             error='',updated_at=excluded.updated_at,lease_until=excluded.lease_until''',
             (key, company['company_id'], recipient, sender, time.time(), time.time()+1800))
     return key, True
+
+
+def own_employer(profile, company):
+    """The protected company name when this catalog entry is the person's current employer, else ''."""
+    values = []
+    for key in ('website', 'careers', 'email'):
+        found = company.get('fields', {}).get(key, [])
+        for entry in found if isinstance(found, list) else [found]:
+            values.append(str(entry.get('value', '') if isinstance(entry, dict) else entry))
+    return (guardrails.own_company(profile, company=company.get('name', ''))
+            or next((guardrails.own_company(profile, url=v, email=v) for v in values
+                     if guardrails.own_company(profile, url=v, email=v)), ''))
 
 
 def hiring_contacts(company, own=()):
@@ -453,6 +465,14 @@ def _run(settings, profile, client, *, gmail=None, limit=10, company_id='', comp
         candidates = [c for c in all_rows if store.eligible(c) or any(e['value'] not in done for e in hiring_contacts(c, own))]
         candidates.sort(key=lambda c:not bool(hiring_contacts(c, own)))
         candidates = candidates if all_remaining else candidates[:limit]
+    refused = [c for c in candidates if own_employer(profile, c)]
+    candidates = [c for c in candidates if not any(c is r for r in refused)]
+    for company in refused:
+        log.warning('Company email drafts: %s skipped. %s', company['name'], guardrails.refusal(own_employer(profile, company)))
+        if not dry_run:
+            initialize(settings.db_path)
+            progress.record(settings.db_path, sender_for(settings), company, 'blocked',
+                            'This is your current employer. The bot never writes to it.')
     if dry_run:
         return dict(companies=len(candidates), company_ids=[c['company_id'] for c in candidates], drafts=0, preview=True)
     initialize(settings.db_path)

@@ -533,6 +533,7 @@ def _log_summary(summary: RunSummary, settings: Settings) -> None:
     logger.info("skipped, already done: %d", summary.skipped_already_applied)
     logger.info("skipped, external    : %d", summary.skipped_external)
     logger.info("skipped, unanswerable: %d", summary.skipped_abstained)
+    logger.info("skipped, own employer: %d", summary.own_company)
     logger.info("errors               : %d", summary.errors)
     logger.info(
         "quota                : %d used before, %d used after (of %s)",
@@ -574,6 +575,8 @@ def _tally(summary: RunSummary, result: ApplyResult) -> None:
         summary.skipped_external += 1
     elif result.status == ApplyStatus.ABSTAINED:
         summary.skipped_abstained += 1
+    elif result.status == ApplyStatus.OWN_COMPANY:
+        summary.own_company += 1
     elif result.status in (ApplyStatus.ERROR, ApplyStatus.NO_APPLY_BUTTON):
         summary.errors += 1
 
@@ -593,6 +596,7 @@ def run(
     from common import browser
     from . import early_access as early_access_module
     from sites_bot import cold_email, external as external_module
+    from common import guardrails
     from common import ledger as ledger_module
     from common import llm
     from . import ranking
@@ -667,6 +671,7 @@ def run(
                 ledger,
                 limit=early_access_limit,
                 dry_run=settings.dry_run,
+                profile=profile,
             )
             logger.info(
                 "Early access: %d roles listed, %d shared, %d already shared, "
@@ -708,6 +713,7 @@ def run(
         for job in candidates:
             ledger.record_seen(job)
 
+        candidates, summary.own_company = guardrails.drop_own_company(candidates, profile, source="Naukri")
         # Age is a hard gate, so applying it before ranking rather than after
         # keeps the LLM budget on jobs that can actually be applied to.
         candidates, dropped_stale = ranking.drop_stale_candidates(candidates, settings, source="Naukri")
@@ -966,6 +972,10 @@ def run(
                     logger.info(
                         "      %s's site stopped %d application(s) the same way; its other postings "
                         "are left for another day.", scored.job.company, site_failures[company_key])
+            if result.status == ApplyStatus.OWN_COMPANY:
+                _tally(summary, result)
+                logger.warning("      -> %s (%s)", result.status, result.detail)
+                continue
             ledger.record_attempt(
                 result, title=scored.job.title or "", company=scored.job.company or "",
                 facts=facts,
@@ -1158,6 +1168,7 @@ def _summary_record(summary: RunSummary, settings: Settings) -> Dict[str, Any]:
         "below_score": summary.below_score,
         "already_applied": summary.already_applied,
         "held_back": summary.held_back,
+        "own_company": summary.own_company,
         "eligible": summary.eligible,
         "min_score": settings.min_score,
         "target": settings.target_applications,

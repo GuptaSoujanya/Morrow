@@ -64,6 +64,7 @@ def funnel_text(record: Dict[str, Any]) -> str:
         ("scored under %g (MIN_SCORE)" % record.get("min_score", 0), record.get("below_score", 0)),
         ("applied before", record.get("already_applied", 0)),
         ("held back for your answers", record.get("held_back", 0)),
+        ("from your current employer", record.get("own_company", 0)),
     ]
     dropped = ", ".join("%d %s" % (count, label) for label, count in steps if count)
     line = "collected %d" % record.get("collected", 0)

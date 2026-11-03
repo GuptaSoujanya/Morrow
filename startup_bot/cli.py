@@ -93,7 +93,7 @@ def _record_draft(ledger: Any, job: JobPosting, address: str, profile: Any, sett
 def choose(settings: Settings, profile: Any, ledger: Any, client: Any, limit: int,
            fetch: Any = startup_jobs.fetch_json) -> List[Tuple[StartupPost, float]]:
     """The posts worth applying to today, best first, with their scores."""
-    from common import answers as answers_module
+    from common import answers as answers_module, guardrails
     from naukri_bot import ranking
     from sites_bot.application_brain import blocked
 
@@ -105,6 +105,7 @@ def choose(settings: Settings, profile: Any, ledger: Any, client: Any, limit: in
     held = ledger.waiting_on_you(answers_module.facts_fingerprint(profile, settings)) | ledger.sent_unconfirmed()
     jobs = [job for job in jobs if job.job_id not in held and not blocked(settings, job)
             and (job.url.strip(), " ".join(job.title.casefold().split())) not in drafts]
+    jobs, own_company = guardrails.drop_own_company(jobs, profile, source="Startup jobs")
     jobs, _ = ranking.drop_stale_candidates(jobs, settings, source="Startup jobs")
     ranked = ranking.rank(profile, jobs, client, settings, source="Startup jobs")
     for scored in ranked:
@@ -113,7 +114,8 @@ def choose(settings: Settings, profile: Any, ledger: Any, client: Any, limit: in
                                               ledger.has_applied, source="Startup jobs")
     chosen = [(posts[s.job.job_id], s.score) for s in selected[:limit]]
     logger.info("Startup jobs: %d found, %d ranked, %d chosen", len(posts), len(ranked), len(chosen))
-    choose.last = {"collected": len(posts), "ranked": len(ranked), "eligible": len(chosen)}
+    choose.last = {"collected": len(posts), "ranked": len(ranked), "eligible": len(chosen),
+                   "own_company": own_company}
     return chosen
 
 
@@ -157,10 +159,15 @@ def forget_pending(settings: Settings, job: JobPosting) -> None:
 def apply_on_site(driver: Any, settings: Settings, profile: Any, engine: Any, client: Any, ledger: Any,
                   post: StartupPost, dry_run: bool, no_tailor: bool) -> str:
     """Apply on the post's own page; the status it ended with."""
+    from common import guardrails
     from sites_bot import application_brain, browser_agent
     from sites_bot import external as ext
 
     job = post.job
+    own = guardrails.guard_job(profile, job) or guardrails.own_company(profile, url=post.apply_url)
+    if own:
+        logger.warning("      -> %s (%s)", ApplyStatus.OWN_COMPANY, guardrails.refusal(own))
+        return ApplyStatus.OWN_COMPANY
     prior = application_brain.blocked(settings, job)
     if prior or job.job_id in ledger.sent_unconfirmed():
         logger.info("      -> skipped: a saved application outcome needs review before retrying")
@@ -235,7 +242,7 @@ def run(settings: Settings, profile: Any, ledger: Any, client: Any, engine: Any,
             ledger.finish_run(run_id, {
                 "board": "startups", "dry_run": dry_run,
                 "collected": found.get("collected", 0), "ranked": found.get("ranked", 0),
-                "eligible": found.get("eligible", 0),
+                "eligible": found.get("eligible", 0), "own_company": found.get("own_company", 0),
                 "attempted": counts.get("applied", 0) + counts.get("need you", 0),
                 "applied": counts.get("applied", 0), "applied_external": 0,
                 "external_manual": counts.get("need you", 0), "emails_drafted": counts.get("emails drafted", 0),

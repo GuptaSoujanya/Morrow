@@ -324,6 +324,7 @@ def share_all(
     ledger: Any,
     limit: int = 20,
     dry_run: bool = False,
+    profile: Any = None,
 ) -> EarlyAccessSummary:
     """Share interest in up to ``limit`` early access roles.
 
@@ -331,6 +332,8 @@ def share_all(
     flip, or the page lands somewhere other than Naukri's S2J confirmation,
     something is wrong and the remaining clicks would be guesses.
     """
+    from common import guardrails
+
     summary = EarlyAccessSummary()
     if not open_page(driver, settings):
         summary.aborted_reason = "early access listing unreachable"
@@ -338,6 +341,12 @@ def share_all(
 
     roles = collect_roles(driver)
     summary.found = len(roles)
+    for role in list(roles):
+        own = guardrails.own_company(profile, company=role.company) if profile is not None else ""
+        if own:
+            logger.warning("Not sharing interest in %s: %s", role.describe(), guardrails.refusal(own))
+            roles.remove(role)
+            summary.skipped += 1
     summary.roles = roles
     if not roles:
         return summary

@@ -105,6 +105,9 @@ class ApplyStatus:
     #: processing your request". Five in a row ended a run at 46 applications
     #: in 24 hours, so it is how Naukri says the day is over.
     NAUKRI_REFUSED = "naukri_refused"
+    #: The posting is from the person's current employer (or a company they
+    #: listed under never_apply_to). Refused before any page is opened.
+    OWN_COMPANY = "own_company"
     ERROR = "error"
 
     #: Statuses that mean a Naukri application was really submitted.
@@ -523,6 +526,8 @@ class RunSummary:
     below_score: int = 0
     already_applied: int = 0
     held_back: int = 0
+    # Postings from the current employer, dropped before ranking or refused at apply time.
+    own_company: int = 0
     eligible: int = 0
     quota_before: int = 0
     quota_after: int = 0

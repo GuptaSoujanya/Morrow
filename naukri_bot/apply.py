@@ -400,7 +400,11 @@ def apply_to_job(
     settings: Settings,
 ) -> ApplyResult:
     """Attempt one Naukri-native application and report only verified outcomes."""
+    from common import guardrails
     from sites_bot.application_brain import blocked
+    own = guardrails.guard_job(profile, job)
+    if own:
+        return _result(job, ApplyStatus.OWN_COMPANY, guardrails.refusal(own))
     prior = blocked(settings, job)
     if prior:
         return _result(job, ApplyStatus.ALREADY_APPLIED if prior == 'confirmed' else ApplyStatus.EXTERNAL_MANUAL,

@@ -35,7 +35,7 @@ from common.answers import _NOT_FOR_JUDGEMENT, match_option
 from common.browser import human_pause, human_type, safe_get
 from common.models import AnswerMode, ApplyResult, ApplyStatus, JobPosting, Profile, Settings
 from common.shared_files import atomic_write_text, locked_file
-from common import paths
+from common import guardrails, paths
 from common.llm import out_of_quota
 
 
@@ -463,6 +463,7 @@ class ExternalResult:
             ApplyStatus.EXTERNAL_MANUAL,
             ApplyStatus.EXTERNAL_SKIPPED,
             ApplyStatus.ALREADY_APPLIED,
+            ApplyStatus.OWN_COMPANY,
         ):
             status = self.status
         elif self.status == DRY_RUN:
@@ -1876,6 +1877,11 @@ def apply_here(
     url = _current_url(driver)
     ats = detect_ats(url)
     result = ExternalResult(status=ApplyStatus.EXTERNAL_MANUAL, url=url, ats=ats, resume=str(resume_pdf or ""))
+    own = guardrails.guard_job(profile, job) or guardrails.own_company(profile, url=url)
+    if own:
+        result.status = ApplyStatus.OWN_COMPANY
+        result.detail = guardrails.refusal(own)
+        return result
     from .application_brain import blocked
     prior = blocked(settings, job)
     if prior:
@@ -2121,7 +2127,7 @@ def apply_on_company_site(
         result = ExternalResult(status=ApplyStatus.ERROR, url=_current_url(driver), detail="%s: %s" % (type(exc).__name__, exc))
     finally:
         return_to(driver, naukri_handle, keep)
-    if result.status in (ApplyStatus.APPLIED_EXTERNAL, ApplyStatus.ALREADY_APPLIED, GONE):
+    if result.status in (ApplyStatus.APPLIED_EXTERNAL, ApplyStatus.ALREADY_APPLIED, GONE, ApplyStatus.OWN_COMPANY):
         forget_company_site(settings, job)
     elif result.status != DRY_RUN and not (result.detail or "").startswith(SAME_SITE_WAITING):
         record_company_site(settings, job, result)
@@ -2329,6 +2335,11 @@ def retry_pending(
     for entry in [entry for entry in pending_company_sites(settings) if retryable(entry, settings.browser_agent)]:
         company = (entry.get("company") or "").casefold()
         job = job_from_entry(entry)
+        own = guardrails.guard_job(profile, job) or guardrails.own_company(profile, url=entry.get("site", ""))
+        if own:
+            logger.warning("[retry] %s @ %s dropped from the list: %s", job.title, job.company, guardrails.refusal(own))
+            forget_company_site(settings, job)
+            continue
         if company in walls:
             # Same company, same wall: the entry gets today's reason without another visit.
             record_company_site(settings, job, replace(walls[company], url=entry["site"]))

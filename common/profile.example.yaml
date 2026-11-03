@@ -100,8 +100,11 @@ extra_facts:
   degree_mode: "Full time regular degree, not distance or part time"
   full_time_education_15_years: true
 
-  # current role and history
+  # current role and history. The bot never applies to, shares interest in or
+  # emails current_company, on any board or company site; add any other
+  # company you want left alone under never_apply_to.
   current_company: "Your Employer"
+  never_apply_to: []
   current_designation: "Your Job Title"
   employment_history: >-
     Your Employer since Month Year (current), and Previous Employer before
