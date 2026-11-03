@@ -62,7 +62,7 @@ def _setup(monkeypatch, tmp_path, posts, status=ApplyStatus.APPLIED_EXTERNAL):
     monkeypatch.setattr("common.answers.facts_fingerprint", lambda p, s: "f")
     drafted = []
     monkeypatch.setattr(cold_email, "draft_all",
-                        lambda s, p, c, leads, limit, dry: drafted.extend(leads) or {"drafted": len(leads)})
+                        lambda s, p, c, leads, limit, dry, driver=None: drafted.extend(leads) or {"drafted": len(leads)})
     visited = []
     monkeypatch.setattr(ext, "resume_to_attach", lambda *a: None)
     monkeypatch.setattr(ext, "safe_get", lambda d, url: visited.append(url) or True)

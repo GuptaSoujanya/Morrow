@@ -402,7 +402,7 @@ def _gmail_draft(settings: Settings, account: str, reply: Reply) -> str:
 
 def process(settings: Settings, profile: Profile, client: Any, mails: List[Mail],
             applications: List[Dict[str, Any]], contacts: List[Dict[str, Any]], dry_run: bool = False,
-            account: str = "", now: Optional[datetime] = None) -> Dict[str, int]:
+            account: str = "", now: Optional[datetime] = None, driver: Any = None) -> Dict[str, int]:
     """Link, classify and draft each new mail; counts of what happened. Never sends."""
     now = now or datetime.now()
     seen = {row.get("message_id") for row in read_log(settings)}
@@ -436,9 +436,44 @@ def process(settings: Settings, profile: Profile, client: Any, mails: List[Mail]
         seen.add(mail.message_id)
         if reply.draft and settings.gmail_app_password and account:
             problem = _gmail_draft(settings, account, reply)
-            if problem:
-                logger.warning("Reply kept as a .txt only: %s", problem)
+        elif reply.draft and driver is not None:
+            from .gmail_web import save_draft
+
+            problem = save_draft(driver, mail.sender, "Re: %s" % mail.subject, reply.draft)
+        else:
+            problem = ""
+        if reply.draft and problem:
+            logger.warning("Reply kept as a .txt only: %s", problem)
     return counts
+
+
+def check(settings: Settings, profile: Profile, client: Any, applications: List[Dict[str, Any]],
+          contacts: List[Dict[str, Any]], days: int, dry_run: bool, account: str = "",
+          driver: Any = None) -> Dict[str, int]:
+    """Read and answer employers' mail: over IMAP with an app password, else in the signed-in browser.
+
+    With neither a password nor a `driver`, the startup bot's own browser is opened for it.
+    """
+    if settings.gmail_app_password:
+        return process(settings, profile, client, read_mail(settings, account, days), applications, contacts,
+                       dry_run, account)
+    from .gmail_web import read_recent
+
+    opened = None
+    if driver is None:
+        from common import browser
+        from startup_bot.cli import own_browser
+
+        driver = opened = browser.create_driver(own_browser(settings))
+    try:
+        return process(settings, profile, client, read_recent(driver, days), applications, contacts,
+                       dry_run, account, driver=driver)
+    finally:
+        if opened is not None:
+            try:
+                opened.quit()
+            except Exception:
+                pass
 
 
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
@@ -480,9 +515,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         {"email": row.get("email"), "company": row.get("company"), "job_url": row.get("job_url")}
         for row in read_records(settings)
     ]
-    mails = read_mail(settings, account, args.days)
-    counts = process(settings, profile, llm.build_client(settings), mails, applications, contacts,
-                     args.dry_run, account)
+    counts = check(settings, profile, llm.build_client(settings), applications, contacts, args.days,
+                   args.dry_run, account)
     logger.info("Employer replies: %s", ", ".join("%s %d" % item for item in counts.items()))
     if not args.dry_run:
         report.update_quietly(settings)

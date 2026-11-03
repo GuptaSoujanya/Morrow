@@ -128,7 +128,7 @@ def apply_on_site(driver: Any, settings: Settings, profile: Any, engine: Any, cl
     if address and result.status != ApplyStatus.APPLIED_EXTERNAL:
         # The site says "email us": that is the application, so it becomes a draft for you to send.
         post.contacts.insert(0, startup_jobs.Contact(address, "hiring"))
-        drafted = draft_emails(settings, profile, client, [post], dry_run).get("drafted", 0)
+        drafted = draft_emails(settings, profile, client, [post], dry_run, driver).get("drafted", 0)
         logger.info("      -> takes applications by email: %s draft for %s", "a" if drafted else "no", address)
         if drafted:
             if not dry_run:
@@ -146,7 +146,7 @@ def apply_on_site(driver: Any, settings: Settings, profile: Any, engine: Any, cl
 
 
 def draft_emails(settings: Settings, profile: Any, client: Any, posts: List[StartupPost],
-                 dry_run: bool) -> Dict[str, int]:
+                 dry_run: bool, driver: Any = None) -> Dict[str, int]:
     """An email draft to each post's hiring address. Drafts only: nothing is sent."""
     from sites_bot import cold_email
 
@@ -160,17 +160,19 @@ def draft_emails(settings: Settings, profile: Any, client: Any, posts: List[Star
                                        job.source)
         leads.append(cold_email.Lead(post.hiring_email.lower(), job.company, job.title, job.url,
                                      job.source, job.description))
-    return cold_email.draft_all(settings, profile, client, leads, len(leads), dry_run)
+    return cold_email.draft_all(settings, profile, client, leads, len(leads), dry_run, driver=driver)
 
 
 def run(settings: Settings, profile: Any, ledger: Any, client: Any, engine: Any, limit: int, dry_run: bool,
-        no_tailor: bool = False, open_browser: Any = None, fetch: Any = startup_jobs.fetch_json) -> Dict[str, int]:
+        no_tailor: bool = False, open_browser: Any = None, fetch: Any = startup_jobs.fetch_json,
+        check_replies: bool = False) -> Dict[str, int]:
     # The dashboard reads the bot's history from runs: board "startups" is this bot's card.
     start_run = getattr(ledger, "start_run", None)
     run_id = start_run() if callable(start_run) else None
     counts = {}  # type: Dict[str, int]
     try:
-        counts = _run(settings, profile, ledger, client, engine, limit, dry_run, no_tailor, open_browser, fetch)
+        counts = _run(settings, profile, ledger, client, engine, limit, dry_run, no_tailor, open_browser, fetch,
+                      check_replies)
     finally:
         if run_id is not None:
             found = getattr(choose, "last", {})
@@ -185,38 +187,61 @@ def run(settings: Settings, profile: Any, ledger: Any, client: Any, engine: Any,
     return counts
 
 
+def _replies(settings: Settings, profile: Any, client: Any, ledger: Any, dry_run: bool, driver: Any) -> int:
+    """Employers' answers to what was sent, read in the same signed-in Gmail; reply drafts written."""
+    from sites_bot import replies
+    from sites_bot.cold_email import read_contacts, read_records
+
+    try:
+        applications = ledger.recent_applications(limit=1000)
+        contacts = read_contacts(settings) + [{"email": r.get("email"), "company": r.get("company"),
+                                               "job_url": r.get("job_url")} for r in read_records(settings)]
+        found = replies.check(settings, profile, client, applications, contacts, 21, dry_run, driver=driver)
+    except Exception as exc:  # noqa: BROAD_EXCEPT_OK - replies must not cost the applications
+        logger.warning("Could not check employer replies: %s", " ".join(str(exc).split())[:200])
+        return 0
+    logger.info("Employer replies: %s", ", ".join("%s %d" % item for item in found.items()))
+    return found.get("drafted", 0)
+
+
 def _run(settings: Settings, profile: Any, ledger: Any, client: Any, engine: Any, limit: int, dry_run: bool,
-         no_tailor: bool, open_browser: Any, fetch: Any) -> Dict[str, int]:
+         no_tailor: bool, open_browser: Any, fetch: Any, check_replies: bool = False) -> Dict[str, int]:
     chosen = choose(settings, profile, ledger, client, limit, fetch)
     by_email = [post for post, _ in chosen if post.hiring_email]
     on_site = [(post, score) for post, score in chosen if not post.hiring_email and post.apply_url]
     counts = {"chosen": len(chosen), "emails drafted": 0, "applied": 0, "need you": 0,
               "no way to apply": len(chosen) - len(by_email) - len(on_site)}
-    counts["emails drafted"] = draft_emails(settings, profile, client, by_email, dry_run).get("drafted", 0)
-    if on_site:
-        from common import browser
+    if not (on_site or by_email or check_replies):
+        return counts
+    from common import browser
 
-        driver = (open_browser or browser.create_driver)(settings)
-        try:
-            for number, (post, score) in enumerate(on_site, 1):
-                logger.info("[startup %d of %d] %s @ %s (%.0f): %s", number, len(on_site), post.job.title,
-                            post.job.company, score, post.apply_url)
-                try:
-                    status = apply_on_site(driver, settings, profile, engine, client, ledger, post,
-                                           dry_run, no_tailor)
-                except Exception as exc:  # noqa: BROAD_EXCEPT_OK - one site's failure costs that site only
-                    logger.warning("      -> failed: %s", " ".join(str(exc).split())[:200])
-                    record_pending(settings, post.job, post.apply_url, ApplyStatus.ERROR, str(exc)[:200])
-                    status = ApplyStatus.ERROR
-                if status == EMAILED:
-                    counts["emails drafted"] += 1
-                else:
-                    counts["applied" if status == ApplyStatus.APPLIED_EXTERNAL else "need you"] += 1
-        finally:
+    # One browser for everything: its saved Google session is the Gmail it drafts in and reads.
+    driver = (open_browser or browser.create_driver)(settings)
+    try:
+        counts["emails drafted"] = draft_emails(settings, profile, client, by_email, dry_run, driver).get("drafted", 0)
+        for number, (post, score) in enumerate(on_site, 1):
+            logger.info("[startup %d of %d] %s @ %s (%.0f): %s", number, len(on_site), post.job.title,
+                        post.job.company, score, post.apply_url)
             try:
-                driver.quit()
-            except Exception:
-                pass
+                status = apply_on_site(driver, settings, profile, engine, client, ledger, post,
+                                       dry_run, no_tailor)
+            except Exception as exc:  # noqa: BROAD_EXCEPT_OK - one site's failure costs that site only
+                logger.warning("      -> failed: %s", " ".join(str(exc).split())[:200])
+                record_pending(settings, post.job, post.apply_url, ApplyStatus.ERROR, str(exc)[:200])
+                status = ApplyStatus.ERROR
+            if status == EMAILED:
+                counts["emails drafted"] += 1
+            elif status == "dry_run":
+                counts["filled, not sent (dry run)"] = counts.get("filled, not sent (dry run)", 0) + 1
+            else:
+                counts["applied" if status == ApplyStatus.APPLIED_EXTERNAL else "need you"] += 1
+        if check_replies:
+            counts["replies drafted"] = _replies(settings, profile, client, ledger, dry_run, driver)
+    finally:
+        try:
+            driver.quit()
+        except Exception:
+            pass
     logger.info("Startup bot: %s%s", ", ".join("%s %d" % item for item in counts.items()),
                 " (dry run)" if dry_run else "")
     return counts
@@ -248,6 +273,8 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument("--dry-run", action="store_true", help="fill forms and write drafts to the log, submit nothing")
     parser.add_argument("--no-tailor", action="store_true", help="attach the base resume instead of a tailored one")
     parser.add_argument("--headless", action="store_true", help="run the browser without a window")
+    parser.add_argument("--no-replies", action="store_true",
+                        help="skip reading employers' replies in the browser's Gmail")
     parser.add_argument("--env", metavar="PATH", help="path to a .env file")
     parser.add_argument("-v", "--verbose", action="store_true")
     return parser.parse_args(argv)
@@ -276,7 +303,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     engine = AnswerEngine(ledger, client, profile, settings)
     try:
         run(settings, profile, ledger, client, engine,
-            args.limit if args.limit is not None else settings.platform_limit, args.dry_run, args.no_tailor)
+            args.limit if args.limit is not None else settings.platform_limit, args.dry_run, args.no_tailor,
+            check_replies=not args.no_replies)
     except Exception as exc:  # noqa: BROAD_EXCEPT_OK - CLI boundary
         logger.exception("Startup bot failed: %s", exc)
         return EXIT_FAILED
