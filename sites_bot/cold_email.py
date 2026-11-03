@@ -455,16 +455,30 @@ def unique_leads(settings: Settings, profile: Profile, leads: List[Lead]) -> Lis
 
 
 def draft_all(settings: Settings, profile: Profile, client: Any, leads: List[Lead], limit: int,
-              dry_run: bool, now: Optional[datetime] = None) -> Dict[str, int]:
-    """Write a draft for each new address, up to `limit`; counts of what happened."""
+              dry_run: bool, now: Optional[datetime] = None, driver: Any = None) -> Dict[str, int]:
+    """Write a draft for each new address, up to `limit`; counts of what happened.
+
+    With no GMAIL_APP_PASSWORD, a `driver` signed in to Gmail saves the draft there instead.
+    """
     from common.shared_files import locked_file
     if dry_run:
-        return _draft_all(settings, profile, client, leads, limit, dry_run, now)
+        return _draft_all(settings, profile, client, leads, limit, dry_run, now, driver)
     with locked_file(records_path(settings)):
-        return _draft_all(settings, profile, client, leads, limit, dry_run, now)
+        return _draft_all(settings, profile, client, leads, limit, dry_run, now, driver)
 
 
-def _draft_all(settings, profile, client, leads, limit, dry_run, now=None):
+def _gmail(settings, message, sender, lead, subject, body, profile, attachment, driver):
+    """'' when the draft is in Gmail: over IMAP with the app password, else in the signed-in browser."""
+    if settings.gmail_app_password:
+        return gmail_draft(message, sender, settings.gmail_app_password)
+    if driver is not None:
+        from .gmail_web import save_draft
+
+        return save_draft(driver, lead.email, subject, "%s\n\n%s\n" % (body.strip(), signature(profile)), attachment)
+    return "no app password and no signed-in browser"
+
+
+def _draft_all(settings, profile, client, leads, limit, dry_run, now=None, driver=None):
     from common import resume as resume_module
     from common.company_outreach import records as company_drafts, sender_for
 
@@ -490,12 +504,13 @@ def _draft_all(settings, profile, client, leads, limit, dry_run, now=None):
             logger.info("[dry run] to %s (%s): %s\n%s", lead.email, lead.source, subject, body)
             counts["drafted"] += 1
             continue
-        message = build_message(sender, lead, subject, body, profile, attachment_for(settings, lead))
+        attachment = attachment_for(settings, lead)
+        message = build_message(sender, lead, subject, body, profile, attachment)
         eml = save_eml(message, folder, lead)
-        problem = gmail_draft(message, sender, settings.gmail_app_password) if settings.gmail_app_password else "no app password"
+        problem = _gmail(settings, message, sender, lead, subject, body, profile, attachment, driver)
         if not problem:
             counts["in gmail"] += 1
-        elif settings.gmail_app_password:
+        elif settings.gmail_app_password or driver is not None:
             logger.warning("Gmail draft not made for %s: %s (the .eml is saved)", lead.email, problem)
         _record(settings, lead, subject, eml, not problem, now)
         counts["drafted"] += 1

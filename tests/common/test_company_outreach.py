@@ -12,6 +12,8 @@ from common import company_outreach as outreach, company_store as store
 from common.ledger import Ledger
 from common.models import JobPosting, Profile, Settings
 
+REAL_WRITE_EMAIL = outreach.mail.write_email
+
 
 @pytest.fixture
 def setup(tmp_path, monkeypatch):
@@ -354,6 +356,80 @@ def test_browser_selected_batch_verifies_all_selected_and_skips_already_saved(se
     assert first_run['gmail']==2 and first_run['needs_review']==0
     outreach.run(settings,profile,object(),company_ids=selected,research=False,require_gmail=True)
     assert calls==['careers@acmelabs.in','careers.two@acmelabs.in']
+
+
+def test_selected_role_survives_contact_research_and_reports_verified_stages(setup, monkeypatch):
+    settings, profile, company = setup
+    key = company['company_id']
+    with Ledger(settings.db_path) as ledger:
+        ledger.record_seen(JobPosting('j2', 'https://acmelabs.in/jobs/2', company='Acme Labs', title='Front Office Executive'))
+    store.finish(settings.db_path, key, dict(fields={}))
+    checked = []
+    def research(db, **kwargs):
+        checked.append(kwargs['company_id'])
+        store.finish(db, key, dict(fields=company['fields']))
+    def write(client, base, lead):
+        assert lead.title == 'AI Engineer' and lead.job_url.endswith('/1')
+        return 'AI Engineer application', 'My résumé is attached.'
+    class Gmail:
+        def save(self, row, uncertain=False):
+            assert Path(row['data']['eml']).is_file()
+            assert outreach.progress.read(settings.db_path, settings.google_email)[key]['phase']=='saving'
+            return 'https://mail.google.com/mail/u/0/#drafts'
+    monkeypatch.setattr(outreach.company_research, 'run', research)
+    monkeypatch.setattr(outreach.mail, 'write_email', write)
+    result = outreach._run(settings, profile, object(), company_ids=[key], roles={key:'j1'}, gmail=Gmail())
+    state = outreach.progress.read(settings.db_path, settings.google_email)[key]
+    assert checked == [key] and result['gmail']==1
+    assert state['job_id']=='j1' and state['title']=='AI Engineer'
+    assert [step['phase'] for step in state['history']]==['queued','contacts','writing','attaching','saving','ready']
+    assert outreach.progress.read(settings.db_path, 'different@gmail.com')=={}
+
+
+def test_unrelated_role_explains_failure_without_creating_a_draft(setup, monkeypatch):
+    settings, profile, company = setup
+    class Client:
+        def available(self):return True
+        def complete_json(self, *args):return {'can_write':False}
+    monkeypatch.setattr(outreach.mail, 'write_email', REAL_WRITE_EMAIL)
+    result=outreach.run(settings,profile,Client(),company_ids=[company['company_id']],roles={company['company_id']:'j1'},research=False)
+    state=outreach.progress.read(settings.db_path,settings.google_email)[company['company_id']]
+    assert result['failed']==1 and state['phase']=='failed'
+    assert 'role is not supported' in state['message']
+    assert not list(Path(settings.report_dir).rglob('*.eml'))
+
+
+def test_browser_startup_failure_is_visible_and_invalid_roles_never_open_browser(setup, monkeypatch):
+    from common import gmail_browser
+    settings, profile, company = setup
+    calls=[]
+    class Session:
+        def __init__(self,*args):calls.append(True)
+        def __enter__(self):raise ValueError('Google sign-in needs attention.')
+        def __exit__(self,*args):pass
+    monkeypatch.setattr(gmail_browser,'GmailDrafts',Session)
+    monkeypatch.setattr(outreach,'public_status',lambda settings:{'gmail_configured':True,'gmail_method':'browser'})
+    key=company['company_id']
+    for role in ('unknown-job', None, 1):
+        with pytest.raises(ValueError):outreach.run(settings,profile,object(),company_ids=[key],roles={key:role})
+    assert not calls
+    with pytest.raises(ValueError,match='sign-in'):
+        outreach.run(settings,profile,object(),company_ids=[key],roles={key:'j1'})
+    state=outreach.progress.read(settings.db_path,settings.google_email)[key]
+    assert state['phase']=='failed' and state['message']=='Google sign-in needs attention.'
+    assert not outreach.records(settings.db_path)
+
+
+def test_existing_recipient_for_another_role_is_not_claimed_as_new_success(setup):
+    settings,profile,company=setup
+    first=prepare(setup)
+    with Ledger(settings.db_path) as ledger:
+        ledger.record_seen(JobPosting('j2','https://acmelabs.in/jobs/2',company='Acme Labs',title='Backend Engineer'))
+    result=outreach.run(settings,profile,object(),company_ids=[company['company_id']],roles={company['company_id']:'j2'},research=False)
+    state=outreach.progress.read(settings.db_path,settings.google_email)[company['company_id']]
+    assert result['failed']==1 and 'different role' in state['message']
+    rows=outreach.records(settings.db_path)
+    assert len(rows)==1 and rows[0]['data']==first['data']
 
 
 def test_browser_draft_content_rejects_wrong_sender_and_missing_pdf(setup):

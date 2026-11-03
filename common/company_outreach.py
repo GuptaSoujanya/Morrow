@@ -14,7 +14,7 @@ from email.parser import BytesParser
 from pathlib import Path
 from urllib.parse import quote
 
-from . import company_store as store, company_research, resume
+from . import company_store as store, company_research, resume, outreach_progress as progress
 from sites_bot import cold_email as mail
 
 log = logging.getLogger(__name__)
@@ -27,6 +27,7 @@ def sender_for(settings):
 
 
 def initialize(db):
+    progress.initialize(db)
     with store.connect(db) as con:
         con.execute(f'''CREATE TABLE IF NOT EXISTS {TABLE} (
             draft_id TEXT PRIMARY KEY, company_id TEXT NOT NULL, recipient TEXT NOT NULL,
@@ -96,10 +97,31 @@ def hiring_contacts(company, own=()):
     return found
 
 
+class GroundedPitchClient:
+    def __init__(self, client):self.client=client
+    def available(self):return bool(self.client and self.client.available())
+    def complete_json(self, prompt, schema):
+        reply=self.client.complete_json(prompt,schema)
+        if reply and reply.get('can_write') is False:
+            raise ValueError('This role is not supported by the résumé. Choose a matching role; no skills or experience were invented.')
+        return reply
+
+
+def chosen_company(company, roles):
+    wanted=roles.get(company['company_id'])
+    if not wanted:return company
+    jobs=[job for job in company['jobs'] if job.get('job_id')==wanted]
+    if len(jobs)!=1:raise ValueError('The selected role no longer belongs to this company. Refresh and choose it again.')
+    return dict(company,jobs=jobs)
+
+
 def make_local(settings, profile, client, company, contact, base):
     sender = sender_for(settings)
     key, fresh = claim(settings.db_path, company, contact['value'], sender)
     if not fresh:
+        saved=next((row for row in records(settings.db_path,sender) if row['draft_id']==key),None)
+        if saved and saved['company_id']==company['company_id'] and saved['data'].get('job_url') and len(company['jobs'])==1 and saved['data']['job_url']!=company['jobs'][0]['url']:
+            raise ValueError('A draft to this recipient already exists for a different role. Review the existing pitch before creating another.')
         return key
     try:
         jobs = [j for j in company['jobs'] if j.get('title') and j.get('url')]
@@ -116,10 +138,12 @@ def make_local(settings, profile, client, company, contact, base):
             raise ValueError('A readable PDF resume is required. Update your resume before creating drafts.')
         if attachment.stat().st_size > 20 * 1024 * 1024:
             raise ValueError('The resume is too large. Choose a PDF smaller than 20 MB.')
-        written = mail.write_email(client, base, lead)
+        progress.record(settings.db_path, sender, company, 'writing', 'Writing a pitch grounded in your résumé.', job)
+        written = mail.write_email(GroundedPitchClient(client), base, lead)
         if not written:
             raise ValueError('The AI could not produce a pitch grounded in your resume. Retry after checking your AI connection.')
         subject, body = written
+        progress.record(settings.db_path, sender, company, 'attaching', 'Adding the résumé PDF and subject.', job)
         message = mail.build_message(sender, lead, subject, body, profile, attachment)
         message.replace_header('Message-ID', f'<company-pitch-{key}@morrow.local>')
         folder = Path(settings.report_dir) / time.strftime('%Y-%m-%d') / 'emails'
@@ -234,12 +258,13 @@ def public_status(settings):
     from .gmail_browser import available
     sender = sender_for(settings)
     method = 'imap' if settings.gmail_app_password and sender else 'browser' if available(settings, sender) else ''
-    return dict(sender=sender, gmail_configured=bool(method), gmail_method=method,
+    return dict(sender=sender, gmail_configured=bool(method), gmail_method=method, workflow_version=2,
                 resume_name=Path(settings.resume_path).name, resume_ready=Path(settings.resume_path).is_file())
 
 
 def attach_rows(settings, companies):
     by_company = {}
+    workflows = progress.read(settings.db_path, sender_for(settings))
     root = Path(settings.report_dir).resolve()
     for row in records(settings.db_path, sender_for(settings)):
         data = row['data']
@@ -254,6 +279,7 @@ def attach_rows(settings, companies):
         by_company.setdefault(row['company_id'], []).append(public)
     for company in companies:
         company['drafts'] = by_company.get(company['company_id'], [])
+        company['workflow'] = workflows.get(company['company_id'])
         company['draft_note'] = '' if hiring_contacts(company) else ('Find a hiring email first' if company['status']=='pending' else 'No public hiring email found')
     return companies
 
@@ -307,7 +333,7 @@ def selected_company_ids(company_id='', company_ids=None, all_remaining=False):
 
 
 def _run(settings, profile, client, *, gmail=None, limit=10, company_id='', company_ids=None,
-        all_remaining=False, research=True, dry_run=False, require_gmail=False):
+        all_remaining=False, research=True, dry_run=False, require_gmail=False, roles=None):
     selected = selected_company_ids(company_id, company_ids, all_remaining)
     if not EMAIL.fullmatch(sender_for(settings)):
         raise ValueError('Add your email address before preparing drafts.')
@@ -319,6 +345,10 @@ def _run(settings, profile, client, *, gmail=None, limit=10, company_id='', comp
     catalog = {company['company_id']:company for company in all_rows}
     if any(key not in catalog for key in selected):
         raise ValueError('Some selected companies no longer exist. Refresh the list and select them again.')
+    roles = roles or {}
+    if not isinstance(roles, dict) or any(key not in selected or not isinstance(value,str) or not value for key,value in roles.items()):
+        raise ValueError('Choose roles only for the selected companies.')
+    for key in roles:chosen_company(catalog[key],roles)
     saved = records(settings.db_path, sender_for(settings))
     done = {r['recipient'] for r in saved if r['state'] in ('gmail', 'existing') or (r['state']=='local' and not public_status(settings)['gmail_configured'])}
     own = mail.own_addresses(settings, profile)
@@ -334,17 +364,22 @@ def _run(settings, profile, client, *, gmail=None, limit=10, company_id='', comp
         return dict(companies=len(candidates), company_ids=[c['company_id'] for c in candidates], drafts=0, preview=True)
     initialize(settings.db_path)
     base = resume.load_source(settings.resume_path)
+    for company in candidates:
+        company=chosen_company(company,roles)
+        progress.record(settings.db_path,sender_for(settings),company,'queued','Waiting to prepare this draft.',company['jobs'][0] if company['jobs'] else None)
     # The older recruiter tool also owns drafts: never silently make another one.
     from .shared_files import locked_file
     processed, outcomes = set(), []
     for company in candidates:
         if company_research.ai_cli.shutdown_event is not None and company_research.ai_cli.shutdown_event.is_set():
             break
+        company=chosen_company(company,roles)
         outcome = dict(company_id=company['company_id'], state='no_contact', drafts=0, gmail=0)
         try:
+            progress.record(settings.db_path,sender_for(settings),company,'contacts','Checking public hiring contacts.')
             if research and not hiring_contacts(company, own) and (store.eligible(company) or selected):
                 company_research.run(settings.db_path, limit=1, company_id=company['company_id'], retry=bool(selected))
-                company = next(c for c in store.catalog(settings.db_path) if c['company_id']==company['company_id'])
+                company = chosen_company(next(c for c in store.catalog(settings.db_path) if c['company_id']==company['company_id']),roles)
             with locked_file(mail.records_path(settings)):
                 legacy = {str(r.get('email','')).lower():r for r in mail.read_records(settings)}
                 contacts = hiring_contacts(company, own)
@@ -359,6 +394,8 @@ def _run(settings, profile, client, *, gmail=None, limit=10, company_id='', comp
                         make_local(settings, profile, client, company, contact, base)
                 for row in records(settings.db_path, sender_for(settings)):
                     if row['company_id'] == company['company_id']:
+                        if row['state'] in ('local','needs_review'):
+                            progress.record(settings.db_path,sender_for(settings),company,'saving','Saving and verifying the Gmail draft and résumé.')
                         sync_browser(settings, row, gmail) if gmail else sync_gmail(settings, row)
             rows = [r for r in records(settings.db_path, sender_for(settings)) if r['company_id']==company['company_id']]
             states = {row['state'] for row in rows}
@@ -369,7 +406,11 @@ def _run(settings, profile, client, *, gmail=None, limit=10, company_id='', comp
             # Continue independent companies without exposing provider errors or
             # making a new draft when a previous Gmail save is uncertain.
             log.warning('Company draft batch item failed (%s).', type(exc).__name__)
-            outcome.update(state='failed', error='This company could not be completed. Retry it after checking the connection.')
+            outcome.update(state='failed', error=str(exc)[:400] if isinstance(exc,ValueError) else 'This company could not be completed. Retry it after checking the connection.')
+        rows=[row for row in records(settings.db_path,sender_for(settings)) if row['company_id']==company['company_id']]
+        phase='ready' if outcome['state']=='gmail' else 'blocked' if outcome['state'] in ('no_contact','needs_review','existing') else 'failed'
+        detail=outcome.get('error','') or next((row['error'] for row in rows if row['error']),'') or ('Draft verified in Gmail. Ready for you to review.' if phase=='ready' else 'No verified hiring email was found.' if outcome['state']=='no_contact' else 'A draft to this hiring contact already exists. Review it before creating another.' if outcome['state']=='existing' else 'The draft is saved locally. Gmail still needs attention.')
+        progress.record(settings.db_path,sender_for(settings),company,phase,detail)
         log.info('Company email drafts: %s checked. Drafts are never sent.', company['name'])
         processed.add(company['company_id'])
         outcomes.append(outcome)
@@ -405,11 +446,26 @@ def sync_browser(settings, row, gmail):
 def run(settings, profile, client, **options):
     from .gmail_browser import GmailDrafts
     # Validate explicit IDs before opening any browser. Preview is read-only.
-    selected_company_ids(options.get('company_id', ''), options.get('company_ids'), options.get('all_remaining', False))
-    if not options.get('dry_run') and public_status(settings).get('gmail_method') == 'browser':
-        with GmailDrafts(settings, sender_for(settings)) as gmail:
-            return _run(settings, profile, client, gmail=gmail, **options)
-    return _run(settings, profile, client, **options)
+    selected=selected_company_ids(options.get('company_id', ''), options.get('company_ids'), options.get('all_remaining', False))
+    catalog={row['company_id']:row for row in store.catalog(settings.db_path)}
+    if any(key not in catalog for key in selected):raise ValueError('A selected company is no longer available. Refresh the list.')
+    roles=options.get('roles') or {}
+    if not isinstance(roles,dict) or any(key not in selected or not isinstance(value,str) or not value for key,value in roles.items()):raise ValueError('Choose roles only for selected companies.')
+    companies=[chosen_company(catalog[key],roles) for key in selected]
+    if not options.get('dry_run'):
+        initialize(settings.db_path)
+        for company in companies:
+            progress.record(settings.db_path,sender_for(settings),company,'queued','Opening the verified Gmail session.',company['jobs'][0] if company['jobs'] else None)
+    try:
+        if not options.get('dry_run') and public_status(settings).get('gmail_method') == 'browser':
+            with GmailDrafts(settings, sender_for(settings)) as gmail:
+                return _run(settings, profile, client, gmail=gmail, **options)
+        return _run(settings, profile, client, **options)
+    except Exception as exc:
+        if not options.get('dry_run'):
+            for company in companies:
+                progress.record(settings.db_path,sender_for(settings),company,'failed',str(exc)[:400] if isinstance(exc,ValueError) else 'The draft run could not start. Check your connections and retry.')
+        raise
 
 
 def main(argv=None):
@@ -423,14 +479,20 @@ def main(argv=None):
     parser.add_argument('--no-research', action='store_true')
     parser.add_argument('--dry-run', action='store_true')
     parser.add_argument('--require-gmail', action='store_true')
+    parser.add_argument('--role', action='append', default=[])
     args = parser.parse_args(argv)
     configure_logging(False)
     settings = config.load_settings(args.env)
     keep_log(settings, 'company-email-drafts')
     try:
+        roles={}
+        for value in args.role:
+            key,separator,job=value.partition(':')
+            if not separator or key in roles:raise ValueError('Choose one role for each company.')
+            roles[key]=job
         result = run(settings, profiles.load_profile(settings), llm.build_client(settings), limit=args.limit,
                      company_ids=args.company, all_remaining=args.all, research=not args.no_research,
-                     dry_run=args.dry_run, require_gmail=args.require_gmail)
+                     dry_run=args.dry_run, require_gmail=args.require_gmail,roles=roles)
         log.info('Company drafts: %s', result)
         return 1 if result.get('failed') or result.get('needs_review') else 0
     except (ValueError, OSError, resume.ResumeError) as exc:

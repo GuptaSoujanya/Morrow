@@ -142,7 +142,10 @@ def summary(db, query=None):
     if status not in ('all', *STATUSES):
         raise ValueError('Choose a supported research status.')
     key = query.get('id', '')
-    filtered = [r for r in rows if (not key or r['company_id'] == key)
+    keys = str(query.get('ids','')).split(',') if query.get('ids') else []
+    if keys and (len(keys)>50 or any(len(value)!=24 or any(char not in '0123456789abcdef' for char in value) for value in keys)):
+        raise ValueError('Choose up to 50 valid companies.')
+    filtered = [r for r in rows if (not key or r['company_id'] == key) and (not keys or r['company_id'] in keys)
                 and (status == 'all' or r['status'] == status)
                 and (contact == 'all' or (contact == 'missing' and not has_contact(r, 'email') and not has_contact(r, 'phone'))
                      or (contact in ('email', 'phone') and has_contact(r, contact)))
