@@ -125,7 +125,7 @@ ACTIONS: Dict[str, Callable[[Dict[str, Any], bool], Command]] = {
 }
 
 
-BROWSER_ACTIONS = frozenset({"naukri", "boards", "profile", "external", "linkedin", "linkedin_profile", "cold_email", "resume", "assist", "pipeline"})
+BROWSER_ACTIONS = frozenset({"naukri", "boards", "startups", "profile", "external", "linkedin", "linkedin_profile", "cold_email", "resume", "assist", "pipeline"})
 
 
 def build(action: str, options: Dict[str, Any], save: bool = False) -> Command:

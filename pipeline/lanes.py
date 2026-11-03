@@ -39,7 +39,7 @@ _print_lock = threading.Lock()
 COMPOSE_FILE = Path(__file__).resolve().parents[1] / "docker-compose.yml"
 # Each site's container and the port its screen is shown on (keep in step with docker-compose.yml).
 WATCH_PORTS = {"naukri": 6081, "linkedin": 6082, "hirist": 6083, "instahyre": 6084,
-               "cutshort": 6085, "wellfound": 6086}
+               "cutshort": 6085, "wellfound": 6086, "startups": 6087}
 
 
 def lane_of(stage_name: str) -> str:

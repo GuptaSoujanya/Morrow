@@ -104,3 +104,14 @@ def test_submission_tool_evidence_overrides_false_no_send_report(tmp_path):
     event['message']['content'][0]['input']['element'] = 'Next page'
     (tmp_path/'transcript.jsonl').write_text(json.dumps(event))
     assert not brain.submission_click_recorded(tmp_path)
+
+
+def test_startup_jobs_get_the_startup_specialist():
+    from types import SimpleNamespace
+    from sites_bot import application_brain as brain
+
+    for job_id, source in (("yc:123", "yc:jobs"), ("hn:456", "hn:whoishiring:2026-11")):
+        job = SimpleNamespace(job_id=job_id, source=source, url="https://jobs.lever.co/naukri-like")
+        assert brain.role_for(job) == "startups"
+        assert "Startup specialist" in brain.instructions(job)
+    assert brain.role_for(SimpleNamespace(job_id="hirist:1", source="hirist:feed", url="")) == "hirist"

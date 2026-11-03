@@ -15,6 +15,9 @@ STATES = ('inspect', 'sign_in', 'email_verification', 'fill', 'review', 'submit'
 
 
 def role_for(job):
+    # Startup posts carry yc:/hn: ids; their apply links lead to any ATS, so the id decides.
+    if (job.job_id or '').startswith(('yc:', 'hn:')) or (job.source or '').startswith(('yc:', 'hn:')):
+        return 'startups'
     text = ' '.join([job.source or '', job.job_id or '', job.url or '']).lower()
     return next((board for board in ('naukri', 'hirist', 'instahyre', 'cutshort', 'wellfound', 'linkedin')
                  if board in text), 'company')

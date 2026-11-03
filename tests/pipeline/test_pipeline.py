@@ -644,3 +644,16 @@ def test_course_check_finds_broken_anchors_and_pages_the_site_hides(tmp_path):
     found = course.problems(course_root, learning_root)
     assert any("02-hidden.md: not in the sidebar" in p for p in found)
     assert any("points at no heading" in p for p in content.week_problems(1, learning_root))
+
+
+def test_the_startup_bot_is_its_own_browser_lane_when_turned_on(monkeypatch):
+    from startup_bot import cli as startup_cli
+
+    monkeypatch.setattr(run, "_startup_jobs_on", lambda env: True)
+    seen = []
+    monkeypatch.setattr(startup_cli, "main", lambda flags: seen.append(flags) or 0)
+    stages = {s.name: s for s in run.build_stages(_args(dry_run=True), ["hirist"])}
+    assert stages["apply:startups"].command == ("startup_bot", "--dry-run")
+    stages["apply:startups"].work()
+    assert seen == [["--dry-run"]]
+    assert "find:startups" not in stages

@@ -41,7 +41,7 @@ HUMAN_CHECK = re.compile(
 
 _SCHEMA = '{"action": "click|dead|stop", "control": 0, "reason": ""}'
 _PROMPT = (
-    "A job seeker's bot followed a Naukri listing for %s at %s to the company's "
+    "A job seeker's bot followed a job listing for %s at %s to the company's "
     "site and found no application form on this page. Pick ONE next step.\n"
     "click: the number of the control that leads to the application form for "
     "THIS job (Apply, Apply now, Apply manually, Continue to application, or this "

@@ -107,24 +107,6 @@ def test_contacts_are_labelled_and_ordered_for_applying():
         ("careers@x.io", "hiring"), ("founders@x.io", "founders"), ("jane@x.io", "person")]
 
 
-def test_routing_sends_addresses_to_contacts_and_links_to_company_sites(tmp_path):
-    settings = Settings(data_dir=str(tmp_path))
-    posts = {p.job.job_id: p for p in sj.hn_jobs(_profile(), _fetch, NOW)}
-    assert sj.route(settings, posts["hn:501"]) == "email"
-    assert sj.route(settings, posts["hn:503"]) == "site"
-    contacts = [json.loads(line) for line in (tmp_path / "job_contacts.jsonl").read_text().splitlines()]
-    assert [c["email"] for c in contacts] == ["jobs@acme.ai"]
-    sites = (tmp_path / "company_sites.md").read_text()
-    assert "https://jobs.ashbyhq.com/initech" in sites and "Initech" in sites
-
-
-def test_a_dry_run_records_nothing(tmp_path):
-    settings = Settings(data_dir=str(tmp_path))
-    post = next(p for p in sj.hn_jobs(_profile(), _fetch, NOW) if p.job.job_id == "hn:501")
-    assert sj.route(settings, post, dry_run=True) == "email"
-    assert not list(tmp_path.iterdir())
-
-
 def test_one_failing_source_does_not_cost_the_other():
     def half(url):
         if "algolia" in url:

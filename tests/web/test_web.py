@@ -251,6 +251,33 @@ def test_source_names_the_board_and_the_search():
     assert state.source_parts("hirist:search:LLM: evals") == ("hirist", "LLM: evals")
     assert state.source_parts("recommended:similar_jobs") == ("naukri", "Recommended: similar jobs")
     assert state.source_parts("cutshort:feed") == ("cutshort", "Cutshort feed")
+    assert state.source_parts("yc:jobs") == ("startups", "YC job posts")
+    assert state.source_parts("hn:whoishiring:2026-11") == ("startups", "Hacker News: Who is hiring?")
+
+
+def test_startup_jobs_are_their_own_series_not_company_sites(tmp_path, monkeypatch):
+    """A startup sent on its Lever page is applied_external, but the graph shows it as Startups."""
+    for key in ("MIN_SCORE", "DAILY_QUOTA", "DB_PATH"):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setattr(state, "APPLY", tmp_path)
+    db = make_ledger(tmp_path / "ledger.db")
+    connection = sqlite3.connect(db)
+    stamp = dt.datetime(2026, 10, 13, 9).astimezone().isoformat()
+    connection.executemany(
+        "INSERT INTO applications(job_id, url, title, company, status, detail, quota_consumed, at) "
+        "VALUES (?, '', 'Engineer', 'Co', ?, '', 0, ?)",
+        [("hn:501", "applied_external", stamp), ("yc:77", "applied_external", stamp),
+         ("ext-1", "applied_external", stamp)])
+    connection.execute("INSERT INTO jobs_seen(job_id, url, title, company, source, first_seen, last_seen, score) "
+                       "VALUES ('hn:501', '', 'E', 'Co', 'hn:whoishiring:2026-10', ?, ?, 60)", (stamp, stamp))
+    connection.commit()
+    connection.close()
+    data = state.overview(7, today=dt.date(2026, 10, 13), now=dt.datetime(2026, 10, 13, 12).astimezone(), db=db)
+    day = {d["day"]: d for d in data["daily"]}["2026-10-13"]
+    assert day["startups"] == 2 and day["company"] == 1
+    assert data["sent"]["startups"] == 2 and data["sent"]["company"] == 1
+    boards = {b["key"]: b for b in data["boards"]}
+    assert boards["startups"]["name"] == "Startups" and boards["startups"]["sent"] == 2
 
 
 def test_overview_counts_what_the_ledger_holds(tmp_path, monkeypatch):
@@ -265,11 +292,11 @@ def test_overview_counts_what_the_ledger_holds(tmp_path, monkeypatch):
     assert (data["start"], data["end"], data["first"], data["min_score"]) == ("2026-10-07", "2026-10-13", "2026-10-01", 45)
     days = {d["day"]: d for d in data["daily"]}
     assert len(days) == 7
-    assert days["2026-10-12"] == {"day": "2026-10-12", "naukri": 1, "boards": 1, "company": 0, "waiting": 2,
-                                  "skipped": 0, "failed": 1}
+    assert days["2026-10-12"] == {"day": "2026-10-12", "naukri": 1, "boards": 1, "company": 0, "startups": 0,
+                                  "waiting": 2, "skipped": 0, "failed": 1}
     assert days["2026-10-13"]["naukri"] == 1
     # The ledger starts on 1 October, inside the 7 days before, so there is nothing fair to compare with.
-    assert data["sent"] == {"total": 3, "naukri": 2, "boards": 1, "company": 0, "before": None}
+    assert data["sent"] == {"total": 3, "naukri": 2, "boards": 1, "company": 0, "startups": 0, "before": None}
     assert data["quota"] == {"used": 1, "limit": 40}
     assert data["attempts"] == 6
     assert data["outcomes"][0] == {"status": "applied", "label": "Applied on Naukri", "kind": "sent", "count": 2}

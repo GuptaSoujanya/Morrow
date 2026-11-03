@@ -597,20 +597,34 @@ def _moment(stamp: Any) -> Optional[dt.datetime]:
         return None
 
 
+#: The startup bot's two sources (YC job posts, Hacker News "Who is hiring?"), shown as one bot.
+_STARTUP_SOURCES = {"yc", "hn"}
+
+
 def board_name(key: str) -> str:
-    return "Naukri" if key == "naukri" else key.capitalize()
+    return {"naukri": "Naukri", "startups": "Startups"}.get(key, key.capitalize())
 
 
 def _board_of_job(job_id: Any) -> str:
-    """Job boards prefix their ids ("hirist:1677523"); Naukri's ids are bare numbers."""
+    """Job boards prefix their ids ("hirist:1677523"); Naukri's ids are bare numbers; yc:/hn: are startups."""
     text = str(job_id or "")
-    return text.split(":", 1)[0] if ":" in text else "naukri"
+    board = text.split(":", 1)[0] if ":" in text else "naukri"
+    return "startups" if board in _STARTUP_SOURCES else board
+
+
+def _channel(row: Dict[str, Any], kind: str) -> str:
+    """The series a ledger row is drawn in: a startup job is its own, however it was sent."""
+    if _board_of_job(row["job_id"]) == "startups":
+        return "startups"
+    return _CHANNELS.get(row["status"], kind)
 
 
 def source_parts(source: str) -> Tuple[str, str]:
     """('hirist', 'AI Engineer') for 'hirist:search:AI Engineer': the board and the search that found the job."""
     parts = (source or "").split(":")
     board = "naukri" if len(parts) < 2 or parts[0] in _NAUKRI_SOURCES else parts.pop(0)
+    if board in _STARTUP_SOURCES:
+        return "startups", "YC job posts" if board == "yc" else "Hacker News: Who is hiring?"
     kind, rest = parts[0], ":".join(parts[1:]).strip()
     if kind == "search" and rest:
         return board, rest
@@ -684,17 +698,17 @@ def overview(
 
     daily = {
         start + dt.timedelta(days=n): {"day": (start + dt.timedelta(days=n)).isoformat(), "naukri": 0, "boards": 0,
-                                       "company": 0, "waiting": 0, "skipped": 0, "failed": 0}
+                                       "company": 0, "startups": 0, "waiting": 0, "skipped": 0, "failed": 0}
         for n in range((today - start).days + 1)
     }
     outcomes, sent_by_board, sent = Counter(), Counter(), Counter()
     for row in applications:
         kind = _KINDS.get(row["status"], "failed")
         if within(row["day"]):
-            daily[row["day"]][_CHANNELS.get(row["status"], kind)] += 1
+            daily[row["day"]][_channel(row, kind) if kind == "sent" else kind] += 1
             outcomes[row["status"]] += 1
             if kind == "sent":
-                sent[_CHANNELS[row["status"]]] += 1
+                sent[_channel(row, kind)] += 1
                 sent_by_board[_board_of_job(row["job_id"])] += 1
         elif earlier(row["day"]) and kind == "sent":
             sent["before"] += 1
@@ -774,10 +788,11 @@ def overview(
         "min_score": min_score,
         "daily": list(daily.values()),
         "sent": {
-            "total": sent["naukri"] + sent["boards"] + sent["company"],
+            "total": sent["naukri"] + sent["boards"] + sent["company"] + sent["startups"],
             "naukri": sent["naukri"],
             "boards": sent["boards"],
             "company": sent["company"],
+            "startups": sent["startups"],
             "before": sent["before"] if before else None,
         },
         "found": {

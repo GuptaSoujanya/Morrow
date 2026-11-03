@@ -1,29 +1,26 @@
 """Startup jobs: YC companies' job posts and Hacker News' monthly "Who is hiring?" thread.
 
 Both come from public APIs with no sign-in, so this needs no browser. The posts
-are ranked like any board's jobs, kept to ones open to someone in India, and
-handed to what already exists: a hiring address goes to job_contacts.jsonl for
-the cold-email drafter (drafts only, never sent), and an application link goes
-to company_sites.md for the company-site applier.
+are kept to ones open to someone in India. This module only finds and parses
+them; the startup bot (startup_bot/cli.py) ranks them and applies.
 
 The idea, and the parsing rules, follow AienTech/dossier's startup sources;
 this is our own implementation. Fetched text is data: nothing in it is run.
 
-    python3 -m sites_bot.startup_jobs [--dry-run] [--limit N]
+    python3 -m startup_bot [--dry-run] [--limit N]
 """
 
-import argparse
 import html
 import json
 import logging
 import re
 import time
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 from urllib.request import Request, urlopen
 
-from common.models import ApplyStatus, JobPosting, Profile, Settings
+from common.models import JobPosting, Profile
 
 logger = logging.getLogger(__name__)
 
@@ -217,6 +214,12 @@ class StartupPost:
         return best.email if best else ""
 
 
+def _first_role(text: str) -> str:
+    """"Junior to Senior Fullstack Engineer multiple positions; https://..." -> "Junior to Senior Fullstack Engineer"."""
+    text = re.split(r"[;,(]|\bhttps?://|\s+(?:multiple|several)\s+(?:positions|roles|openings)\b", text, 1, re.I)[0]
+    return " ".join(text.split()) or "Open roles"
+
+
 _YC_TITLE = re.compile(r"^(.+?)\s*\(\s*YC\s+([A-Z]\d{2})\s*\)\s*(.*)$")
 _IS_HIRING = re.compile(r"^(.+?)\s+(?:is|are)\s+hiring\b(.*)$", re.I)
 ROLE = re.compile(
@@ -307,11 +310,12 @@ def hn_post(comment: Dict[str, Any], month: str, now: float, places: Sequence[st
     job = JobPosting(
         job_id="hn:%s" % comment.get("id"),
         url=HN_ITEM % comment.get("id"),
-        title="; ".join(roles) or "Open roles",
+        # One role per application: "A; B; C" left the applier asking which one. The rest stay in tags.
+        title=_first_role(roles[0]) if roles else "Open roles",
         company=company,
         location="; ".join(where),
         description=without_addresses(text),
-        tags=[t for t in (stage, "remote" if REMOTE.search(header) else "") if t],
+        tags=[t for t in (stage, "remote" if REMOTE.search(header) else "") if t] + ["also: " + r for r in roles[1:]],
         posted_days_ago=_days_ago(created, now),
         source="hn:whoishiring:%s" % month,
     )
@@ -371,88 +375,11 @@ def collect(profile: Profile, fetch: Fetch = fetch_json, now: Optional[float] = 
     return list(posts.values())
 
 
-# ---------------------------------------------------------------------------
-# Handing posts to the cold-email drafter and the company-site applier
-# ---------------------------------------------------------------------------
-
-
-def route(settings: Settings, post: StartupPost, dry_run: bool = False) -> str:
-    """'email', 'site' or '' -- where the post went. An address wins: these companies read their mail."""
-    from . import cold_email
-    from . import external as ext
-
-    job = post.job
-    if post.hiring_email:
-        if not dry_run:
-            # find_addresses wants hiring words next to the address, which a bare address lacks.
-            cold_email.record_contacts(settings, job, "Apply by email: %s\n\n%s" % (post.hiring_email, post.text),
-                                       job.source)
-        return "email"
-    if post.apply_url:
-        if not dry_run:
-            ext.record_company_site(settings, job, ext.ExternalResult(
-                status=ApplyStatus.EXTERNAL_MANUAL, url=post.apply_url,
-                detail="not tried yet: a startup post from %s" % ("YC" if job.job_id.startswith("yc:") else "Hacker News")))
-        return "site"
-    return ""
-
-
-def run(settings: Settings, profile: Profile, ledger: Any, client: Any, limit: int, dry_run: bool,
-        fetch: Fetch = fetch_json) -> Dict[str, int]:
-    from naukri_bot import ranking
-
-    posts = {post.job.job_id: post for post in collect(profile, fetch)}
-    counts = {"collected": len(posts), "email": 0, "site": 0, "nowhere": 0}
-    jobs = [post.job for post in posts.values()]
-    for job in jobs:
-        ledger.record_seen(job)
-    jobs, _ = ranking.drop_stale_candidates(jobs, settings)
-    ranked = ranking.rank(profile, jobs, client, settings)
-    for scored in ranked:
-        ledger.record_seen(scored.job, scored.score)
-    selected = ranking.select_for_application(ranked, replace(settings, target_applications=limit), ledger.has_applied)
-    for scored in selected[:limit]:
-        where = route(settings, posts[scored.job.job_id], dry_run)
-        counts[where or "nowhere"] += 1
-        logger.info("%s @ %s (%.0f) -> %s", scored.job.title, scored.job.company, scored.score,
-                    where or "no address or application link")
-    logger.info("Startup jobs: %d collected, %d ranked, %d to email, %d to company sites%s",
-                counts["collected"], len(ranked), counts["email"], counts["site"], " (dry run)" if dry_run else "")
-    return counts
-
-
-def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    parser.add_argument("--env", help="path to a .env file")
-    parser.add_argument("--dry-run", action="store_true", help="rank and log, but record nothing to send or apply")
-    parser.add_argument("--limit", type=int, help="how many posts to hand on (default PLATFORM_LIMIT)")
-    parser.add_argument("-v", "--verbose", action="store_true")
-    return parser.parse_args(argv)
-
-
 def main(argv: Optional[List[str]] = None) -> int:
-    from common import config, ledger as ledger_module, llm, profile as profile_module
-    from common.run import EXIT_CONFIG, EXIT_FAILED, EXIT_OK, configure_logging, keep_log
+    """The old entry point; the startup bot (python3 -m startup_bot) now does the applying."""
+    from startup_bot import cli
 
-    args = parse_args(argv)
-    configure_logging(args.verbose)
-    try:
-        settings = config.load_settings(args.env, {"dry_run": True} if args.dry_run else {})
-        profile = profile_module.load_profile(settings)
-    except Exception as exc:
-        logger.error("Could not load settings or profile: %s", exc)
-        return EXIT_CONFIG
-    keep_log(settings, "startups")
-    ledger = ledger_module.open_ledger(settings)
-    try:
-        run(settings, profile, ledger, llm.build_client(settings),
-            args.limit if args.limit is not None else settings.platform_limit, args.dry_run)
-    except Exception as exc:  # noqa: BROAD_EXCEPT_OK - CLI boundary
-        logger.exception("Startup jobs failed: %s", exc)
-        return EXIT_FAILED
-    finally:
-        ledger.close()
-    return EXIT_OK
+    return cli.main(argv)
 
 
 if __name__ == "__main__":

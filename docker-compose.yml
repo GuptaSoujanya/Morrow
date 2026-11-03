@@ -7,7 +7,7 @@
 #   docker compose run --rm --service-ports hirist python3 -m hirist_bot --dry-run
 #
 # Watch a bot (or sign in) at http://localhost:<port>/vnc.html: naukri 6081, linkedin 6082,
-# hirist 6083, instahyre 6084, cutshort 6085, wellfound 6086 (pipeline/lanes.py WATCH_PORTS).
+# hirist 6083, instahyre 6084, cutshort 6085, wellfound 6086, startups 6087 (pipeline/lanes.py WATCH_PORTS).
 # The pipeline itself runs on your Mac, so the briefing agents can use claude and kiro and only
 # one process writes user/memory/.
 #
@@ -93,6 +93,15 @@ services:
       BROWSER_PROFILE_DIR: user/docker/browser/lanes/wellfound
       LOGIN_URL: https://wellfound.com/login
     ports: ["127.0.0.1:6086:6080"]
+
+  startups:
+    <<: *bot
+    environment:
+      <<: *env
+      SITE: startups
+      BROWSER_PROFILE_DIR: user/docker/browser/lanes/startups
+      LOGIN_URL: https://accounts.google.com
+    ports: ["127.0.0.1:6087:6080"]
 
   bots:
     <<: *bot
