@@ -76,6 +76,84 @@ def _parse_experience_range(value: str) -> Optional[Tuple[float, float]]:
     return minimum, maximum
 
 
+_DESCRIPTION_YEARS = re.compile(
+    r"(?<!\d)(\d+(?:\.\d+)?)\s*(?:\+|plus)?\s*(?:(?:-|–|to)\s*(\d+(?:\.\d+)?))?\s*(?:years?|yrs?)"
+    r"\s*(?:of\s+)?(?:[\w-]+\s+){0,3}?(?:experience|exp\b)",
+    re.IGNORECASE,
+)
+_BOILERPLATE_YEARS = 15.0
+_LEVEL_GAP = re.compile(r"\b(senior|staff|lead|principal|director)[\s-]*level\b", re.IGNORECASE)
+_GAP_YEARS = re.compile(r"(?<!\d)(\d+(?:\.\d+)?)\s*\+?\s*(?:(?:-|–|to)\s*\d+(?:\.\d+)?)?\s*(?:years?|yrs?)", re.IGNORECASE)
+
+
+def required_years(job: JobPosting) -> Optional[float]:
+    """The fewest years the posting asks for: the card's range, else the first
+    "N+ years of experience" the description states. Figures past 15 are a
+    company's age, not a requirement, and are skipped."""
+    labelled = _parse_experience_range(job.experience)
+    if labelled is not None:
+        return labelled[0]
+    for match in _DESCRIPTION_YEARS.finditer(job.description or ""):
+        minimum = float(match.group(1))
+        if minimum <= _BOILERPLATE_YEARS:
+            return minimum
+    return None
+
+
+def years_bound(profile: Profile, settings: Settings) -> Optional[float]:
+    if profile.total_experience_years is None or settings.max_years_over < 0:
+        return None
+    return profile.total_experience_years + settings.max_years_over
+
+
+def drop_over_experienced(
+    jobs: List[JobPosting], profile: Profile, settings: Settings, source: str = ""
+) -> Tuple[List[JobPosting], int]:
+    """Remove postings that ask for more years than the candidate can claim.
+
+    A hard cut, like EXCLUDE_TITLES: the 10-point lexical penalty and the
+    model's "penalise" instruction let 218 jobs wanting more than 3 years
+    through on 2026-11-03 against a 2.9-year profile.
+    """
+    bound = years_bound(profile, settings)
+    if bound is None:
+        return list(jobs), 0
+    kept: List[JobPosting] = []
+    dropped = 0
+    for job in jobs:
+        minimum = required_years(job)
+        if minimum is not None and minimum > bound:
+            dropped += 1
+        else:
+            kept.append(job)
+    if dropped:
+        logger.info(
+            "%s: dropped %d of %d postings asking for more than %g years (MAX_YEARS_OVER=%g)",
+            _who(source),
+            dropped,
+            len(jobs),
+            bound,
+            settings.max_years_over,
+        )
+    return kept, dropped
+
+
+def experience_gap(gaps: List[str], bound: Optional[float]) -> Optional[str]:
+    """The model-reported gap that rules the job out: a years figure over the
+    bound, or a senior/staff-level requirement. None when the gaps are survivable."""
+    if bound is None:
+        return None
+    for gap in gaps:
+        if not isinstance(gap, str):
+            continue
+        if _LEVEL_GAP.search(gap):
+            return gap
+        match = _GAP_YEARS.search(gap)
+        if match and float(match.group(1)) > bound:
+            return gap
+    return None
+
+
 def _is_remote(value: str) -> bool:
     normalised = " ".join(value.casefold().split())
     return any(term in normalised for term in _REMOTE_TERMS)
@@ -223,6 +301,7 @@ def rank(
     """Rank the lexical shortlist, blending optional LLM scores when available."""
     who = _who(source)
     jobs, _ = drop_excluded_titles(jobs, settings, source)
+    jobs, _ = drop_over_experienced(jobs, profile, settings, source)
     if settings.any_location and profile.preferred_locations:
         logger.info(
             "%s: ANY_LOCATION is on, so every city scores alike and the preferred "
@@ -247,6 +326,8 @@ def rank(
     elif not llm_results:
         logger.warning("%s: LLM returned no scores; ranking is lexical-only", who)
 
+    bound = years_bound(profile, settings)
+    ruled_out: List[ScoredJob] = []
     for candidate in shortlist:
         llm_result = llm_results.get(candidate.job.job_id)
         if llm_result is not None:
@@ -266,6 +347,11 @@ def rank(
                         for reason in raw_reasons
                         if isinstance(reason, str)
                     )
+                gap = experience_gap(candidate.gaps, bound)
+                if gap is not None:
+                    candidate.reasons.append("ruled out: the model reports '%s'" % gap)
+                    ruled_out.append(candidate)
+                    continue
 
         if candidate.score >= 75.0:
             candidate.verdict = Verdict.STRONG
@@ -274,6 +360,17 @@ def rank(
         else:
             candidate.verdict = Verdict.WEAK
 
+    if ruled_out:
+        logger.info(
+            "%s: dropped %d of %d ranked jobs whose reported gaps exceed %g years or ask for a senior level: %s",
+            who,
+            len(ruled_out),
+            len(shortlist),
+            bound,
+            "; ".join("%s (%s)" % (item.job.title, item.reasons[-1]) for item in ruled_out[:10]),
+        )
+        dropped_ids = {id(candidate) for candidate in ruled_out}
+        shortlist = [candidate for candidate in shortlist if id(candidate) not in dropped_ids]
     shortlist.sort(
         key=lambda candidate: (
             -candidate.score,

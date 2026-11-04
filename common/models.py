@@ -310,6 +310,13 @@ class Settings:
     llm_rank_top_n: int = 150
     min_score: float = 55.0
     max_days_old: int = 7
+    # A posting whose stated experience minimum (card label, else "N+ years of
+    # experience" in the description) exceeds the candidate's years by more than
+    # this is dropped before ranking, and a candidate the model flags with such
+    # a gap, or with senior/staff-level experience, is dropped after it. The
+    # 2026-11-03 run applied to 218 jobs wanting more than 3 years against a
+    # 2.9-year profile on a 10-point penalty alone. Negative disables the gate.
+    max_years_over: float = 1.0
 
     # Most applications open at one company at a time, counted from the ledger
     # over the last OPEN_APPLICATION_DAYS across every bot, so one prolific
