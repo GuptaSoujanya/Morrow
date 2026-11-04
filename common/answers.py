@@ -3,6 +3,7 @@
 import hashlib
 import json
 import logging
+import math
 import os
 import re
 from datetime import datetime
@@ -109,6 +110,10 @@ _NUMBER_RE = re.compile(r"\d+(?:\.\d+)?")
 _RANGE_RE = re.compile(r"(\d+(?:\.\d+)?)\s*(?:-|–|—|to)\s*(\d+(?:\.\d+)?)")
 _UNDER_RE = re.compile(r"(?:less than|under|below|upto|up to|at most|within|fewer than)\s*(\d+(?:\.\d+)?)")
 _OVER_RE = re.compile(r"(?:more than|above|over|greater than|at least|minimum)\s*(\d+(?:\.\d+)?)")
+#: "More than 5" leaves 5 out; "at least 5" and "5+" take it in.
+_STRICTLY_OVER = re.compile(r"(?:more than|above|over|greater than)\s*\d")
+#: 5,00,000 or 10,000: a figure _NUMBER_RE would read as several numbers.
+_GROUPED_NUMBER = re.compile(r"\d,\d")
 _PLUS_RE = re.compile(r"(\d+(?:\.\d+)?)\s*\+")
 
 
@@ -126,6 +131,9 @@ def _plain_number(answer: str) -> Optional[float]:
 def _band(option: str) -> Optional[Tuple[float, float]]:
     """The numeric span an option covers: "3 - 6 LPA", "Less than 3", "10+ years"."""
     text = _normalise(option)
+    if _GROUPED_NUMBER.search(text):
+        # "₹5,00,000 - ₹10,00,000" would read as "000 - 10", and "10,00,000+" as 0 and up.
+        return None
     ranged = _RANGE_RE.search(text)
     if ranged is not None:
         return float(ranged.group(1)), float(ranged.group(2))
@@ -134,7 +142,10 @@ def _band(option: str) -> Optional[Tuple[float, float]]:
         return float("-inf"), float(under.group(1))
     over = _OVER_RE.search(text) or _PLUS_RE.search(text)
     if over is not None:
-        return float(over.group(1)), float("inf")
+        bound = float(over.group(1))
+        if _STRICTLY_OVER.search(text):
+            bound = math.nextafter(bound, float("inf"))
+        return bound, float("inf")
     return None
 
 
@@ -183,6 +194,12 @@ def match_option(answer: str, options: List[str]) -> Optional[str]:
         for option, key in keyed:
             if key == first:
                 return option
+    if _plain_number(answer) is not None:
+        # A number is read as a number before as words: "2.9" normalises to "2 decimal 9",
+        # and the option "2" sits inside that.
+        banded = match_band(answer, options)
+        if banded is not None:
+            return banded
     containing = [
         option
         for option, key in keyed
