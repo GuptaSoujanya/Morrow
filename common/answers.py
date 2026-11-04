@@ -951,7 +951,8 @@ class AnswerEngine:
             )
         if persist:
             self.ledger.save_answer(
-                question, answer, field_type, self._cache_fingerprint
+                question, answer, field_type, self._cache_fingerprint,
+                facts_fingerprint=self.profile_fingerprint,
             )
         return self._finish(question, resolution, False)
 

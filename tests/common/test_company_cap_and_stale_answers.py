@@ -97,3 +97,63 @@ def test_the_answer_engine_purges_on_a_fingerprint_refresh(tmp_path):
     assert ledger.get_answer("Notice period?") is None
     assert ledger_module.OPEN_STATUSES == (ApplyStatus.APPLIED, ApplyStatus.APPLIED_EXTERNAL,
                                            ApplyStatus.APPLIED_PLATFORM)
+
+
+def _engine(ledger, tmp_path, **facts):
+    from common.answers import AnswerEngine
+    from common.models import Profile
+
+    class _NoLLM:
+        def available(self):
+            return False
+
+    profile = Profile(full_name="T", notice_period_days=30, total_experience_years=3, **facts)
+    return AnswerEngine(ledger, _NoLLM(), profile, Settings(data_dir=str(tmp_path / "inputs")))
+
+
+def _cached(ledger):
+    return sorted(row[0] for row in ledger._connection.execute("SELECT question_norm FROM answers"))
+
+
+def test_answers_learned_under_unchanged_facts_stay_cached_across_questions(tmp_path, caplog):
+    """#23: each new question purged every answer cached before it, and logged that the facts had changed."""
+    ledger = Ledger(":memory:")
+    engine = _engine(ledger, tmp_path)
+    with caplog.at_level("INFO"):
+        engine.resolve("What is your notice period?")
+        engine.resolve("How many years of total experience do you have?")
+        engine.resolve("What is your notice period?")
+    assert _cached(ledger) == ["how many years of total experience do you have", "what is your notice period"]
+    assert "earlier facts" not in caplog.text
+
+
+def test_answers_survive_a_new_run_when_the_facts_are_the_same(tmp_path):
+    ledger = Ledger(str(tmp_path / "ledger.db"))
+    _engine(ledger, tmp_path).resolve("What is your notice period?")
+    _engine(ledger, tmp_path).resolve("How many years of total experience do you have?")
+    assert len(_cached(ledger)) == 2
+
+
+def test_a_change_of_facts_still_purges_what_was_learned_before(tmp_path, caplog):
+    ledger = Ledger(str(tmp_path / "ledger.db"))
+    _engine(ledger, tmp_path).resolve("What is your notice period?")
+    with caplog.at_level("INFO"):
+        _engine(ledger, tmp_path, current_location="Pune").resolve("How many years of total experience do you have?")
+    assert _cached(ledger) == ["how many years of total experience do you have"]
+    assert "Dropped 1 learned answers made under earlier facts" in caplog.text
+
+
+def test_an_older_ledger_gets_the_facts_column(tmp_path):
+    import sqlite3
+
+    path = tmp_path / "old.db"
+    with sqlite3.connect(path) as old:
+        old.execute("CREATE TABLE answers(question_norm TEXT PRIMARY KEY, question_text TEXT, answer TEXT, "
+                    "field_type TEXT, grounded_in TEXT, source TEXT, confidence REAL, created_at TEXT, "
+                    "updated_at TEXT, times_used INTEGER DEFAULT 0, profile_fingerprint TEXT)")
+        old.execute("INSERT INTO answers(question_norm, answer, confidence, profile_fingerprint) "
+                    "VALUES ('notice period', '30', 1.0, 'old')")
+    ledger = Ledger(str(path))
+    assert ledger.purge_stale_answers("new") == 1
+    ledger.save_answer("Notice period?", _answer(), profile_fingerprint="key", facts_fingerprint="new")
+    assert ledger.purge_stale_answers("new") == 0
