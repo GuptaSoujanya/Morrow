@@ -87,6 +87,12 @@ _DESCRIPTION_YEARS = re.compile(
     r"\s*(?:of\s+)?(?:[\w-]+\s+){0,3}?(?:experience|exp\b)",
     re.IGNORECASE,
 )
+# "Experience: 1 to 3 years", "Experience Required: 2-4 Yrs": the label first, then the figure.
+_LABELLED_YEARS = re.compile(
+    r"\bexperience(?:\s+required)?\s*[:\-–]\s*(\d+(?:\.\d+)?)\s*(?:\+|plus)?\s*"
+    r"(?:(?:-|–|to)\s*\d+(?:\.\d+)?)?\s*(?:years?|yrs?)\b",
+    re.IGNORECASE,
+)
 _BOILERPLATE_YEARS = 15.0
 _LEVEL_GAP = re.compile(r"\b(senior|staff|lead|principal|director)[\s-]*level\b", re.IGNORECASE)
 _GAP_YEARS = re.compile(r"(?<!\d)(\d+(?:\.\d+)?)\s*\+?\s*(?:(?:-|–|to)\s*\d+(?:\.\d+)?)?\s*(?:years?|yrs?)", re.IGNORECASE)
@@ -99,11 +105,12 @@ def required_years(job: JobPosting) -> Optional[float]:
     labelled = _parse_experience_range(job.experience)
     if labelled is not None:
         return labelled[0]
-    for match in _DESCRIPTION_YEARS.finditer(job.description or ""):
-        minimum = float(match.group(1))
-        if minimum <= _BOILERPLATE_YEARS:
-            return minimum
-    return None
+    # The smallest figure, not the first: "With 12 years of experience in fintech, Acme
+    # wants 0-2 years" is about the company first and the candidate second.
+    text = job.description or ""
+    stated = [float(match.group(1)) for pattern in (_DESCRIPTION_YEARS, _LABELLED_YEARS)
+              for match in pattern.finditer(text)]
+    return min((years for years in stated if years <= _BOILERPLATE_YEARS), default=None)
 
 
 def years_bound(profile: Profile, settings: Settings) -> Optional[float]:
