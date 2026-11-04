@@ -2328,9 +2328,13 @@ def retry_pending(
     chromedriver died, and the rest of the list then waited on a browser that was
     never going to answer. With it the list carries on in a new window.
     """
+    from common.ledger import company_key
+
     counts = {"tried": 0, "applied": 0, "gone": 0, "still waiting": 0}
     walls = {}  # type: Dict[str, ExternalResult]
     failures = {}  # type: Dict[str, int]
+    # The same cap the Naukri and board loops keep: open applications per company, every bot counted.
+    per_company = ledger.open_per_company()
     home = driver.current_window_handle
     for entry in [entry for entry in pending_company_sites(settings) if retryable(entry, settings.browser_agent)]:
         company = (entry.get("company") or "").casefold()
@@ -2339,6 +2343,13 @@ def retry_pending(
         if own:
             logger.warning("[retry] %s @ %s dropped from the list: %s", job.title, job.company, guardrails.refusal(own))
             forget_company_site(settings, job)
+            continue
+        key = company_key(job.company)
+        if settings.max_per_company > 0 and key and per_company.get(key, 0) >= settings.max_per_company:
+            # Left on the list, unopened, until an older application stops counting as open.
+            logger.info("[retry] %s @ %s waits: %d applications already open at this company (cap %d)",
+                        job.title, job.company, per_company[key], settings.max_per_company)
+            counts["at the company cap"] = counts.get("at the company cap", 0) + 1
             continue
         if company in walls:
             # Same company, same wall: the entry gets today's reason without another visit.
@@ -2384,6 +2395,8 @@ def retry_pending(
             counts["applied"] += 1
             forget_company_site(settings, job)
             ledger.record_attempt(result.to_apply_result(job), title=job.title, company=job.company)
+            if key:
+                per_company[key] = per_company.get(key, 0) + 1
         elif result.status in (GONE, ApplyStatus.ALREADY_APPLIED):
             counts["gone"] += 1
             forget_company_site(settings, job)

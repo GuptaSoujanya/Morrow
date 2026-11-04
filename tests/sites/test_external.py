@@ -2535,6 +2535,45 @@ def test_a_retried_site_that_now_goes_through_leaves_the_list_and_is_recorded(tm
     assert ledger.has_applied("111111111111")
 
 
+def _waiting_at(settings, company, numbers):
+    stuck = ext.ExternalResult(status=ApplyStatus.EXTERNAL_MANUAL, url=GREENHOUSE,
+                               detail="no application form found on %s (controls: none)" % GREENHOUSE)
+    for number in numbers:
+        ext.record_company_site(settings, JobPosting(
+            job_id=number, url="https://www.naukri.com/job-listings-%s" % number, title="Role %s" % number[0],
+            company=company), replace(stuck, url="%s/%s" % (GREENHOUSE, number)))
+
+
+def test_a_waiting_entry_at_a_company_at_the_open_cap_stays_on_the_list_unopened(tmp_path):
+    """#1: duplicate Accenture applications. Two are open already, so the waiting list sends no third."""
+    settings = _settings(data_dir=str(tmp_path / "user" / "inputs"), max_per_company=2)
+    ledger = Ledger(":memory:")
+    for number in ("1", "2"):
+        ledger.record_attempt(ApplyResult(job_id="naukri-" + number, url="u" + number, status=ApplyStatus.APPLIED),
+                              title="Role", company="Accenture")
+    _waiting_at(settings, "Accenture Solutions Pvt Ltd", ["111111111111", "222222222222"])
+    _waiting_at(settings, "Beta", ["333333333333"])
+    page = _confirming_page()
+
+    counts = ext.retry_pending(_browser(page), settings, PROFILE, _Engine(), ledger, _resume(tmp_path), dry_run=False)
+
+    assert counts == {"tried": 1, "applied": 1, "gone": 0, "still waiting": 0, "at the company cap": 2}
+    assert ledger.open_per_company() == {"accenture": 2, "beta": 1}
+    assert [entry["company"] for entry in ext.pending_company_sites(settings)] == ["Accenture Solutions Pvt Ltd"] * 2
+
+
+def test_a_retry_that_goes_through_counts_toward_the_cap_for_the_rest_of_the_list(tmp_path):
+    settings = _settings(data_dir=str(tmp_path / "user" / "inputs"), max_per_company=1)
+    _waiting_at(settings, "Acme", ["111111111111", "222222222222"])
+    ledger = Ledger(":memory:")
+
+    counts = ext.retry_pending(_browser(_confirming_page()), settings, PROFILE, _Engine(), ledger,
+                               _resume(tmp_path), dry_run=False)
+
+    assert (counts["applied"], counts["at the company cap"]) == (1, 1)
+    assert ledger.open_per_company() == {"acme": 1}
+
+
 def test_the_waiting_list_carries_on_in_a_new_browser_when_the_old_one_dies(tmp_path):
     """A careers page hung Chrome's renderer until chromedriver died, and the remaining
     entries then waited on a browser that would never answer again."""

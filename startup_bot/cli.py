@@ -277,7 +277,10 @@ def _run(settings: Settings, profile: Any, ledger: Any, client: Any, engine: Any
     if not (on_site or by_email or check_replies):
         return counts
     from common import browser
+    from common.ledger import company_key
 
+    # The same cap the Naukri and board loops keep: open applications per company, every bot counted.
+    per_company = ledger.open_per_company()
     # One browser for everything: its saved Google session is the Gmail it drafts in and reads.
     driver = (open_browser or browser.create_driver)(settings)
     try:
@@ -285,6 +288,12 @@ def _run(settings: Settings, profile: Any, ledger: Any, client: Any, engine: Any
         for number, (post, score) in enumerate(on_site, 1):
             logger.info("[startup %d of %d] %s @ %s (%.0f): %s", number, len(on_site), post.job.title,
                         post.job.company, score, post.apply_url)
+            key = company_key(post.job.company)
+            if settings.max_per_company > 0 and key and per_company.get(key, 0) >= settings.max_per_company:
+                logger.info("      -> skipped: %d applications already open at this company (cap %d)",
+                            per_company[key], settings.max_per_company)
+                counts["at the company cap"] = counts.get("at the company cap", 0) + 1
+                continue
             try:
                 status = apply_on_site(driver, settings, profile, engine, client, ledger, post,
                                        dry_run, no_tailor)
@@ -298,6 +307,8 @@ def _run(settings: Settings, profile: Any, ledger: Any, client: Any, engine: Any
                 counts["filled, not sent (dry run)"] = counts.get("filled, not sent (dry run)", 0) + 1
             else:
                 counts["applied" if status == ApplyStatus.APPLIED_EXTERNAL else "need you"] += 1
+            if status == ApplyStatus.APPLIED_EXTERNAL and key:
+                per_company[key] = per_company.get(key, 0) + 1
         if check_replies:
             counts["replies drafted"] = _replies(settings, profile, client, ledger, dry_run, driver)
     finally:
