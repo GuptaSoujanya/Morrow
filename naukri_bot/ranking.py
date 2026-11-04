@@ -1,7 +1,8 @@
 """Deterministic job ranking before the daily application quota is spent.
 
 The lexical score starts from a 20-point neutral baseline.  It then assigns up
-to 40 points for skill overlap, 15 for a preferred-title match, 10 for
+to 40 points for skill overlap (full marks at eight matched profile skills, or
+at every skill for a shorter profile), 15 for a preferred-title match, 10 for
 experience fit, 5 for location fit, and 10 for freshness.  Clearly wrong
 titles receive a 35-point penalty, severe experience mismatches a 10-point
 penalty, and non-preferred locations a 3-point penalty.  Unknown freshness is
@@ -31,6 +32,11 @@ def _who(source: str) -> str:
 
 _BASE_SCORE = 20.0
 _SKILL_WEIGHT = 40.0
+# Matched skills at which the skill component is full. A posting names a
+# handful of technologies, not the whole profile: dividing by all 41 listed
+# skills gave five matches about 5 of 40 points, and of 5,999 scored jobs none
+# reached 80, so the STRONG verdict at 75 was unreachable.
+_SKILL_FULL_MARKS = 8
 _TITLE_MATCH_BONUS = 15.0
 _WRONG_TITLE_PENALTY = 35.0
 _EXPERIENCE_FIT_BONUS = 10.0
@@ -170,7 +176,8 @@ def lexical_score(profile: Profile, job: JobPosting) -> Tuple[float, List[str]]:
     )
     matched_skills = [skill for skill in unique_skills if _phrase_pattern(skill).search(text)]
     if unique_skills:
-        score += _SKILL_WEIGHT * len(matched_skills) / len(unique_skills)
+        full_marks = min(len(unique_skills), _SKILL_FULL_MARKS)
+        score += _SKILL_WEIGHT * min(1.0, len(matched_skills) / full_marks)
     if matched_skills:
         reasons.append(
             "%d skill matches: %s" % (len(matched_skills), ", ".join(matched_skills))
