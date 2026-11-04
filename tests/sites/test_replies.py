@@ -246,6 +246,57 @@ def test_main_reads_every_inbox_and_adds_the_counts_up(tmp_path, monkeypatch):
         seen.append((account, used.gmail_app_password))
         return {"replies": 1}
 
-    monkeypatch.setattr(rp, "check", fake_check)
+    monkeypatch.setattr(rp, "_check_inbox", fake_check)
     assert rp.main(["--dry-run"]) == 0
     assert seen == [("dev@gmail.com", "abcd"), ("second@gmail.com", "efgh"), ("third@gmail.com", "abcd")]
+
+
+class _RecordingImap(_Imap):
+    def __init__(self, logins):
+        super().__init__([])
+        self.logins = logins
+
+    def login(self, account, password):
+        self.logins.append((account, password))
+
+
+def test_the_startup_bot_reads_every_inbox_too(tmp_path, monkeypatch, caplog):
+    """#25: it passed no account, so with an app password set it read nothing and asked for one."""
+    from startup_bot import cli
+
+    logins = []
+    monkeypatch.setattr(imaplib, "IMAP4_SSL", lambda *a, **k: _RecordingImap(logins))
+
+    class _Ledger:
+        def recent_applications(self, limit):
+            return []
+
+    settings = _settings(tmp_path, gmail_app_password="pw", google_email="dev@example.org",
+                         reply_inboxes=["resume@example.org:pw 2"])
+    with caplog.at_level("INFO"):
+        cli._replies(settings, Profile(), _Client(), _Ledger(), False, driver=object())
+    assert logins == [("dev@example.org", "pw"), ("resume@example.org", "pw2")]
+    assert "Set GMAIL_APP_PASSWORD" not in caplog.text
+
+
+def test_without_its_own_password_the_account_is_still_read_in_the_browser(tmp_path, monkeypatch):
+    from sites_bot import gmail_web
+
+    logins, browsed = [], []
+    monkeypatch.setattr(imaplib, "IMAP4_SSL", lambda *a, **k: _RecordingImap(logins))
+    monkeypatch.setattr(gmail_web, "read_recent", lambda driver, days: browsed.append(driver) or [])
+    settings = _settings(tmp_path, reply_inboxes=["resume@example.org:pw2"])
+
+    rp.check(settings, Profile(), _Client(), [], [], 21, False, "dev@example.org", driver="the bot's browser")
+
+    assert browsed == ["the bot's browser"] and logins == [("resume@example.org", "pw2")]
+
+
+def test_the_pipeline_reads_replies_when_only_a_reply_inbox_has_a_password(monkeypatch):
+    from common import config
+    from pipeline import run
+
+    monkeypatch.setattr(config, "load_settings", lambda env=None: Settings(reply_inboxes=["resume@example.org:pw2"]))
+    assert run._replies_on(None)
+    monkeypatch.setattr(config, "load_settings", lambda env=None: Settings(reply_inboxes=["resume@example.org"]))
+    assert not run._replies_on(None)
