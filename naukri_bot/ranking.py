@@ -428,10 +428,20 @@ def drop_excluded_titles(
     return kept, sum(dropped.values())
 
 
+# Terms that name the same stack: a profile listing one has the other.
+_SAME_STACK = {"go": ("golang",), "golang": ("go",)}
+
+
 def _term_pattern(term: str) -> re.Pattern:
     """Like _phrase_pattern, but for terms that start or end with punctuation
-    (".NET", "C#"), where \\b never matches."""
-    return re.compile(r"(?<!\w)%s(?!\w)" % re.escape(term.strip()), re.IGNORECASE)
+    (".NET", "C#"), where \\b never matches.
+
+    A term that starts with punctuation may follow a word, so ".NET" is found in
+    "ASP.NET" and "VB.NET". "-to" never continues a term: "Go-to-market" is not Go.
+    """
+    term = term.strip()
+    before = r"(?<!\w)" if term[:1].isalnum() else ""
+    return re.compile(r"%s%s(?!\w)(?!-to\b)" % (before, re.escape(term)), re.IGNORECASE)
 
 
 def foreign_stack(job: JobPosting, profile: Profile, settings: Settings) -> Optional[str]:
@@ -441,8 +451,8 @@ def foreign_stack(job: JobPosting, profile: Profile, settings: Settings) -> Opti
     for term in settings.exclude_skills:
         if not term.strip():
             continue
-        pattern = _term_pattern(term)
-        if pattern.search(named) and not pattern.search(listed):
+        same = [term] + list(_SAME_STACK.get(term.strip().casefold(), ()))
+        if _term_pattern(term).search(named) and not any(_term_pattern(name).search(listed) for name in same):
             return term.strip()
     return None
 
