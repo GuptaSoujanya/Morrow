@@ -151,3 +151,36 @@ def test_the_run_summary_and_dashboard_funnel_report_the_dropped_employer_postin
     record = _summary_record(summary, Settings())
     assert record["own_company"] == 2 and summary.errors == 0
     assert "2 from your current employer" in funnel_text(record)
+
+
+def _posting(company, description, url="https://www.naukri.com/job-listings-x"):
+    return JobPosting("x", url, title="Software Engineer", company=company, description=description)
+
+
+def _at(employer):
+    return Profile(extra_facts={"current_company": employer})
+
+
+@pytest.mark.parametrize("employer, company, description", [
+    ("Microsoft", "Infosys", "Build services on Microsoft Azure. Experience with Microsoft SQL Server a plus."),
+    ("Amazon", "Zeta", "Deploy on AWS (Amazon Web Services): EC2, S3, Lambda."),
+    ("Google", "Razorpay", "Experience with Google Cloud Platform (GCP) and BigQuery."),
+    ("Google", "Razorpay", "Ship features built on Google's Gemini models."),
+    ("Oracle", "TCS", "Strong SQL on Oracle Database or PostgreSQL."),
+    ("Meta", "Sarvam AI", "Fine-tune open models such as Meta Llama 3 and Mistral."),
+])
+def test_another_companys_posting_that_uses_the_employers_product_is_not_the_employers(employer, company, description):
+    """#27: a mention of the employer's product refused postings from every other company."""
+    assert guardrails.guard_job(_at(employer), _posting(company, description)) == ""
+
+
+@pytest.mark.parametrize("employer, company, description", [
+    ("Ethara AI", "Acme", "Our client, Ethara AI, is hiring an AI engineer."),
+    ("Microsoft", "Confidential", "Join Microsoft's Azure team; Microsoft is hiring in Hyderabad."),
+    ("Microsoft", "Confidential", "Built on Microsoft Azure. Microsoft is hiring."),
+    ("Microsoft", "Confidential", "Work from our Microsoft office in Hyderabad."),
+    ("Microsoft", "Microsoft Azure", "Build services on Azure."),
+    ("Amazon", "Amazon Web Services", "Deploy on AWS."),
+])
+def test_the_employer_itself_is_still_refused(employer, company, description):
+    assert guardrails.guard_job(_at(employer), _posting(company, description)) == employer
