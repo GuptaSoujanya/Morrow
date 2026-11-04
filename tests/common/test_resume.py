@@ -803,3 +803,21 @@ def test_tex_that_runs_programs_or_reads_files_is_unsafe(line):
 def test_the_template_and_a_normal_resume_are_safe():
     assert rs.unsafe_tex(TEX) is None
     assert rs.unsafe_tex("\\usepackage{inputenc} \\includegraphics{x} \\readme") is None
+
+
+def test_a_tailored_resume_that_ran_past_a_page_is_never_attached_later(base, fake_compiler, monkeypatch):
+    """#19: build_tailored_pdf sent the base resume, then pdf_for_job attached the rejected tailored.pdf."""
+    settings = _tailor_settings(base, fake_compiler)
+    monkeypatch.setattr(rs, "pdf_page_count", lambda path: 2 if path.name == "tailored.pdf" else 1)
+    sent, notes = rs.build_tailored_pdf(settings, _Client({"skills": {"Web": ["FastAPI", "Next.js", "React.js"]}}), _job())
+    assert sent.parent.name == "base" and "ran past page" in notes[-1]
+    assert (rs.tailored_dir(settings, _job()) / "tailored.pdf").exists(), "the draft stays in the folder"
+    assert rs.pdf_for_job(settings, _job(), sent) == sent
+    assert rs.pdf_for_job(settings, _job(job_id="j2", url="u2", title="ML Engineer"), sent) == sent
+
+
+def test_a_tailored_resume_that_fits_is_attached_later_under_its_own_name(base, fake_compiler):
+    settings = _tailor_settings(base, fake_compiler)
+    sent, _ = rs.build_tailored_pdf(settings, _Client({"skills": {"Web": ["FastAPI", "Next.js", "React.js"]}}), _job())
+    assert sent.name == "Jane_Doe_Resume.pdf"
+    assert rs.pdf_for_job(settings, _job(), None) == sent
