@@ -1193,6 +1193,43 @@ def tailored_artifact_paths(settings: Settings, filename: str) -> List[Path]:
                    if path.is_file()})
 
 
+def uploaded_pdf(settings: Settings) -> Optional[Path]:
+    """The resume the user uploaded, when RESUME_PATH is a PDF that exists; else None."""
+    source = Path(settings.resume_path or "")
+    if source.suffix.lower() == ".pdf" and source.is_file():
+        return source.resolve()
+    return None
+
+
+def _newest_first(paths: List[Path]) -> List[Path]:
+    return sorted(paths, key=lambda path: path.stat().st_mtime, reverse=True)
+
+
+def tailored_pdfs_for(settings: Settings, job: JobPosting) -> List[Path]:
+    """PDFs already tailored for this posting, then any for the same company; newest first within each."""
+    folder = saved_tailoring_dir(settings, job)
+    own = _newest_first([path for path in folder.glob("*.pdf") if path.is_file()]) if folder else []
+    company = _folder_name(job.company or "")
+    if not company:
+        return own
+    prefix = ("%s - " % company).casefold()
+    same_company = [path for path in tailored_artifact_paths(settings, "*.pdf")
+                    if path.parent.name.casefold().startswith(prefix) and path not in own]
+    return own + _newest_first(same_company)
+
+
+def pdf_for_job(settings: Settings, job: JobPosting, fallback: Optional[Path]) -> Optional[Path]:
+    """The resume to attach for `job`: one tailored for it or its company when one exists, else `fallback`.
+
+    The 2026-11-03 run sent onboarding.pdf to every company site while 27 tailored
+    PDFs sat unused under RESUME_OUT_DIR/tailored/; the upload step now looks there first.
+    """
+    for pdf in tailored_pdfs_for(settings, job):
+        logger.info("      resume: attaching %s (tailored, from %s)", pdf.name, pdf.parent.name)
+        return pdf
+    return fallback
+
+
 def saved_tailoring_dir(settings: Settings, job: JobPosting) -> Optional[Path]:
     """Find an existing posting by exact ID or URL, including previous runs."""
     current = tailored_dir(settings, job)
@@ -1337,8 +1374,18 @@ def _today_labels() -> List[str]:
 
 
 def _shows_upload(driver: Any, file_name: str) -> bool:
+    """True when the card shows a resume uploaded today.
+
+    Naukri rewrites file names on upload (spaces, brackets, length), so a name
+    comparison reported a successful upload as a failure; today's upload date
+    on any shown resume is the evidence that counts.
+    """
     name, preview = shown_resume(driver)
-    return name == file_name and any(label in preview for label in _today_labels())
+    if not name or not any(label in preview for label in _today_labels()):
+        return False
+    if name != file_name:
+        logger.debug("Profile shows %s for today's upload of %s", name, file_name)
+    return True
 
 
 def _upload_message(driver: Any) -> str:
@@ -1403,7 +1450,7 @@ def upload_resume(driver: Any, pdf_path: Path, dry_run: bool = False) -> ResumeU
     if not _shows_upload(driver, pdf_path.name):
         name, preview = shown_resume(driver)
         raise ResumeError(
-            "after reload the profile shows %r (%s), not today's %s"
+            "after reload the profile shows %r (%s), not a resume uploaded today (%s)"
             % (name, preview, pdf_path.name)
         )
     name, preview = shown_resume(driver)

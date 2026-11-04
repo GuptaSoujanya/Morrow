@@ -38,7 +38,10 @@ from common.models import (
     ScoredJob,
     Settings,
 )
-from common.run import EXIT_BROWSER_LOCKED, EXIT_CONFIG, EXIT_FAILED, EXIT_LOGIN, EXIT_OK, configure_logging, keep_log
+from common.run import (
+    EXIT_BROWSER_LOCKED, EXIT_CONFIG, EXIT_FAILED, EXIT_LOGIN, EXIT_OK, configure_logging, keep_log,
+    outside_run_window,
+)
 from common.connections import BrowserProfileLocked
 
 logger = logging.getLogger(__name__)
@@ -170,6 +173,11 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--ignore-window",
+        action="store_true",
+        help="Apply now even outside RUN_WINDOW / RUN_DAYS (default 10:00-18:00 IST, weekdays).",
+    )
+    parser.add_argument(
         "--verbose",
         "-v",
         action="store_true",
@@ -267,17 +275,9 @@ def _company_key(company: Optional[str]) -> str:
     "Soul Ai  "), so the cap has to compare something steadier than the raw
     string. Suffixes like Pvt Ltd are dropped for the same reason.
     """
-    if not company:
-        return ""
-    name = " ".join(company.split()).casefold()
-    for suffix in (
-        " private limited", " pvt ltd", " pvt. ltd.", " pvt limited",
-        " limited", " ltd.", " ltd", " inc.", " inc", " llp", " llc",
-    ):
-        if name.endswith(suffix):
-            name = name[: -len(suffix)]
-            break
-    return name.strip(" .,-")
+    from common.ledger import company_key
+
+    return company_key(company)
 
 
 _EXTERNAL_ARCHIVE_FILE = "user/worklists/external_archive.md"
@@ -818,7 +818,7 @@ def run(
 
         external_jobs: List[ScoredJob] = []
         external_history = ledger.external_history()
-        per_company: Dict[str, int] = {}
+        per_company: Dict[str, int] = ledger.open_per_company()
         tailoring = settings.tailor_resume and not settings.dry_run
         if tailoring:
             resume_tab = _ResumeTab(driver)
@@ -895,10 +895,11 @@ def run(
                 and per_company.get(company_key, 0) >= settings.max_per_company
             ):
                 logger.info(
-                    "Skipping %s @ %s: already applied to %d roles at this company",
+                    "Skipping %s @ %s: %d applications already open at this company (cap %d)",
                     scored.job.title,
                     scored.job.company,
                     per_company[company_key],
+                    settings.max_per_company,
                 )
                 continue
 
@@ -926,7 +927,7 @@ def run(
                     base_pdf = _base_pdf(settings, resume_module)
                 result = external_module.apply_on_company_site(
                     driver, scored.job, profile, answer_engine, settings,
-                    site_pdf or base_pdf,
+                    site_pdf or resume_module.pdf_for_job(settings, scored.job, base_pdf),
                 ).to_apply_result(scored.job)
             else:
                 result = None  # type: Optional[ApplyResult]
@@ -958,7 +959,7 @@ def run(
                     base_pdf = _base_pdf(settings, resume_module)
                 result = external_module.apply_on_company_site(
                     driver, scored.job, profile, answer_engine, settings,
-                    tailored_pdf or base_pdf,
+                    tailored_pdf or resume_module.pdf_for_job(settings, scored.job, base_pdf),
                 ).to_apply_result(scored.job)
             if (
                 result.status == ApplyStatus.EXTERNAL_MANUAL
@@ -1145,6 +1146,10 @@ def _base_pdf(settings: Settings, resume_module: Any) -> Optional[Path]:
     try:
         return resume_module.build_base_pdf(settings)
     except resume_module.ResumeError as exc:
+        uploaded = resume_module.uploaded_pdf(settings)
+        if uploaded is not None:
+            logger.warning("      resume: %s; sending %s instead", exc, uploaded.name)
+            return uploaded
         logger.warning("      resume: %s; company sites will get no attachment", exc)
         return None
 
@@ -1225,6 +1230,11 @@ def main(argv: Optional[List[str]] = None) -> int:
             logger.error("Config: %s", problem)
         logger.error("Fix the above in your .env file (see .env.example).")
         return EXIT_CONFIG
+    if not args.ignore_window and not settings.dry_run:
+        closed = outside_run_window(settings)
+        if closed:
+            logger.info("Not applying now: %s. Pass --ignore-window to run anyway.", closed)
+            return EXIT_OK
     keep_log(settings, "naukri")
     from common import assist
 

@@ -3,9 +3,10 @@
 import json
 import logging
 import urllib.request
-from datetime import datetime
+from datetime import datetime, time as dtime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Set
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from .models import Settings
 from . import paths
@@ -17,6 +18,55 @@ EXIT_CONFIG = 1
 EXIT_LOGIN = 2
 EXIT_FAILED = 3
 EXIT_BROWSER_LOCKED = 4
+
+_WEEKDAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
+
+
+def _run_days(spec: str) -> Set[int]:
+    spec = (spec or "").strip().lower()
+    if not spec or spec in ("any", "every day", "everyday", "all"):
+        return set(range(7))
+    days: Set[int] = set()
+    for part in spec.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        if "-" in part:
+            first, last = (_WEEKDAYS.index(edge.strip()[:3]) for edge in part.split("-", 1))
+            span = range(first, last + 1) if first <= last else [*range(first, 7), *range(0, last + 1)]
+            days.update(span)
+        else:
+            days.add(_WEEKDAYS.index(part[:3]))
+    return days
+
+
+def outside_run_window(settings: Settings, now: Optional[datetime] = None) -> str:
+    """Why this is not a time to apply (RUN_WINDOW / RUN_DAYS / RUN_TIMEZONE), or "" when it is.
+
+    Employers read applications sent in their working hours; a form submitted at
+    02:00 reads as a bot. Boards also throttle by the clock. An empty RUN_WINDOW
+    allows any time; a value that cannot be read is logged and ignored, so a typo
+    never silently stops every run.
+    """
+    window = (settings.run_window or "").strip()
+    if not window:
+        return ""
+    try:
+        start_text, end_text = (edge.strip() for edge in window.split("-", 1))
+        start, end = dtime.fromisoformat(start_text), dtime.fromisoformat(end_text)
+        days = _run_days(settings.run_days)
+        zone = ZoneInfo(settings.run_timezone or "Asia/Kolkata")
+    except (ValueError, ZoneInfoNotFoundError) as exc:
+        logger.warning("RUN_WINDOW=%r RUN_DAYS=%r RUN_TIMEZONE=%r could not be read (%s); running anyway",
+                       settings.run_window, settings.run_days, settings.run_timezone, exc)
+        return ""
+    moment = (now or datetime.now(timezone.utc)).astimezone(zone)
+    label = "%s %s-%s %s" % (settings.run_days or "every day", start_text, end_text, zone.key)
+    if moment.weekday() not in days:
+        return "it is %s and the run window is %s" % (moment.strftime("%A"), label)
+    if not start <= moment.time() < end:
+        return "it is %s and the run window is %s" % (moment.strftime("%H:%M"), label)
+    return ""
 
 
 # The third column used to be the Python module path ("naukri_bot.ranking",

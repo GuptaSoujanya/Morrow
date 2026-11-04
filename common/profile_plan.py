@@ -365,8 +365,10 @@ def _it_skills(raw: Any, facts: str, profile: Profile) -> List[Dict[str, str]]:
             continue
         seen.add(name.casefold())
         years = _words(item.get("years"))
-        if not _grounded_numbers(years, facts):   # a figure the facts do not hold: their total experience instead
-            years = total
+        if not _grounded_numbers(years, facts):   # a figure the facts do not hold: their own figure for this skill, else total
+            stated = next((amount for skill, amount in profile.skill_years.items()
+                           if skill.casefold() == name.casefold()), None)
+            years = _years(stated) if stated else total
         last_used = _words(item.get("last_used"))
         if last_used != str(datetime.now().year) and not _grounded_numbers(last_used, facts):
             last_used = ""   # a year the facts never give, and not this one

@@ -93,3 +93,5 @@ docs/
 # clone: separate repos, never part of Morrow itself.
 user/
 database/
+.env.*
+!.env.example

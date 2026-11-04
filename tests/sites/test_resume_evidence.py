@@ -171,3 +171,21 @@ def test_unknown_transcript_shapes_fail_without_raising(upload):
     folder, path, _ = upload
     _write(folder, [{"message": {"role": "user", "content": "not tool results"}}])
     assert not verify_hirist_resume(folder, path.name, BEFORE, AFTER)
+
+
+def test_a_tailored_pdf_staged_under_another_name_still_counts(upload):
+    import hashlib
+    folder, path, _ = upload
+    assert verify_hirist_resume(folder, "onboarding.pdf", BEFORE, AFTER)
+    assert verify_hirist_resume(folder, "Soujanya_Gupta_Resume.pdf", BEFORE, AFTER), "the one staged PDF is the resume"
+    assert not verify_hirist_resume(folder, "", BEFORE, AFTER), "a name is still required"
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    assert verify_hirist_resume(folder, "Soujanya_Gupta_Resume.pdf", BEFORE, AFTER, expected_digest=digest)
+    assert not verify_hirist_resume(folder, "Soujanya_Gupta_Resume.pdf", BEFORE, AFTER, expected_digest="0" * 64)
+
+
+def test_two_staged_pdfs_are_ambiguous_without_the_name(upload):
+    folder, path, _ = upload
+    (folder / "other.pdf").write_bytes(b"%PDF-other")
+    assert verify_hirist_resume(folder, path.name, BEFORE, AFTER)
+    assert not verify_hirist_resume(folder, "missing.pdf", BEFORE, AFTER)

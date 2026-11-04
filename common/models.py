@@ -218,6 +218,9 @@ class Profile:
 
     skills: List[str] = field(default_factory=list)
     titles: List[str] = field(default_factory=list)
+    #: Years of experience per skill, from `skill_years:` in profile.yaml. A
+    #: "years in X" question answers from here before any blanket rule.
+    skill_years: Dict[str, float] = field(default_factory=dict)
 
     resume_text: str = ""
     #: Free-form extra facts from the YAML, surfaced to the LLM verbatim.
@@ -246,6 +249,7 @@ class Profile:
             "highest_qualification": self.highest_qualification,
             "skills": self.skills,
             "titles": self.titles,
+            "skill_years": self.skill_years,
         }
         known: Dict[str, Any] = {}
         for key, value in candidate.items():
@@ -278,6 +282,19 @@ class LLMBackend:
     NONE = "none"
 
 
+#: Title words that mark a posting as the wrong level or the wrong line of work
+#: for this profile. Matched word-bounded and case-insensitively; EXCLUDE_TITLES
+#: in .env replaces the list, an empty value disables it.
+DEFAULT_EXCLUDE_TITLES = (
+    "Senior", "Sr", "Lead", "Staff", "Principal", "Head", "Architect",
+    "Intern", "QA", "SDET", "Data Analyst",
+)
+
+#: How long an application counts as open for the per-company cap: with no
+#: reply in this many days the role is treated as gone and stops counting.
+OPEN_APPLICATION_DAYS = 30
+
+
 @dataclass
 class Settings:
     email: str = ""
@@ -294,9 +311,23 @@ class Settings:
     min_score: float = 55.0
     max_days_old: int = 7
 
-    # Stops one prolific poster's near-duplicate listings from taking a
-    # large share of the day's applications. 0 disables the cap.
-    max_per_company: int = 3
+    # Most applications open at one company at a time, counted from the ledger
+    # over the last OPEN_APPLICATION_DAYS across every bot, so one prolific
+    # poster's near-duplicate listings cannot take a large share of the day
+    # and the same employer is not asked twice on the same morning. 0 disables.
+    max_per_company: int = 2
+    # Postings whose title carries any of these words are dropped before
+    # ranking (see DEFAULT_EXCLUDE_TITLES). Empty disables the filter.
+    exclude_titles: List[str] = field(default_factory=lambda: list(DEFAULT_EXCLUDE_TITLES))
+    # When the bots may apply: a "HH:MM-HH:MM" window in run_timezone on
+    # run_days ("mon-fri", or a comma list such as "mon,tue,thu"). Outside it a
+    # run stops before opening a browser. An empty window allows any time.
+    run_window: str = "10:00-18:00"
+    run_days: str = "mon-fri"
+    run_timezone: str = "Asia/Kolkata"
+    # Inboxes the reply scanner reads besides the account's own: "address" uses
+    # GMAIL_APP_PASSWORD, "address:app password" its own. REPLY_INBOXES in .env.
+    reply_inboxes: List[str] = field(default_factory=list)
     # Years to answer for any "how many years of experience in X" question,
     # whatever X is. The LLM cannot do this: it is told to answer only from
     # the facts and never infer, and it correctly refuses to claim experience
@@ -528,6 +559,8 @@ class RunSummary:
     held_back: int = 0
     # Postings from the current employer, dropped before ranking or refused at apply time.
     own_company: int = 0
+    # Skipped because max_per_company applications were already open at that employer.
+    capped: int = 0
     eligible: int = 0
     quota_before: int = 0
     quota_after: int = 0

@@ -65,3 +65,17 @@ def test_the_watcher_survives_a_browser_that_will_not_run_it():
 
     apply_module._watch_apply_calls(_Broken())
     assert apply_module._server_refusal(_Broken()) == ("", "")
+
+
+def test_the_quota_code_alone_ends_the_run_when_the_message_moved():
+    body = '{"message": "", "validationErrors": [{"field": "Apply Quota", "customErrorCode": 403009}]}'
+    status, said = apply_module._server_refusal(_Driver({"status": 403, "message": "", "body": body}))
+    assert status == ApplyStatus.QUOTA_EXPIRED
+    assert "403009" in said
+    assert apply_module.QUOTA_ERROR_CODE == 403009
+
+
+def test_other_error_codes_are_not_the_quota():
+    body = '{"message": "Something else", "validationErrors": [{"customErrorCode": 403001}]}'
+    status, _ = apply_module._server_refusal(_Driver({"status": 403, "message": "Something else", "body": body}))
+    assert status == ApplyStatus.NAUKRI_REFUSED

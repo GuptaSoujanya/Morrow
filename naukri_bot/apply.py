@@ -224,6 +224,11 @@ if (!window.__morrowApplyWatch) {
 return true;
 """
 _QUOTA_MESSAGE = re.compile(r"quota", re.I)
+#: Naukri's customErrorCode for "Daily quota of jobs exceeded". The message text has
+#: moved between the top level and validationErrors[]; the code has not, so it is
+#: matched in the raw body as well and the run stops on the first one.
+QUOTA_ERROR_CODE = 403009
+_QUOTA_CODE = re.compile(r'"customErrorCode"\s*:\s*"?%d\b' % QUOTA_ERROR_CODE)
 
 
 def _watch_apply_calls(driver: WebDriver) -> None:
@@ -244,9 +249,11 @@ def _server_refusal(driver: WebDriver) -> Tuple[str, str]:
     code = int(recorded["status"])
     if code < 400:
         return "", ""
-    message = str(recorded.get("message") or "").strip() or str(recorded.get("body") or "").strip()
-    if _QUOTA_MESSAGE.search(message):
-        return ApplyStatus.QUOTA_EXPIRED, "Naukri says: %s (its own daily limit for this account, %d)" % (message, code)
+    body = str(recorded.get("body") or "").strip()
+    message = str(recorded.get("message") or "").strip() or body
+    if _QUOTA_MESSAGE.search(message) or _QUOTA_CODE.search(body):
+        return ApplyStatus.QUOTA_EXPIRED, "Naukri says: %s (its own daily limit for this account, %d, code %s)" % (
+            message or "quota exceeded", code, QUOTA_ERROR_CODE)
     return ApplyStatus.NAUKRI_REFUSED, "Naukri says: %s (%d)" % (message or "no reason given", code)
 
 

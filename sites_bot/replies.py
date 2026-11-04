@@ -19,12 +19,12 @@ import logging
 import re
 import ssl
 import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta, timezone
 from email.message import EmailMessage
 from email.utils import formatdate, make_msgid, parseaddr
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlsplit
 
 from common import paths
@@ -147,6 +147,21 @@ def _newest(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 # Reading the mail
 # ---------------------------------------------------------------------------
+
+
+def inboxes(settings: Settings, account: str) -> List[Tuple[str, str]]:
+    """(address, app password) for the account's own inbox and each REPLY_INBOXES entry, once each.
+
+    An entry is "address" (read with GMAIL_APP_PASSWORD) or "address:app password".
+    """
+    found: List[Tuple[str, str]] = [(account, settings.gmail_app_password)] if account else []
+    for entry in settings.reply_inboxes:
+        address, _, password = entry.partition(":")
+        address = address.strip()
+        if not address or any(address.casefold() == seen.casefold() for seen, _ in found):
+            continue
+        found.append((address, (password.strip() or settings.gmail_app_password).replace(" ", "")))
+    return found
 
 
 def read_mail(settings: Settings, account: str, days: int) -> List[Mail]:
@@ -515,8 +530,18 @@ def main(argv: Optional[List[str]] = None) -> int:
         {"email": row.get("email"), "company": row.get("company"), "job_url": row.get("job_url")}
         for row in read_records(settings)
     ]
-    counts = check(settings, profile, llm.build_client(settings), applications, contacts, args.days,
-                   args.dry_run, account)
+    client = llm.build_client(settings)
+    counts: Dict[str, int] = {}
+    for address, password in inboxes(settings, account):
+        if address != account and not password:
+            logger.warning("%s: no app password for this inbox; set REPLY_INBOXES=%s:<app password>. Skipped.",
+                           address, address)
+            continue
+        with_password = settings if address == account else replace(settings, gmail_app_password=password)
+        logger.info("Reading %s", address)
+        for key, value in check(with_password, profile, client, applications, contacts, args.days,
+                                args.dry_run, address).items():
+            counts[key] = counts.get(key, 0) + value
     logger.info("Employer replies: %s", ", ".join("%s %d" % item for item in counts.items()))
     if not args.dry_run:
         report.update_quietly(settings)

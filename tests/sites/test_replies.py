@@ -206,3 +206,46 @@ def test_the_report_lists_todays_replies(tmp_path):
     text = "\n".join(report.employer_replies_text(rows))
     assert "question 1" in text and "Acme" in text and "salary" in text
     assert rp.todays_replies(settings, date(2026, 11, 3)) == []
+
+
+def test_extra_inboxes_are_read_with_their_own_app_password_or_the_shared_one(tmp_path):
+    settings = _settings(tmp_path, gmail_app_password="abcd efgh", reply_inboxes=[
+        "semrisoujanya2003@gmail.com:wxyz 1234", "Dev.Soujnya.Gupta@gmail.com", "other@gmail.com", ""])
+    assert rp.inboxes(settings, "dev.soujnya.gupta@gmail.com") == [
+        ("dev.soujnya.gupta@gmail.com", "abcd efgh"),
+        ("semrisoujanya2003@gmail.com", "wxyz1234"),
+        ("other@gmail.com", "abcdefgh"),
+    ]
+    assert rp.inboxes(_settings(tmp_path), "") == []
+
+
+def test_main_reads_every_inbox_and_adds_the_counts_up(tmp_path, monkeypatch):
+    from common import config, llm, profile as profile_module, report
+    from common import ledger as ledger_module
+
+    settings = _settings(tmp_path, email="dev@gmail.com", gmail_app_password="abcd",
+                         reply_inboxes=["second@gmail.com:efgh", "third@gmail.com:"])
+    monkeypatch.setattr(config, "load_settings", lambda env=None: settings)
+    monkeypatch.setattr(profile_module, "load_profile", lambda s: Profile(full_name="T"))
+    monkeypatch.setattr(llm, "build_client", lambda s: None)
+    monkeypatch.setattr(report, "update_quietly", lambda s: None)
+
+    class _Ledger:
+        def recent_applications(self, limit):
+            return []
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(ledger_module, "open_ledger", lambda s: _Ledger())
+    monkeypatch.setattr("sites_bot.cold_email.read_contacts", lambda s: [])
+    monkeypatch.setattr("sites_bot.cold_email.read_records", lambda s: [])
+    seen = []
+
+    def fake_check(used, profile, client, applications, contacts, days, dry_run, account="", driver=None):
+        seen.append((account, used.gmail_app_password))
+        return {"replies": 1}
+
+    monkeypatch.setattr(rp, "check", fake_check)
+    assert rp.main(["--dry-run"]) == 0
+    assert seen == [("dev@gmail.com", "abcd"), ("second@gmail.com", "efgh"), ("third@gmail.com", "abcd")]

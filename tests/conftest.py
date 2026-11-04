@@ -19,6 +19,13 @@ def _isolate_working_directory(tmp_path, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _run_at_any_hour(monkeypatch):
+    """The suite runs whenever it is started; only the run-window tests build their own clock."""
+    monkeypatch.setenv("RUN_WINDOW", "")
+    yield
+
+
+@pytest.fixture(autouse=True)
 def _reset_model_quota_memo():
     """A recorded model limit is module state: left set it would mute every later test."""
     from common import llm
