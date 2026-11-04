@@ -494,7 +494,12 @@ def _score_batch(
 ) -> Dict[str, Dict[str, Any]]:
     results: Dict[str, Dict[str, Any]] = {}
     allowed_ids = {job.job_id for job in batch}
-    skills = json.loads(candidate_json).get("skills") or []
+    candidate = json.loads(candidate_json)
+    skills = candidate.get("skills") or []
+    years = candidate.get("total_experience_years")
+    candidate_years = (
+        "a roughly %g-year candidate" % float(years) if isinstance(years, (int, float)) else "this candidate"
+    )
     payload = [
         {
             "job_id": job.job_id,
@@ -511,8 +516,8 @@ def _score_batch(
     ]
     prompt = (
         "Score each job from 0 to 100 for this candidate. Penalise experience "
-        "mismatch (especially jobs wanting 8+ years for a roughly 2.5-year "
-        "candidate), wrong domain, and non-preferred locations unless "
+        "mismatch (a job wanting clearly more years than %s has), "
+        "wrong domain, and non-preferred locations unless "
         "open_to_any_location is true, in which case ignore which city it is in. "
         "Score 0 for a job the candidate could not legally take: one in a country "
         "where work_authorization does not let them work, or that says it needs "
@@ -523,7 +528,7 @@ def _score_batch(
         "\"Kubernetes\" or \"5+ years of Java\". Never list something the "
         "candidate has; empty when nothing is missing.\n"
         "Candidate: %s\nJobs: %s"
-    ) % (candidate_json, json.dumps(payload, ensure_ascii=True))
+    ) % (candidate_years, candidate_json, json.dumps(payload, ensure_ascii=True))
     response = complete_checked(client, prompt, schema, lambda r: _batch_problems(r, sorted(allowed_ids)))
     if response is None:
         return results

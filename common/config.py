@@ -102,6 +102,7 @@ def load_settings(
         "llm_rank_top_n": _env_int("LLM_RANK_TOP_N", defaults.llm_rank_top_n),
         "min_score": _env_float("MIN_SCORE", defaults.min_score),
         "max_days_old": _env_int("MAX_DAYS_OLD", defaults.max_days_old),
+        "max_years_over": _env_float("MAX_YEARS_OVER", defaults.max_years_over),
         "max_per_company": _env_int("MAX_PER_COMPANY", defaults.max_per_company),
         "exclude_titles": _env_list("EXCLUDE_TITLES", defaults.exclude_titles),
         "run_window": os.getenv("RUN_WINDOW", defaults.run_window),
