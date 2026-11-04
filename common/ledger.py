@@ -93,6 +93,7 @@ class Ledger:
             self._ensure_facts_column()
             self._ensure_gaps_column()
             self._ensure_description_column()
+            self._ensure_answer_facts_column()
         except sqlite3.Error:
             logger.exception("failed to open ledger database at %s", db_path)
             raise
@@ -141,6 +142,15 @@ class Ledger:
             columns = {row[1] for row in self._connection.execute("PRAGMA table_info(jobs_seen)")}
             if "description" not in columns:
                 self._connection.execute("ALTER TABLE jobs_seen ADD COLUMN description TEXT NOT NULL DEFAULT ''")
+
+    def _ensure_answer_facts_column(self) -> None:
+        # The facts an answer was learned under. profile_fingerprint holds the cache key,
+        # which also covers the offered choices, so it cannot say whether the facts changed.
+        with self._lock, self._connection:
+            self._connection.execute("BEGIN IMMEDIATE")
+            columns = {row[1] for row in self._connection.execute("PRAGMA table_info(answers)")}
+            if "facts_fingerprint" not in columns:
+                self._connection.execute("ALTER TABLE answers ADD COLUMN facts_fingerprint TEXT")
 
     def _set_journal_mode(self, mode: str) -> None:
         """Switch the journal mode only when it differs; a switch needs the file to itself, so when
@@ -566,9 +576,12 @@ class Ledger:
             return 0
         try:
             with self._lock, self._connection:
+                # A row saved with the facts it was learned under is judged by them; one
+                # saved without (older rows, direct callers) by its profile_fingerprint.
                 cursor = self._connection.execute(
                     """DELETE FROM answers
-                       WHERE profile_fingerprint IS NULL OR profile_fingerprint != ?""",
+                       WHERE COALESCE(facts_fingerprint, profile_fingerprint) IS NULL
+                          OR COALESCE(facts_fingerprint, profile_fingerprint) != ?""",
                     (profile_fingerprint,),
                 )
                 return int(cursor.rowcount or 0)
@@ -582,7 +595,10 @@ class Ledger:
         answer: Answer,
         field_type: str = "text",
         profile_fingerprint: Optional[str] = None,
+        facts_fingerprint: Optional[str] = None,
     ) -> None:
+        """Cache an answer under `profile_fingerprint` (the lookup key); `facts_fingerprint` is
+        the facts it was learned under, which purge_stale_answers compares when given."""
         question_norm = _normalise_question(question_text)
         saved_at = _now()
         try:
@@ -591,8 +607,8 @@ class Ledger:
                     """INSERT INTO answers(
                            question_norm, question_text, answer, field_type,
                            grounded_in, source, confidence, created_at,
-                           updated_at, profile_fingerprint
-                       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                           updated_at, profile_fingerprint, facts_fingerprint
+                       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                        ON CONFLICT(question_norm) DO UPDATE SET
                            question_text = excluded.question_text,
                            answer = excluded.answer,
@@ -601,11 +617,12 @@ class Ledger:
                            source = excluded.source,
                            confidence = excluded.confidence,
                            updated_at = excluded.updated_at,
-                           profile_fingerprint = excluded.profile_fingerprint""",
+                           profile_fingerprint = excluded.profile_fingerprint,
+                           facts_fingerprint = excluded.facts_fingerprint""",
                     (
                         question_norm, question_text, answer.text, field_type,
                         answer.grounded_in, answer.source, answer.confidence,
-                        saved_at, saved_at, profile_fingerprint,
+                        saved_at, saved_at, profile_fingerprint, facts_fingerprint,
                     ),
                 )
         except sqlite3.Error:
