@@ -465,7 +465,31 @@ def process(settings: Settings, profile: Profile, client: Any, mails: List[Mail]
 def check(settings: Settings, profile: Profile, client: Any, applications: List[Dict[str, Any]],
           contacts: List[Dict[str, Any]], days: int, dry_run: bool, account: str = "",
           driver: Any = None) -> Dict[str, int]:
-    """Read and answer employers' mail: over IMAP with an app password, else in the signed-in browser.
+    """Read and answer employers' mail in `account`'s inbox and each REPLY_INBOXES inbox; summed counts.
+
+    Every caller comes through here (sites_bot.replies and the startup bot), so each reads the
+    same inboxes. An extra inbox without an app password is skipped with a warning.
+    """
+    boxes = inboxes(settings, account) if account else [("", settings.gmail_app_password)] + inboxes(settings, "")
+    counts: Dict[str, int] = {}
+    for address, password in boxes:
+        if address != account and not password:
+            logger.warning("%s: no app password for this inbox; set REPLY_INBOXES=%s:<app password>. Skipped.",
+                           address, address)
+            continue
+        with_password = settings if address == account else replace(settings, gmail_app_password=password)
+        if address:
+            logger.info("Reading %s", address)
+        for key, value in _check_inbox(with_password, profile, client, applications, contacts, days, dry_run,
+                                       address, driver).items():
+            counts[key] = counts.get(key, 0) + value
+    return counts
+
+
+def _check_inbox(settings: Settings, profile: Profile, client: Any, applications: List[Dict[str, Any]],
+                 contacts: List[Dict[str, Any]], days: int, dry_run: bool, account: str = "",
+                 driver: Any = None) -> Dict[str, int]:
+    """One inbox: over IMAP with an app password, else in the signed-in browser.
 
     With neither a password nor a `driver`, the startup bot's own browser is opened for it.
     """
@@ -530,18 +554,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         {"email": row.get("email"), "company": row.get("company"), "job_url": row.get("job_url")}
         for row in read_records(settings)
     ]
-    client = llm.build_client(settings)
-    counts: Dict[str, int] = {}
-    for address, password in inboxes(settings, account):
-        if address != account and not password:
-            logger.warning("%s: no app password for this inbox; set REPLY_INBOXES=%s:<app password>. Skipped.",
-                           address, address)
-            continue
-        with_password = settings if address == account else replace(settings, gmail_app_password=password)
-        logger.info("Reading %s", address)
-        for key, value in check(with_password, profile, client, applications, contacts, args.days,
-                                args.dry_run, address).items():
-            counts[key] = counts.get(key, 0) + value
+    counts = check(settings, profile, llm.build_client(settings), applications, contacts, args.days,
+                   args.dry_run, account)
     logger.info("Employer replies: %s", ", ".join("%s %d" % item for item in counts.items()))
     if not args.dry_run:
         report.update_quietly(settings)

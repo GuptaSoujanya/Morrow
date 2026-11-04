@@ -253,13 +253,15 @@ def run(settings: Settings, profile: Any, ledger: Any, client: Any, engine: Any,
 def _replies(settings: Settings, profile: Any, client: Any, ledger: Any, dry_run: bool, driver: Any) -> int:
     """Employers' answers to what was sent, read in the same signed-in Gmail; reply drafts written."""
     from sites_bot import replies
+    from sites_bot.accounts import account_email
     from sites_bot.cold_email import read_contacts, read_records
 
     try:
         applications = ledger.recent_applications(limit=1000)
         contacts = read_contacts(settings) + [{"email": r.get("email"), "company": r.get("company"),
                                                "job_url": r.get("job_url")} for r in read_records(settings)]
-        found = replies.check(settings, profile, client, applications, contacts, 21, dry_run, driver=driver)
+        found = replies.check(settings, profile, client, applications, contacts, 21, dry_run,
+                              account_email(settings), driver=driver)
     except Exception as exc:  # noqa: BROAD_EXCEPT_OK - replies must not cost the applications
         logger.warning("Could not check employer replies: %s", " ".join(str(exc).split())[:200])
         return 0

@@ -131,9 +131,13 @@ def _startup_bot(flags: List[str]) -> int:
 
 
 def _replies_on(env: Optional[str]) -> bool:
+    """Whether any inbox the reply scanner reads has an app password: its own, or a REPLY_INBOXES one."""
     from common import config
+    from sites_bot.accounts import account_email
+    from sites_bot.replies import inboxes
 
-    return bool(config.load_settings(env).gmail_app_password)
+    settings = config.load_settings(env)
+    return bool(settings.gmail_app_password) or any(password for _, password in inboxes(settings, account_email(settings)))
 
 
 def _employer_replies(flags: List[str]) -> int:
