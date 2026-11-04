@@ -21,6 +21,17 @@ _NOISE = frozenset(
 )
 # A single core word this short ("co", "it") would match everything.
 _MIN_CORE_CHARS = 3
+# Words that turn an employer's name into one of its products: "Microsoft Azure", "Amazon Web
+# Services", "Google Cloud", "Meta Llama". A posting at another company that uses the product is
+# not the employer's. "office" and "team" are left out: "our Microsoft office" is the employer.
+_PRODUCT_WORDS = frozenset(
+    "azure dynamics copilot fabric excel sql 365 power powerbi windows visual"
+    " web aws sagemaker bedrock redshift dynamodb lambda alexa"
+    " cloud gcp bigquery vertex firebase gemini analytics ads workspace maps android flutter"
+    " llama pytorch react graph"
+    " database db apex fusion erp ebs weblogic netsuite peoplesoft java"
+    " watson db2 sap hana s4hana".split()
+)
 
 
 def protected_companies(profile: Any) -> List[str]:
@@ -54,6 +65,24 @@ def _contains_sequence(haystack: List[str], needle: Tuple[str, ...]) -> bool:
     return any(tuple(haystack[i:i + size]) == needle for i in range(len(haystack) - size + 1))
 
 
+def _names_employer(words: List[str], core: Tuple[str, ...]) -> bool:
+    """Whether the text names the employer itself: some mention of `core` is not a product name.
+
+    A possessive is read through ("Google's Cloud"), and one product mention does not hide a
+    later plain one ("built on Microsoft Azure; Microsoft is hiring").
+    """
+    size = len(core)
+    for start in range(len(words) - size + 1):
+        if tuple(words[start:start + size]) != core:
+            continue
+        after = words[start + size:start + size + 2]
+        if after[:1] == ["s"]:
+            after = after[1:]
+        if not after or after[0] not in _PRODUCT_WORDS:
+            return True
+    return False
+
+
 def _labels(url: str) -> List[str]:
     """Host labels and the first path segments: ethara.ai, careers.ethara.ai, lever.co/ethara."""
     if not url:
@@ -71,8 +100,9 @@ def _labels(url: str) -> List[str]:
 def own_company(profile: Any, company: str = "", url: str = "", email: str = "", text: str = "") -> str:
     """The protected company this job, address or page belongs to, else ''.
 
-    A name matches when its core words appear in order in the company field or
-    the text; a URL or address matches when a domain or path label is the name
+    A name matches when its core words appear in order in the company field, or
+    in the text other than as one of its products ("Microsoft Azure", "Amazon Web
+    Services"); a URL or address matches when a domain or path label is the name
     run together (ethara.ai, lever.co/etharaai) or spells it out with hyphens
     (naukri.com/job-listings-engineer-ethara-ai-gurugram).
     """
@@ -81,7 +111,7 @@ def own_company(profile: Any, company: str = "", url: str = "", email: str = "",
         if not core or len("".join(core)) < _MIN_CORE_CHARS:
             continue
         joined = ("".join(core), "".join(_words(name)))
-        if _contains_sequence(_words(company), core) or _contains_sequence(_words(text), core):
+        if _contains_sequence(_words(company), core) or _names_employer(_words(text), core):
             return name
         for address in (url, email):
             labels = _labels(address)
