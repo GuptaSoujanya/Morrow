@@ -79,3 +79,46 @@ def test_other_error_codes_are_not_the_quota():
     body = '{"message": "Something else", "validationErrors": [{"customErrorCode": 403001}]}'
     status, _ = apply_module._server_refusal(_Driver({"status": 403, "message": "Something else", "body": body}))
     assert status == ApplyStatus.NAUKRI_REFUSED
+
+
+def test_a_quota_refusal_after_the_questionnaire_stops_naukri_instead_of_reading_as_an_error(monkeypatch, tmp_path):
+    """The questionnaire's last answer sends the application. When Naukri refuses that with 403009
+    the page shows only a generic toast, and without this check the job was recorded as an
+    unverified error, which never stops the run, so Apply was pressed again on the next job."""
+    from common.models import ChatbotOutcome, JobPosting, Profile, Settings
+
+    submitted = []
+
+    class _Page:
+        def execute_script(self, script, *args):
+            if script is apply_module._WATCH_APPLY_SCRIPT:
+                return True
+            return {"status": 403, "message": "Daily quota of jobs exceeded", "body": ""} if submitted else None
+
+    class _Button:
+        def click(self):
+            pass
+
+    monkeypatch.setattr(apply_module, "safe_get", lambda driver, url: True)
+    monkeypatch.setattr(apply_module, "_on_job_page", lambda driver: True)
+    monkeypatch.setattr(apply_module, "_looks_logged_out", lambda driver: False)
+    monkeypatch.setattr(apply_module, "_wait_for_apply_controls", lambda driver: True)
+    monkeypatch.setattr(apply_module, "classify_apply_button", lambda driver: (_Button(), "native"))
+    monkeypatch.setattr(apply_module, "_visible_message", lambda driver, xpath: "")
+    monkeypatch.setattr(apply_module, "_find_visible", lambda driver, by, selector: object())
+    monkeypatch.setattr(apply_module, "verify_applied", lambda driver: (False, "no confirmation"))
+    monkeypatch.setattr(apply_module, "_reload_and_check_applied", lambda driver, job: "")
+
+    def _questionnaire(driver, profile, engine, settings):
+        submitted.append(True)
+        return ChatbotOutcome(completed=True, answered=3)
+
+    monkeypatch.setattr(apply_module, "handle_chatbot", _questionnaire)
+    job = JobPosting("j1", "https://www.naukri.com/job-listings-j1", title="AI Engineer", company="Acme")
+
+    result = apply_module.apply_to_job(_Page(), job, Profile(full_name="T"), object(),
+                                       Settings(dry_run=False, data_dir=str(tmp_path)))
+
+    assert result.status == ApplyStatus.QUOTA_EXPIRED, result.detail
+    assert result.status in ApplyStatus.TERMINAL
+    assert result.questions_answered == 3 and not result.quota_consumed

@@ -517,11 +517,6 @@ class Settings:
                 "Open the dashboard that belongs to this folder and connect Naukri under Connections, "
                 "or set NAUKRI_EMAIL and NAUKRI_PASSWORD in .env" % self.browser_profile_dir
             )
-        if 0 < self.daily_quota < self.target_applications:
-            problems.append(
-                "target_applications (%d) exceeds daily_quota (%d)"
-                % (self.target_applications, self.daily_quota)
-            )
         if self.answer_mode not in (AnswerMode.AUTO, AnswerMode.PROPOSE, AnswerMode.ASK):
             problems.append("unknown answer_mode: %s" % self.answer_mode)
         return problems
