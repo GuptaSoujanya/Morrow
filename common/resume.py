@@ -1205,16 +1205,30 @@ def _newest_first(paths: List[Path]) -> List[Path]:
     return sorted(paths, key=lambda path: path.stat().st_mtime, reverse=True)
 
 
+def _sent_from(pdf: Path) -> bool:
+    """Whether `pdf` is a resume a run sent from its tailored folder.
+
+    The folder also holds tailored.pdf, the compiled draft, which stays there when the
+    tailored version ran past the base's page count and the base resume went out instead.
+    tailoring.json records the PDF that was sent, so when it exists only that one counts.
+    """
+    record = pdf.parent / "tailoring.json"
+    if not record.is_file():
+        return pdf.name != "tailored.pdf"
+    sent = Path(str(_recorded(record).get("resume") or ""))
+    return sent.name == pdf.name and sent.parent.name == pdf.parent.name
+
+
 def tailored_pdfs_for(settings: Settings, job: JobPosting) -> List[Path]:
     """PDFs already tailored for this posting, then any for the same company; newest first within each."""
     folder = saved_tailoring_dir(settings, job)
-    own = _newest_first([path for path in folder.glob("*.pdf") if path.is_file()]) if folder else []
+    own = _newest_first([path for path in folder.glob("*.pdf") if path.is_file() and _sent_from(path)]) if folder else []
     company = _folder_name(job.company or "")
     if not company:
         return own
     prefix = ("%s - " % company).casefold()
     same_company = [path for path in tailored_artifact_paths(settings, "*.pdf")
-                    if path.parent.name.casefold().startswith(prefix) and path not in own]
+                    if path.parent.name.casefold().startswith(prefix) and path not in own and _sent_from(path)]
     return own + _newest_first(same_company)
 
 
