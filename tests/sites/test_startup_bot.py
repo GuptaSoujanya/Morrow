@@ -42,6 +42,9 @@ class _Ledger:
     def has_applied(self, job_id):
         return False
 
+    def open_per_company(self, days=None):
+        return {}
+
     def record_attempt(self, result, **k):
         self.attempts.append(result)
 
@@ -292,3 +295,39 @@ def test_new_uncertain_outcome_cannot_fall_back_to_an_email_draft(monkeypatch, t
     monkeypatch.setattr("sites_bot.browser_agent.take_over", uncertain)
     cli.apply_on_site(browser(settings), settings, None, _Engine(), None, _Ledger(), post, False, False)
     assert visited == [post.apply_url] and drafted == []
+
+
+def test_a_company_at_the_open_cap_is_not_applied_to_again(monkeypatch, tmp_path):
+    """MAX_PER_COMPANY counts what every bot sent: two open at Acme already means no third from here."""
+    from dataclasses import replace
+
+    from common.ledger import Ledger
+    from common.models import ApplyResult
+
+    posts = [_post("hn:%d" % n, url="https://jobs.example/%d" % n) for n in (1, 2, 3)]
+    for post, company in zip(posts, ("Acme Pvt Ltd", "Acme", "Beta")):
+        post.job.company = company
+    settings, _, visited, browser = _setup(monkeypatch, tmp_path, posts)
+    with Ledger(str(tmp_path / "applications.db")) as ledger:
+        for n in (1, 2):
+            ledger.record_attempt(ApplyResult(job_id="naukri:%d" % n, url="u%d" % n, status=ApplyStatus.APPLIED),
+                                  company="ACME")
+        counts = cli.run(replace(settings, max_per_company=2), None, ledger, None, _Engine(), 10, False,
+                         open_browser=browser)
+    assert visited == ["https://jobs.example/3"]
+    assert counts["at the company cap"] == 2 and counts["applied"] == 1
+
+
+def test_applications_made_in_this_run_count_toward_the_cap(monkeypatch, tmp_path):
+    from dataclasses import replace
+
+    from common.ledger import Ledger
+
+    posts = [_post("hn:%d" % n, url="https://jobs.example/%d" % n) for n in (1, 2, 3)]
+    for post in posts:
+        post.job.company = "Acme"
+    settings, _, visited, browser = _setup(monkeypatch, tmp_path, posts)
+    with Ledger(str(tmp_path / "applications.db")) as ledger:
+        counts = cli.run(replace(settings, max_per_company=2), None, ledger, None, _Engine(), 10, False,
+                         open_browser=browser)
+    assert len(visited) == 2 and counts["applied"] == 2 and counts["at the company cap"] == 1
