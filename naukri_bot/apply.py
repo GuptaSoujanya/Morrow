@@ -494,6 +494,12 @@ def apply_to_job(
             )
             if drawer is not None:
                 outcome = handle_chatbot(driver, profile, answer_engine, settings)
+                # The questionnaire's last answer sends the application, so Naukri's
+                # refusal of it (403009 once the day's quota is used) arrives here,
+                # while the page shows only a generic error toast.
+                refused, said = _server_refusal(driver)
+                if refused:
+                    return _result(job, refused, said, False, outcome.answered, outcome.abstained)
                 if outcome.abstained > 0:
                     return _result(
                         job,

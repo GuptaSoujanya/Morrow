@@ -525,3 +525,32 @@ def test_company_sites_wait_for_the_next_run_once_the_model_is_out(fake_naukri, 
     assert attempted == ["j00"]
     assert sites == [], "no employer's form is opened while the model cannot answer its questions"
     assert summary.applied_external == 0
+
+
+def test_a_daily_quota_below_the_run_target_is_a_valid_setup():
+    """DAILY_QUOTA=20 under TARGET_APPLICATIONS=100 was a config error, so the pipeline's Naukri stage exited 1."""
+    assert _settings(daily_quota=20, target_applications=100).validate() == []
+
+
+@pytest.mark.parametrize("company_sites", [True, False])
+def test_a_daily_quota_below_the_run_target_caps_naukri_and_leaves_the_rest_to_company_sites(
+        fake_naukri, tmp_path, monkeypatch, company_sites):
+    from sites_bot import external as external_module
+    from sites_bot.external import ExternalResult
+
+    install, attempted = fake_naukri
+    install([_scored(80.0 - i, 1, "j%02d" % i) for i in range(10)], {})
+    monkeypatch.setattr(apply_module, "apply_button_kind", lambda driver, job: "external")
+    sites = []
+
+    def on_site(driver, job, profile, engine, settings, pdf):
+        sites.append(job.job_id)
+        return ExternalResult(status=ApplyStatus.APPLIED_EXTERNAL, url=job.url, detail="Application confirmed")
+
+    monkeypatch.setattr(external_module, "apply_on_company_site", on_site)
+
+    summary = _run(tmp_path, _settings(daily_quota=2, target_applications=5,
+                                       external_apply=company_sites, external_apply_limit=10))
+
+    assert len(attempted) == 2 and summary.applied == 2 and summary.quota_after == 2
+    assert len(sites) == (3 if company_sites else 0)
