@@ -67,6 +67,30 @@ def test_a_stack_the_profile_lists_is_not_foreign():
     assert ranking.foreign_stack(_job(1, "Software Engineer", ("Angular",)), profile, Settings()) == "Angular"
 
 
+@pytest.mark.parametrize("title", ["Solutions Engineer (Go-to-Market)", "AI Engineer, GTM / go-to-market",
+                                   "Go-To-Market Engineer"])
+def test_go_to_market_is_not_the_go_stack(title):
+    assert ranking.foreign_stack(_job(1, title), _profile(), Settings()) is None
+    assert ranking.foreign_stack(_job(1, "Go-based Platform Engineer"), _profile(), Settings()) == "Go"
+
+
+@pytest.mark.parametrize("title,tags", [("Go Developer", ()), ("Golang Engineer", ()), ("Backend Engineer", ("Go",))])
+@pytest.mark.parametrize("listed", ["Golang", "Go"])
+def test_go_and_golang_are_one_stack(title, tags, listed):
+    assert ranking.foreign_stack(_job(1, title, tags), _profile(("Python", listed)), Settings()) is None
+
+
+@pytest.mark.parametrize("title", ["ASP.NET Developer", "VB.NET Developer", "ASP.NET Core Engineer"])
+def test_dotnet_is_found_inside_asp_and_vb_dotnet(title):
+    assert ranking.foreign_stack(_job(1, title), _profile(), Settings()) == ".NET"
+
+
+def test_a_profile_listing_asp_dotnet_has_dotnet():
+    profile = _profile(("Python", "ASP.NET Core", "C#"))
+    assert ranking.foreign_stack(_job(1, ".NET Developer"), profile, Settings()) is None
+    assert ranking.foreign_stack(_job(1, "Software Engineer", ("C#",)), profile, Settings()) is None
+
+
 def test_rank_drops_foreign_stacks_before_scoring(caplog):
     jobs = [_job(1), _job(2, "Java Backend Developer"), _job(3, tags=("Angular", "TypeScript")),
             _job(4, description="Java a plus")]
