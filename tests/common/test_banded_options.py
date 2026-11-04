@@ -99,3 +99,31 @@ def test_a_list_of_plain_numbers_takes_the_closest_one_rounding_a_tie_up(answer,
 def test_a_number_never_picks_from_a_list_that_is_not_numeric():
     assert answers.match_band("2.9", ["Fresher", "Experienced", "Student"]) is None
     assert answers.match_band("2.9", ["0", "1", "Not applicable"]) is None
+
+
+@pytest.mark.parametrize("answer, options, picked", [
+    # #28: "2.9" normalises to "2 decimal 9", and the option "2" matched as a word inside it.
+    ("2.9", ["0", "1", "2", "3", "4", "5"], "3"),
+    ("2.9 years", ["0", "1", "2", "3", "4", "5"], "3"),
+    ("30", ["15 days", "30 days", "60 days"], "30 days"),
+])
+def test_a_number_is_read_as_a_number_before_as_words(answer, options, picked):
+    assert answers.match_option(answer, options) == picked
+
+
+@pytest.mark.parametrize("answer, options, picked", [
+    ("5", ["Less than 1 year", "1-3 years", "3-5 years", "More than 5 years"], "3-5 years"),
+    ("15", ["5-10 LPA", "10-15 LPA", "Above 15 LPA"], "10-15 LPA"),
+    ("3", ["0-3 years", "Over 3 years"], "0-3 years"),
+    ("16", ["5-10 LPA", "10-15 LPA", "Above 15 LPA"], "Above 15 LPA"),
+    ("5", ["0-4 years", "At least 5 years"], "At least 5 years"),
+    ("5", ["0-4 years", "5+ years"], "5+ years"),
+])
+def test_more_than_leaves_its_own_figure_out(answer, options, picked):
+    assert answers.match_option(answer, options) == picked
+
+
+@pytest.mark.parametrize("answer", ["8 LPA", "8", "12", "800000"])
+def test_rupee_bands_with_grouped_digits_are_left_to_the_model(answer):
+    options = ["₹0 - ₹5,00,000", "₹5,00,000 - ₹10,00,000", "₹10,00,000+"]
+    assert answers.match_option(answer, options) is None
