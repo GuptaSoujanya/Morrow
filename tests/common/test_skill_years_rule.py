@@ -224,3 +224,45 @@ def test_salary_asked_with_a_word_in_between_is_still_answered_from_the_facts(qu
     resolution = _salary_engine().resolve(question)
     assert not resolution.abstained, "abstained on %r" % question
     assert resolution.answer.text == answer
+
+
+def _stated_years_engine(**settings_overrides):
+    values = dict(email="t@example.com", password="secret", skill_years_from_total=True, total_experience_years=3)
+    values.update(settings_overrides)
+    settings = Settings(**{k: v for k, v in values.items() if k in Settings.__annotations__})
+    profile = Profile(full_name="T", total_experience_years=2.9, skills=["Python", "React", "Docker", "Redis"],
+                      skill_years={"Python": 3, "React": 2.5, "Docker": 1.5})
+    return AnswerEngine(Ledger(":memory:"), _NoLLM(), profile, settings)
+
+
+@pytest.mark.parametrize("question,expected,grounding", [
+    ("How many years of experience do you have in Python?", "3", "skill_years:Python"),
+    ("Years of experience with React", "2.5", "skill_years:React"),
+    ("How many years of experience in Python and Docker?", "1.5", "skill_years:Python + Docker"),
+])
+def test_per_skill_years_from_the_profile_win_over_the_blanket_rules(question, expected, grounding):
+    resolution = _stated_years_engine(default_skill_experience_years=3.0).resolve(question)
+    assert (resolution.answer.text, resolution.answer.grounded_in) == (expected, grounding)
+
+
+def test_a_listed_skill_without_its_own_figure_still_follows_the_configured_rule():
+    resolution = _stated_years_engine().resolve("How many years of experience do you have in Redis?")
+    assert resolution.answer.text == "2.9"
+    assert resolution.answer.grounded_in == "skills:Redis + total_experience_years"
+    assert _stated_years_engine(skill_years_from_total=False).resolve(
+        "How many years of experience do you have in Redis?").answer is None
+
+
+def test_skill_years_come_from_profile_yaml(tmp_path):
+    from common import profile as profile_module
+
+    (tmp_path / "resume.txt").write_text("T\nPython developer\n", encoding="utf-8")
+    settings = Settings(profile_path=str(tmp_path / "profile.yaml"), resume_path=str(tmp_path / "resume.txt"))
+    (tmp_path / "profile.yaml").write_text(
+        "full_name: T\nskills: [Python]\nskill_years:\n  Python: 3\n  React: '2.5'\n", encoding="utf-8")
+    loaded = profile_module.load_profile(settings)
+    assert loaded.skill_years == {"Python": 3.0, "React": 2.5}
+    assert loaded.known_facts()["skill_years"] == {"Python": 3.0, "React": 2.5}
+    (tmp_path / "profile.yaml").write_text("full_name: T\nskill_years: [Python]\n", encoding="utf-8")
+    with pytest.raises(profile_module.ProfileError):
+        profile_module.load_profile(settings)

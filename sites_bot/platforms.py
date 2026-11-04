@@ -696,6 +696,7 @@ def run_board(
 ) -> RunSummary:
     """Collect, rank and apply on one board; `restart` opens a new browser when the old one closed."""
     from common import answers as answers_module
+    from common import ledger as ledger_module, resume as resume_module
     from naukri_bot import ranking
     from naukri_bot.cli import _pause_between_applications, _summary_record, derive_keywords
 
@@ -742,10 +743,18 @@ def run_board(
         logger.info("%s: %d collected, %d ranked, %d eligible, target %d", board.label, summary.collected,
                     summary.ranked, summary.eligible, limit)
         sent = unconfirmed = blank = 0
+        per_company = ledger.open_per_company()
         for scored in selected:
             if sent >= limit:
                 break
             job = scored.job
+            company_key = ledger_module.company_key(job.company)
+            if (settings.max_per_company > 0 and company_key
+                    and per_company.get(company_key, 0) >= settings.max_per_company):
+                logger.info("%s: skipping %s @ %s: %d applications already open at this company (cap %d)",
+                            board.label, job.title, job.company, per_company[company_key], settings.max_per_company)
+                summary.capped += 1
+                continue
             if not browser_alive(driver):
                 driver = restart() if restart is not None else None
                 if driver is None:
@@ -754,7 +763,8 @@ def run_board(
             logger.info("[%s %d of %d applied] %s @ %s (%.0f)", board.label, sent, limit, job.title,
                         job.company or "-", scored.score)
             try:
-                result = apply_to(driver, board, job, profile, engine, settings, resume_pdf, dry_run)
+                result = apply_to(driver, board, job, profile, engine, settings,
+                                  resume_module.pdf_for_job(settings, job, resume_pdf), dry_run)
             except TimeoutException:
                 # One posting whose page stops answering costs that posting, not the board.
                 if not browser_alive(driver):
@@ -770,6 +780,8 @@ def run_board(
                 continue
             ledger.record_attempt(result, title=job.title, company=job.company, facts=facts)
             _count(summary, result)
+            if result.status in ledger_module.OPEN_STATUSES and company_key:
+                per_company[company_key] = per_company.get(company_key, 0) + 1
             blank = blank + 1 if _page_stalled(result) else 0
             if blank == BLANK_PAGES_BEFORE_PAUSE:
                 logger.warning("%s: %d job pages in a row came up empty or would not open; waiting %ds in case the "

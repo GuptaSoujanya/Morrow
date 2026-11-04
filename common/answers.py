@@ -619,6 +619,11 @@ class AnswerEngine:
         payload = _profile_fingerprint(self.profile) + json.dumps(sorted(source), ensure_ascii=True)
         self.profile_fingerprint = hashlib.sha256(payload.encode()).hexdigest()[:24]
         self.book.profile_fingerprint = self.profile_fingerprint
+        purge = getattr(self.ledger, "purge_stale_answers", None)
+        if purge is not None:
+            gone = purge(self.profile_fingerprint)
+            if gone:
+                logger.info("Dropped %d learned answers made under earlier facts; they will be learned again.", gone)
 
     def set_job_context(self, job: Any) -> None:
         """Note which posting the next questions belong to.
@@ -1224,8 +1229,10 @@ class AnswerEngine:
         """
         if not _SKILL_YEARS_RE.search(normalised_question):
             return None
-        years = self.settings.default_skill_experience_years
-        grounding = "default_skill_experience_years"
+        years, grounding = self._stated_skill_years(normalised_question)
+        if years is None:
+            years = self.settings.default_skill_experience_years
+            grounding = "default_skill_experience_years"
         if years <= 0:
             skill = self._listed_skill(normalised_question)
             total = self.profile.total_experience_years
@@ -1252,14 +1259,25 @@ class AnswerEngine:
             )
         )
 
-    def _listed_skill(self, normalised_question: str) -> Optional[str]:
+    def _stated_skill_years(self, normalised_question: str) -> Tuple[Optional[float], str]:
+        """Years from profile.yaml's skill_years for the skill(s) asked about; the smallest when several."""
+        stated = self.profile.skill_years or {}
+        if not stated:
+            return None, ""
+        found = self._listed_skill(normalised_question, list(stated))
+        if not found:
+            return None, ""
+        names = found.split(" + ")
+        return min(float(stated[name]) for name in names), "skill_years:%s" % found
+
+    def _listed_skill(self, normalised_question: str, listed: Optional[List[str]] = None) -> Optional[str]:
         """The profile skill(s) a years question is about, or None when any named skill is not listed.
 
         Both directions count: "Python backend" holds the listed "Python", and "LLM" sits inside
         the listed "LLM evaluation". A question naming two skills needs both listed; claiming years
-        in the one the resume lacks would be false.
+        in the one the resume lacks would be false. `listed` replaces the profile's skills list.
         """
-        skills = [(skill, _normalise(skill)) for skill in self.profile.skills or []]
+        skills = [(skill, _normalise(skill)) for skill in (self.profile.skills if listed is None else listed) or []]
         subjects = _skill_subjects(normalised_question)
         if not subjects:
             for skill, token in skills:

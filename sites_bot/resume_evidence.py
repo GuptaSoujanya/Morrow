@@ -4,6 +4,7 @@ This verifies an upload transaction and its persisted attachment metadata. It
 does not claim that the remote PDF bytes have been downloaded or hash-checked.
 """
 
+import hashlib
 import json
 import re
 from datetime import datetime, timedelta, timezone
@@ -98,11 +99,24 @@ def _successful_upload(transcript, staged, persisted_at):
     return len(calls) == len(completed) == 1
 
 
-def verify_hirist_resume(workdir, expected_name, before_text, after_text):
-    """Verify only the supplied staged file, a successful upload, and saved metadata.
+def _staged_resume(folder, expected_name):
+    named = folder / expected_name
+    if named.is_symlink():
+        return None
+    if named.is_file():
+        return named
+    pdfs = [path for path in folder.glob("*.pdf") if not path.is_symlink() and path.is_file()]
+    return pdfs[0] if len(pdfs) == 1 else None
 
-    ``after_text`` must come from the caller's fresh profile reload. Unknown or
-    ambiguous evidence fails closed; agent prose and filename aliases never count.
+
+def verify_hirist_resume(workdir, expected_name, before_text, after_text, expected_digest=None):
+    """Verify the staged resume, a successful upload of it, and saved metadata.
+
+    The staged file is the one named ``expected_name``, or, when no file of that
+    name is staged, the single PDF in ``workdir`` (the upload step may have picked
+    a tailored PDF under another name). With ``expected_digest`` its sha256 must
+    match. ``after_text`` must come from the caller's fresh profile reload.
+    Unknown or ambiguous evidence fails closed; agent prose never counts.
     """
     if (not isinstance(expected_name, str) or not expected_name or "\\" in expected_name
             or Path(expected_name).name != expected_name or expected_name in (".", "..")):
@@ -112,9 +126,11 @@ def verify_hirist_resume(workdir, expected_name, before_text, after_text):
         return False
     try:
         folder = Path(workdir).resolve(strict=True)
-        staged = folder / expected_name
+        staged = _staged_resume(folder, expected_name)
         transcript = folder / "transcript.jsonl"
-        if staged.is_symlink() or transcript.is_symlink() or not staged.is_file() or not transcript.is_file():
+        if staged is None or transcript.is_symlink() or not transcript.is_file():
+            return False
+        if expected_digest and hashlib.sha256(staged.read_bytes()).hexdigest() != expected_digest:
             return False
         size = staged.stat().st_size
         with staged.open("rb") as handle:

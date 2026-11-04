@@ -10,11 +10,17 @@ echo "== Schedule"
 if launchctl print "gui/$(id -u)/$LABEL" >/dev/null 2>&1; then
   launchctl print "gui/$(id -u)/$LABEL" \
     | grep -E "^[[:space:]]+(state|runs|last exit code) =" | sed 's/^[[:space:]]*/  /'
-  if grep -q "can't open input file" user/logs/launchd-profile-update.err 2>/dev/null; then
-    echo "  BLOCKED: macOS would not let the background job read $(pwd)/scripts/run_profile_update.sh"
-    echo "  (exit code 127). Move the checkout out of Desktop/Documents/Downloads and rerun"
-    echo "  ./scripts/install_profile_updater.sh, or grant /bin/zsh and python access to the folder"
-    echo "  under System Settings > Privacy & Security > Files and Folders."
+  ERR_LOG="$HOME/Library/Logs/morrow/launchd-profile-update.err"
+  [ -f "$ERR_LOG" ] || ERR_LOG="user/logs/launchd-profile-update.err"
+  if grep -qiE "can't open input file|Operation not permitted|permission denied" "$ERR_LOG" 2>/dev/null; then
+    echo "  BLOCKED: macOS would not let the background job read $(pwd)"
+    echo "  (see $ERR_LOG). Grant /bin/zsh and python access to the folder under"
+    echo "  System Settings > Privacy & Security > Files and Folders, or move the checkout out of"
+    echo "  Desktop/Documents/Downloads and rerun ./scripts/install_profile_updater.sh."
+  fi
+  if launchctl print "gui/$(id -u)/$LABEL" 2>/dev/null | grep -q "last exit code = 78"; then
+    echo "  launchd could not start the job at all (exit 78): its log files or the script are"
+    echo "  unreadable to it. Rerun ./scripts/install_profile_updater.sh."
   fi
 else
   echo "  NOT INSTALLED - run ./scripts/install_profile_updater.sh"

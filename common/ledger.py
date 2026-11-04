@@ -13,7 +13,9 @@ from datetime import datetime, timedelta, timezone
 from types import TracebackType
 from typing import Any, Dict, List, Optional, Set, Type
 
-from .models import Answer, AnswerSource, ApplyResult, ApplyStatus, JobPosting, Settings
+from .models import (
+    OPEN_APPLICATION_DAYS, Answer, AnswerSource, ApplyResult, ApplyStatus, JobPosting, Settings,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -32,6 +34,37 @@ def _normalise_question(text: str) -> str:
     """Create the exact-match cache key for a screening question."""
     collapsed = " ".join(text.lower().split())
     return collapsed.rstrip(string.punctuation).rstrip()
+
+
+_COMPANY_SUFFIXES = (
+    " private limited", " pvt ltd", " pvt. ltd.", " pvt limited",
+    " limited", " ltd.", " ltd", " inc.", " inc", " llp", " llc",
+    " technologies", " technology", " solutions", " services",
+)
+
+
+def company_key(company: Optional[str]) -> str:
+    """Normalise a company name enough to group its postings together.
+
+    Boards print the same employer inconsistently ("Soul Ai", "Soul AI",
+    "Accenture Solutions Pvt Ltd"), so the per-company cap compares something
+    steadier than the raw string. Suffixes like Pvt Ltd are dropped.
+    """
+    if not company:
+        return ""
+    name = " ".join(company.split()).casefold()
+    changed = True
+    while changed:
+        changed = False
+        for suffix in _COMPANY_SUFFIXES:
+            if name.endswith(suffix):
+                name = name[: -len(suffix)].rstrip(" ,.")
+                changed = True
+    return name.strip(" ,.")
+
+
+#: Statuses that mean an application went out and may still be read by the employer.
+OPEN_STATUSES = (ApplyStatus.APPLIED, ApplyStatus.APPLIED_EXTERNAL, ApplyStatus.APPLIED_PLATFORM)
 
 
 class Ledger:
@@ -389,6 +422,31 @@ class Ledger:
     def quota_remaining(self, daily_quota: int = 50, window_hours: int = 24) -> int:
         return max(0, daily_quota - self.quota_used(window_hours))
 
+    def open_per_company(self, days: int = OPEN_APPLICATION_DAYS) -> Dict[str, int]:
+        """Open applications per company_key(): sent in the last `days` days, every bot counted.
+
+        Seeds the per-company cap so a second morning, or a second bot, does
+        not add a third application at an employer the first already reached.
+        """
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=max(days, 1))).isoformat()
+        placeholders = ", ".join("?" for _ in OPEN_STATUSES)
+        try:
+            with self._lock:
+                rows = self._connection.execute(
+                    """SELECT company, COUNT(DISTINCT job_id) AS count FROM applications
+                       WHERE status IN (%s) AND at >= ? GROUP BY company""" % placeholders,
+                    (*OPEN_STATUSES, cutoff),
+                ).fetchall()
+        except sqlite3.Error:
+            logger.exception("failed to count open applications per company")
+            raise
+        counts: Dict[str, int] = {}
+        for row in rows:
+            key = company_key(row["company"])
+            if key:
+                counts[key] = counts.get(key, 0) + int(row["count"])
+        return counts
+
     def recent_applications(self, limit: int = 50) -> List[Dict[str, Any]]:
         try:
             with self._lock:
@@ -475,6 +533,13 @@ class Ledger:
                     profile_fingerprint is not None
                     and row["profile_fingerprint"] != profile_fingerprint
                 ):
+                    # Learned under facts that have since changed (a new city,
+                    # a new notice period): keeping the row risks it coming
+                    # back as the cached answer once a caller passes no
+                    # fingerprint. Drop it; the next ask learns afresh.
+                    self._connection.execute(
+                        "DELETE FROM answers WHERE question_norm = ?", (question_norm,)
+                    )
                     return None
                 self._connection.execute(
                     "UPDATE answers SET times_used = times_used + 1 WHERE question_norm = ?",
@@ -488,6 +553,27 @@ class Ledger:
             )
         except sqlite3.Error:
             logger.exception("failed to get cached answer")
+            raise
+
+    def purge_stale_answers(self, profile_fingerprint: str) -> int:
+        """Delete every learned answer made under a different profile fingerprint.
+
+        Called when a run starts with changed facts, so a contradiction fixed in
+        profile.yaml or answers.txt cannot keep being sent from the cache.
+        Returns how many rows went.
+        """
+        if not profile_fingerprint:
+            return 0
+        try:
+            with self._lock, self._connection:
+                cursor = self._connection.execute(
+                    """DELETE FROM answers
+                       WHERE profile_fingerprint IS NULL OR profile_fingerprint != ?""",
+                    (profile_fingerprint,),
+                )
+                return int(cursor.rowcount or 0)
+        except sqlite3.Error:
+            logger.exception("failed to purge stale cached answers")
             raise
 
     def save_answer(

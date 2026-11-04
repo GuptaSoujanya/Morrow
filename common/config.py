@@ -103,6 +103,11 @@ def load_settings(
         "min_score": _env_float("MIN_SCORE", defaults.min_score),
         "max_days_old": _env_int("MAX_DAYS_OLD", defaults.max_days_old),
         "max_per_company": _env_int("MAX_PER_COMPANY", defaults.max_per_company),
+        "exclude_titles": _env_list("EXCLUDE_TITLES", defaults.exclude_titles),
+        "run_window": os.getenv("RUN_WINDOW", defaults.run_window),
+        "run_days": os.getenv("RUN_DAYS", defaults.run_days),
+        "run_timezone": os.getenv("RUN_TIMEZONE", defaults.run_timezone),
+        "reply_inboxes": _env_list("REPLY_INBOXES", defaults.reply_inboxes),
         "max_empty_searches": _env_int(
             "MAX_EMPTY_SEARCHES", defaults.max_empty_searches
         ),

@@ -60,8 +60,9 @@ from pathlib import Path
 from typing import Callable, List, NamedTuple, Optional, Sequence, Tuple
 
 from common import memory as memory_module
+from common.browser_lanes import BOARD_LANES
 from common.pipeline_diagnostics import StageDiagnostics, sanitize_detail
-from common.run import EXIT_BROWSER_LOCKED, EXIT_CONFIG, EXIT_FAILED, EXIT_OK, configure_logging
+from common.run import EXIT_BROWSER_LOCKED, EXIT_CONFIG, EXIT_FAILED, EXIT_OK, configure_logging, outside_run_window
 
 from . import briefing, content, lanes as lanes_module, learning
 from common import paths
@@ -169,6 +170,37 @@ def isolated_lanes(args: argparse.Namespace, browser: List[Stage]) -> List[List[
             stages.append(stage)
         lanes.append(stages)
     return lanes
+
+
+def _in_lane_profile(env: Optional[str], lane: str, work: Callable[[], int]) -> int:
+    overrides = lanes_module.prepare(lane, base_profile(env))
+    previous = {key: os.environ.get(key) for key in overrides}
+    os.environ.update(overrides)
+    try:
+        return work()
+    finally:
+        for key, value in previous.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+
+def own_profile_stages(args: argparse.Namespace, browser: List[Stage]) -> List[Stage]:
+    """--bots 1: the sites still run here one after another, but each board gets its own Chrome profile.
+
+    A single-process run used to open every board in the Naukri profile folder, so
+    two bots in one hour fought over one profile lock and a board's Google sign-in
+    changed what Naukri saw next morning. Only bot stages (those with a command)
+    for board lanes are redirected; Naukri and LinkedIn keep their own profiles.
+    """
+    stages = []
+    for stage in browser:
+        lane = lanes_module.lane_of(stage.name)
+        if stage.command and lane in BOARD_LANES:
+            stage = stage._replace(work=lambda lane=lane, work=stage.work: _in_lane_profile(args.env, lane, work))
+        stages.append(stage)
+    return stages
 
 
 def board_names(env: Optional[str] = None) -> List[str]:
@@ -376,7 +408,8 @@ def run_day(args: argparse.Namespace, stages: List[Stage], mem: memory_module.Me
     # --containers: every site at once, each in its own container.
     containers = bool(getattr(args, "containers", False)) and bool(browser)
     wanted = args.bots or 0
-    lanes = isolated_lanes(args, browser) if (wanted != 1 or containers) and browser else [browser]
+    lanes = (isolated_lanes(args, browser) if (wanted != 1 or containers) and browser
+             else [own_profile_stages(args, browser)])
     workers = len(lanes) if (containers or not wanted) else wanted
     if containers:
         show(args, [lanes_module.lane_of(stages[0].name) for stages in lanes if stages])
@@ -477,6 +510,9 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
                              "(docker-compose.yml; PIPELINE_CONTAINERS=1 sets it)")
     parser.add_argument("--no-watch", action="store_true",
                         help="with --containers: do not open the page showing the bots' screens")
+    parser.add_argument("--ignore-window", action="store_true",
+                        help="run the bots now even outside RUN_WINDOW / RUN_DAYS (default 10:00-18:00 IST, "
+                             "weekdays); study and research stages never wait for the window")
     parser.add_argument("--date", type=date.fromisoformat, metavar="YYYY-MM-DD",
                         help="the day to run, check or show (default: today)")
     parser.add_argument("--env", metavar="PATH", help="path to a .env file")
@@ -553,6 +589,17 @@ def main(argv: Optional[List[str]] = None, today: Optional[date] = None) -> int:
             # and isolated-process commands with the resolved --dry-run flag.
             every = build_stages(args, boards)
             stages = selected(every, args.only, args.skip)
+    if not args.dry_run and not getattr(args, "ignore_window", False) and any(stage.command for stage in stages):
+        from common import config
+        try:
+            closed = outside_run_window(config.load_settings(args.env))
+        except Exception as exc:
+            logger.error("Could not load settings: %s", exc)
+            return EXIT_CONFIG
+        if closed:
+            logger.info("[pipeline] Not running the bots now: %s. Pass --ignore-window to run anyway, or run "
+                        "`study` / `--only research` which never wait.", closed)
+            return EXIT_OK
     return run_day(args, stages, mem, [s.name for s in every])
 
 

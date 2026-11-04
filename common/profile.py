@@ -37,6 +37,7 @@ _PROFILE_KEYS = {
     "highest_qualification",
     "skills",
     "titles",
+    "skill_years",
     "extra_facts",
 }
 
@@ -169,6 +170,23 @@ def _yaml_list(facts: Dict[str, Any], key: str) -> List[str]:
     return list(value)
 
 
+def _yaml_skill_years(facts: Dict[str, Any]) -> Dict[str, float]:
+    value = facts.get("skill_years")
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise ProfileError("Profile field skill_years must be a YAML mapping of skill: years")
+    years: Dict[str, float] = {}
+    for skill, amount in value.items():
+        if isinstance(amount, bool) or not isinstance(amount, (int, float, str)):
+            raise ProfileError("Profile field skill_years: %r must be a number of years" % skill)
+        try:
+            years[str(skill).strip()] = float(amount)
+        except ValueError:
+            raise ProfileError("Profile field skill_years: %r must be a number of years" % skill) from None
+    return years
+
+
 def _dates_as_text(value: Any) -> Any:
     """YAML reads an unquoted 2003-04-05 as a date object; keep it as the text typed."""
     if isinstance(value, (datetime.date, datetime.datetime)):
@@ -253,6 +271,7 @@ def load_profile(settings: Settings) -> Profile:
         highest_qualification=facts.get("highest_qualification", ""),
         skills=skills,
         titles=titles,
+        skill_years=_yaml_skill_years(facts),
         resume_text=resume_text,
         extra_facts=extra_facts,
     )

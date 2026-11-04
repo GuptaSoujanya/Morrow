@@ -222,6 +222,7 @@ def rank(
 ) -> List[ScoredJob]:
     """Rank the lexical shortlist, blending optional LLM scores when available."""
     who = _who(source)
+    jobs, _ = drop_excluded_titles(jobs, settings, source)
     if settings.any_location and profile.preferred_locations:
         logger.info(
             "%s: ANY_LOCATION is on, so every city scores alike and the preferred "
@@ -283,6 +284,43 @@ def rank(
         )
     )
     return shortlist
+
+
+def excluded_title(title: str, settings: Settings) -> Optional[str]:
+    """The EXCLUDE_TITLES word this title carries, or None when it may be ranked."""
+    for word in settings.exclude_titles:
+        if word.strip() and _phrase_pattern(word).search(title or ""):
+            return word.strip()
+    return None
+
+
+def drop_excluded_titles(
+    jobs: List[JobPosting], settings: Settings, source: str = ""
+) -> Tuple[List[JobPosting], int]:
+    """Remove postings whose title names a level or line of work the user ruled out.
+
+    A penalty is not enough: a Senior role with every skill on the resume still
+    clears min_score, and the 2026-11-03 run applied to Senior, Lead and QA
+    postings that way. This is a hard cut, taken before ranking, so none of
+    those reach the LLM or the apply loop.
+    """
+    kept: List[JobPosting] = []
+    dropped: Dict[str, int] = {}
+    for job in jobs:
+        word = excluded_title(job.title, settings)
+        if word is None:
+            kept.append(job)
+        else:
+            dropped[word] = dropped.get(word, 0) + 1
+    if dropped:
+        logger.info(
+            "%s: dropped %d of %d postings for EXCLUDE_TITLES (%s)",
+            _who(source),
+            sum(dropped.values()),
+            len(jobs),
+            ", ".join("%s %d" % item for item in sorted(dropped.items())),
+        )
+    return kept, sum(dropped.values())
 
 
 def drop_stale_candidates(
