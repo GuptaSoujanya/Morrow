@@ -63,6 +63,13 @@ def _profile(years=2.9):
     ("", "We have 20 years of experience serving clients", None),
     ("", "built 3 years ago", None),
     ("Not Disclosed", "", None),
+    # #21: a company's, founders' or team's years come first and are not the requirement.
+    ("", "With over 12 years of experience in fintech, Acme is hiring. 0-2 years experience required.", 0.0),
+    ("", "Our founders bring 10+ years of experience at Google. You: 2+ years of experience with Python.", 2.0),
+    ("", "Experience: 1 to 3 years. Our team has 8 years of combined experience.", 1.0),
+    ("", "Acme has 9 years of experience serving banks. We need an engineer with 2 years of experience.", 2.0),
+    ("", "Experience Required: 2-4 Yrs", 2.0),
+    ("", "Experience - 5+ years in backend development", 5.0),
 ])
 def test_required_years_reads_the_card_first_then_the_description(experience, description, expected):
     assert ranking.required_years(_job(1, experience, description)) == expected
@@ -148,3 +155,9 @@ def test_the_model_is_told_the_candidate_years_not_a_hardcoded_figure():
     assert "2.5-year" not in captured["prompt"]
     llm.score_jobs(_Recorder(), _profile(years=None), [_job(1)])
     assert "more years than this candidate has" in captured["prompt"]
+
+
+def test_a_company_describing_its_own_experience_does_not_cut_a_junior_posting():
+    job = _job(1, description="Acme has 9 years of experience serving banks. We need an engineer with 2 years of experience.")
+    kept, dropped = ranking.drop_over_experienced([job], _profile(2.9), Settings())
+    assert (kept, dropped) == ([job], 0)
