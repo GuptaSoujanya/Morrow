@@ -64,7 +64,9 @@ def outside_run_window(settings: Settings, now: Optional[datetime] = None) -> st
     label = "%s %s-%s %s" % (settings.run_days or "every day", start_text, end_text, zone.key)
     if moment.weekday() not in days:
         return "it is %s and the run window is %s" % (moment.strftime("%A"), label)
-    if not start <= moment.time() < end:
+    # A window that ends before it starts runs overnight: 22:00-06:00 is open at 23:00 and 05:00.
+    now_time = moment.time()
+    if not (start <= now_time < end if start <= end else now_time >= start or now_time < end):
         return "it is %s and the run window is %s" % (moment.strftime("%H:%M"), label)
     return ""
 
