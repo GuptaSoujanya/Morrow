@@ -60,6 +60,31 @@ def test_whole_terms_only():
     assert ranking.foreign_stack(_job(1, "Swift Delivery Engineer"), _profile(), Settings()) == "Swift"
 
 
+@pytest.mark.parametrize("title,tags,skills,expected", [
+    ("Solutions Engineer (Go-to-Market)", (), ("Python",), None),
+    ("AI Engineer, GTM / go-to-market", (), ("Python",), None),
+    ("Go Developer", (), ("Golang",), None),
+    ("Software Engineer", ("Go",), ("Golang",), None),
+    ("Golang Engineer", (), ("Go",), None),
+    ("Go Developer", (), ("Python",), "Go"),
+    (".NET Developer", (), ("ASP.NET Core", "C#"), None),
+    ("ASP.NET Developer", (), ("Python",), ".NET"),
+    ("VB.NET Developer", (), ("Python",), ".NET"),
+    ("Software Engineer", ("C#",), ("C#", ".NET"), None),
+    ("Django-based Backend Developer", (), ("Python",), None),
+])
+def test_issue_12_cases(title, tags, skills, expected):
+    """Hyphens join words, Go and Golang are one stack, and .NET is inside ASP.NET."""
+    assert ranking.foreign_stack(_job(1, title, tags), _profile(skills), Settings()) == expected
+
+
+def test_the_log_names_the_dropped_postings(caplog):
+    jobs = [_job(1, "Java Backend Developer"), _job(2, "Go Developer")]
+    with caplog.at_level("INFO"):
+        ranking.drop_foreign_stacks(jobs, _profile(), Settings())
+    assert "Java Backend Developer (Java); Go Developer (Go)" in caplog.text
+
+
 def test_a_stack_the_profile_lists_is_not_foreign():
     profile = _profile(("Python", "Java", "Spring Boot"))
     assert ranking.foreign_stack(_job(1, "Java Developer"), profile, Settings()) is None

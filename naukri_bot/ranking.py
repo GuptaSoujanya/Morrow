@@ -428,10 +428,24 @@ def drop_excluded_titles(
     return kept, sum(dropped.values())
 
 
+_STACK_ALIASES = ({"go", "golang"},)
+
+
 def _term_pattern(term: str) -> re.Pattern:
-    """Like _phrase_pattern, but for terms that start or end with punctuation
-    (".NET", "C#"), where \\b never matches."""
-    return re.compile(r"(?<!\w)%s(?!\w)" % re.escape(term.strip()), re.IGNORECASE)
+    """A whole-term match where a hyphen joins words ("Go-to-market" is not Go)
+    and punctuation at the term's edge needs no boundary (".NET" is inside
+    "ASP.NET", "C#" ends with a symbol), which \\b gets wrong both ways."""
+    term = term.strip()
+    before = r"(?<![\w-])" if term[:1].isalnum() else ""
+    after = r"(?![\w-])" if term[-1:].isalnum() else ""
+    return re.compile(before + re.escape(term) + after, re.IGNORECASE)
+
+
+def _stack_names(term: str) -> List[str]:
+    for aliases in _STACK_ALIASES:
+        if term.strip().casefold() in aliases:
+            return sorted(aliases)
+    return [term.strip()]
 
 
 def foreign_stack(job: JobPosting, profile: Profile, settings: Settings) -> Optional[str]:
@@ -441,9 +455,11 @@ def foreign_stack(job: JobPosting, profile: Profile, settings: Settings) -> Opti
     for term in settings.exclude_skills:
         if not term.strip():
             continue
-        pattern = _term_pattern(term)
-        if pattern.search(named) and not pattern.search(listed):
-            return term.strip()
+        if not _term_pattern(term).search(named):
+            continue
+        if any(_term_pattern(name).search(listed) for name in _stack_names(term)):
+            continue
+        return term.strip()
     return None
 
 
@@ -458,19 +474,23 @@ def drop_foreign_stacks(
     """
     kept: List[JobPosting] = []
     dropped: Dict[str, int] = {}
+    titles: List[str] = []
     for job in jobs:
         term = foreign_stack(job, profile, settings)
         if term is None:
             kept.append(job)
         else:
             dropped[term] = dropped.get(term, 0) + 1
+            titles.append("%s (%s)" % (job.title or "<no title>", term))
     if dropped:
         logger.info(
-            "%s: dropped %d of %d postings for EXCLUDE_SKILLS the profile does not list (%s)",
+            "%s: dropped %d of %d postings for EXCLUDE_SKILLS the profile does not list (%s): %s%s",
             _who(source),
             sum(dropped.values()),
             len(jobs),
             ", ".join("%s %d" % item for item in sorted(dropped.items())),
+            "; ".join(titles[:10]),
+            " ..." if len(titles) > 10 else "",
         )
     return kept, sum(dropped.values())
 
