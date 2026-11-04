@@ -334,6 +334,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(prog="python3 -m startup_bot", description=__doc__.split("\n\n")[0])
     parser.add_argument("--limit", type=int, help="how many startup jobs to apply to (default PLATFORM_LIMIT)")
     parser.add_argument("--dry-run", action="store_true", help="fill forms and write drafts to the log, submit nothing")
+    parser.add_argument("--ignore-window", action="store_true", help="apply now even outside RUN_WINDOW / RUN_DAYS (default 10:00-18:00 IST, weekdays)")
     parser.add_argument("--no-tailor", action="store_true", help="attach the base resume instead of a tailored one")
     parser.add_argument("--headless", action="store_true", help="run the browser without a window")
     parser.add_argument("--no-replies", action="store_true",
@@ -346,7 +347,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
 def main(argv: Optional[List[str]] = None) -> int:
     from common import config, ledger as ledger_module, llm, profile as profile_module, report
     from common.answers import AnswerEngine
-    from common.run import EXIT_CONFIG, EXIT_FAILED, EXIT_OK, configure_logging, keep_log
+    from common.run import EXIT_CONFIG, EXIT_FAILED, EXIT_OK, configure_logging, keep_log, outside_run_window
 
     args = parse_args(argv)
     configure_logging(args.verbose)
@@ -359,6 +360,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     except Exception as exc:
         logger.error("Could not load settings or profile: %s", exc)
         return EXIT_CONFIG
+    if not args.ignore_window and not settings.dry_run:
+        closed = outside_run_window(settings)
+        if closed:
+            logger.info("Not applying now: %s. Pass --ignore-window to run anyway.", closed)
+            return EXIT_OK
     keep_log(settings, "startups")
     settings = own_browser(settings)
     ledger = ledger_module.open_ledger(settings)

@@ -241,13 +241,15 @@ def build_stages(args: argparse.Namespace, boards: List[str]) -> List[Stage]:
     for name in boards:
         stages.append(_bot("profile:%s" % name, "%s_bot.update_profile" % name, board_flags,
                            lambda name=name: _board_bot(name, "update_profile", board_flags)))
-    stages.append(_bot("apply:naukri", "naukri_bot.cli", dry + common, lambda: _naukri_apply(dry + common)))
+    # --ignore-window reaches the bots too, or each would check the window again and stop.
+    apply_flags = dry + common + (["--ignore-window"] if getattr(args, "ignore_window", False) else [])
+    stages.append(_bot("apply:naukri", "naukri_bot.cli", apply_flags, lambda: _naukri_apply(apply_flags)))
     for name in boards:
-        stages.append(_bot("apply:%s" % name, "%s_bot.cli" % name, dry + common,
-                           lambda name=name: _board_bot(name, "cli", dry + common)))
+        stages.append(_bot("apply:%s" % name, "%s_bot.cli" % name, apply_flags,
+                           lambda name=name: _board_bot(name, "cli", apply_flags)))
     if _startup_jobs_on(args.env):
         # Its own bot and browser lane: YC and Hacker News startup jobs only.
-        stages.append(_bot("apply:startups", "startup_bot", dry + common, lambda: _startup_bot(dry + common)))
+        stages.append(_bot("apply:startups", "startup_bot", apply_flags, lambda: _startup_bot(apply_flags)))
     stages.append(Stage("research:resume", lambda: _ai_stage(lambda: learning.fill_resume_learning(ask)), True))
     for agent in briefing.AGENTS:
         stages.append(Stage(

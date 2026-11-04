@@ -2441,6 +2441,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument("--title", default="", help="job title, for the tailored resume and the records")
     parser.add_argument("--company", default="", help="company name, for the tailored resume and the records")
     parser.add_argument("--dry-run", action="store_true", help="fill the form and find Submit, but never click it")
+    parser.add_argument("--ignore-window", action="store_true", help="apply now even outside RUN_WINDOW / RUN_DAYS (default 10:00-18:00 IST, weekdays)")
     parser.add_argument("--no-tailor", action="store_true", help="attach the base resume instead of a tailored one")
     parser.add_argument(
         "--google-login",
@@ -2455,7 +2456,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
 
 
 def main(argv: Optional[List[str]] = None) -> int:
-    from common.run import EXIT_CONFIG, EXIT_FAILED, EXIT_OK, configure_logging, keep_log
+    from common.run import EXIT_CONFIG, EXIT_FAILED, EXIT_OK, configure_logging, keep_log, outside_run_window
     from common import browser, config, ledger as ledger_module, llm, profile as profile_module, resume as resume_module
     from common.answers import AnswerEngine
 
@@ -2472,6 +2473,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     if not args.url and not args.google_login and not args.retry_pending:
         logger.error("Give --url (an application page), --retry-pending or --google-login.")
         return EXIT_CONFIG
+    if not args.google_login and not args.ignore_window and not settings.dry_run:
+        closed = outside_run_window(settings)
+        if closed:
+            logger.info("Not applying now: %s. Pass --ignore-window to run anyway.", closed)
+            return EXIT_OK
     keep_log(settings, "company-site")
 
     if args.google_login:

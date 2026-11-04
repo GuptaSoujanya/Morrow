@@ -986,6 +986,7 @@ def parse_args(argv: Optional[List[str]] = None, only: Optional[Board] = None) -
                             help="board to work on; repeat for several (default: PLATFORMS in .env)")
     parser.add_argument("--limit", type=int, help="applications per board this run (default: PLATFORM_LIMIT)")
     parser.add_argument("--dry-run", action="store_true", help="collect, rank and open each job, click nothing")
+    parser.add_argument("--ignore-window", action="store_true", help="apply now even outside RUN_WINDOW / RUN_DAYS (default 10:00-18:00 IST, weekdays)")
     parser.add_argument("--update-profile", action="store_true",
                         help="refresh the board profile through the browser agent before applying")
     parser.add_argument("--profile-only", action="store_true",
@@ -1009,7 +1010,7 @@ def main(argv: Optional[List[str]] = None, only: Optional[Board] = None) -> int:
     from common import browser, config, ledger as ledger_module, llm, profile as profile_module, report
     from common import resume as resume_module
     from common.answers import AnswerEngine
-    from common.run import EXIT_CONFIG, EXIT_FAILED, EXIT_OK, configure_logging, keep_log
+    from common.run import EXIT_CONFIG, EXIT_FAILED, EXIT_OK, configure_logging, keep_log, outside_run_window
 
     args = parse_args(argv, only)
     configure_logging(args.verbose)
@@ -1019,6 +1020,11 @@ def main(argv: Optional[List[str]] = None, only: Optional[Board] = None) -> int:
     except Exception as exc:
         logger.error("Could not load settings or profile: %s", exc)
         return EXIT_CONFIG
+    if not args.ignore_window and not settings.dry_run and not args.profile_only:
+        closed = outside_run_window(settings)
+        if closed:
+            logger.info("Not applying now: %s. Pass --ignore-window to run anyway.", closed)
+            return EXIT_OK
     boards = [only] if only else chosen_boards(args.site, settings)
     if not boards:
         logger.error("No board chosen: pass --site (%s) or set PLATFORMS in .env.", ", ".join(sorted(BOARDS)))
