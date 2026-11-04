@@ -309,6 +309,7 @@ def rank(
     who = _who(source)
     jobs, _ = drop_excluded_titles(jobs, settings, source)
     jobs, _ = drop_over_experienced(jobs, profile, settings, source)
+    jobs, _ = drop_foreign_stacks(jobs, profile, settings, source)
     if settings.any_location and profile.preferred_locations:
         logger.info(
             "%s: ANY_LOCATION is on, so every city scores alike and the preferred "
@@ -419,6 +420,53 @@ def drop_excluded_titles(
     if dropped:
         logger.info(
             "%s: dropped %d of %d postings for EXCLUDE_TITLES (%s)",
+            _who(source),
+            sum(dropped.values()),
+            len(jobs),
+            ", ".join("%s %d" % item for item in sorted(dropped.items())),
+        )
+    return kept, sum(dropped.values())
+
+
+def _term_pattern(term: str) -> re.Pattern:
+    """Like _phrase_pattern, but for terms that start or end with punctuation
+    (".NET", "C#"), where \\b never matches."""
+    return re.compile(r"(?<!\w)%s(?!\w)" % re.escape(term.strip()), re.IGNORECASE)
+
+
+def foreign_stack(job: JobPosting, profile: Profile, settings: Settings) -> Optional[str]:
+    """The EXCLUDE_SKILLS term the title or tags name that the profile does not list."""
+    named = " | ".join([job.title or ""] + list(job.tags or []))
+    listed = " | ".join(skill for skill in profile.skills if skill.strip())
+    for term in settings.exclude_skills:
+        if not term.strip():
+            continue
+        pattern = _term_pattern(term)
+        if pattern.search(named) and not pattern.search(listed):
+            return term.strip()
+    return None
+
+
+def drop_foreign_stacks(
+    jobs: List[JobPosting], profile: Profile, settings: Settings, source: str = ""
+) -> Tuple[List[JobPosting], int]:
+    """Remove postings built on a stack the profile does not list.
+
+    Generic KEYWORDS return every stack, and a Java or .NET posting still
+    clears min_score on Git, REST, SQL and Docker plus title and freshness:
+    310 of the 892 applied jobs with gaps on 2026-11-03 were such shops.
+    """
+    kept: List[JobPosting] = []
+    dropped: Dict[str, int] = {}
+    for job in jobs:
+        term = foreign_stack(job, profile, settings)
+        if term is None:
+            kept.append(job)
+        else:
+            dropped[term] = dropped.get(term, 0) + 1
+    if dropped:
+        logger.info(
+            "%s: dropped %d of %d postings for EXCLUDE_SKILLS the profile does not list (%s)",
             _who(source),
             sum(dropped.values()),
             len(jobs),

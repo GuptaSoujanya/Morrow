@@ -290,6 +290,17 @@ DEFAULT_EXCLUDE_TITLES = (
     "Intern", "QA", "SDET", "Data Analyst",
 )
 
+#: Stacks a posting is dropped for when its title or tags name one and the
+#: profile does not list it. Generic KEYWORDS ("Software Engineer", "Backend
+#: Developer") return every stack, and on 2026-11-03 310 of 892 applied jobs
+#: were Java, Spring, .NET, Go, Angular or Django shops the resume could not
+#: cover. A description-only mention ("Java a plus") never cuts. EXCLUDE_SKILLS
+#: in .env replaces the list, an empty value disables it.
+DEFAULT_EXCLUDE_SKILLS = (
+    "Java", "Spring", "Spring Boot", ".NET", "C#", "Golang", "Go", "Angular",
+    "Django", "Flask", "Ruby", "PHP", "Kotlin", "Swift",
+)
+
 #: How long an application counts as open for the per-company cap: with no
 #: reply in this many days the role is treated as gone and stops counting.
 OPEN_APPLICATION_DAYS = 30
@@ -326,6 +337,9 @@ class Settings:
     # Postings whose title carries any of these words are dropped before
     # ranking (see DEFAULT_EXCLUDE_TITLES). Empty disables the filter.
     exclude_titles: List[str] = field(default_factory=lambda: list(DEFAULT_EXCLUDE_TITLES))
+    # Postings whose title or tags name one of these stacks are dropped before
+    # ranking unless the profile lists it (see DEFAULT_EXCLUDE_SKILLS).
+    exclude_skills: List[str] = field(default_factory=lambda: list(DEFAULT_EXCLUDE_SKILLS))
     # When the bots may apply: a "HH:MM-HH:MM" window in run_timezone on
     # run_days ("mon-fri", or a comma list such as "mon,tue,thu"). Outside it a
     # run stops before opening a browser. An empty window allows any time.
