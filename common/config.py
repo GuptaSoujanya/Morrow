@@ -105,6 +105,7 @@ def load_settings(
         "max_years_over": _env_float("MAX_YEARS_OVER", defaults.max_years_over),
         "max_per_company": _env_int("MAX_PER_COMPANY", defaults.max_per_company),
         "exclude_titles": _env_list("EXCLUDE_TITLES", defaults.exclude_titles),
+        "exclude_skills": _env_list("EXCLUDE_SKILLS", defaults.exclude_skills),
         "run_window": os.getenv("RUN_WINDOW", defaults.run_window),
         "run_days": os.getenv("RUN_DAYS", defaults.run_days),
         "run_timezone": os.getenv("RUN_TIMEZONE", defaults.run_timezone),
