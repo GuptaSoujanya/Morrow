@@ -197,6 +197,31 @@ def test_report_links_point_at_its_saved_files(tmp_path, monkeypatch):
     assert "<table>" in html and "<b>" not in html
 
 
+def test_diagnostics_json_lists_days_and_trims_the_audit(tmp_path, monkeypatch):
+    monkeypatch.setattr(state, "REPORTS", tmp_path)
+    assert server.diagnostics_json("2026-10-12") == {
+        "day": "2026-10-12", "title": "Why nobody is calling — Monday, 12 October 2026", "exists": False, "days": [], "markdown_url": ""}
+    folder = tmp_path / "2026-10-12"
+    folder.mkdir()
+    (folder / "diagnostics.json").write_text(json.dumps({
+        "generated_at": "2026-10-12T09:00", "causes": [{"id": "low-fit", "severity": "critical", "title": "Low fit"}],
+        "plan": {"today": ["Answer X"], "week": [], "code": []}, "review": {"used": False}, "trail": [{"name": "s", "ok": True}],
+        "local": {"funnel_all": {"submitted_total": 5}, "fit": {"median_score": 50, "score_bands": {}, "huge": "x"}, "applications": []},
+        "mail": {"account": "me@x", "scanned": 9, "positive_total": 1, "positives": [{"subject": "hi"}], "spam_hiring": [1, 2], "unplaced": ["big"]},
+        "sites": {"hirist": {"state": "read", "summary": {"facts": {"applied_listed": 3}, "messages": [{"action": "reply", "text": "t"}, {"text": "no action"}]}}},
+        "resume": {"headline": "SE", "weak_lines": ["drop me"]},
+    }))
+    data = server.diagnostics_json("2026-10-12")
+    assert data["exists"] and data["days"] == ["2026-10-12"] and data["markdown_url"] == "/reports/2026-10-12/diagnostics.md"
+    assert data["causes"][0]["id"] == "low-fit" and data["plan"]["today"] == ["Answer X"] and data["trail"][0]["ok"]
+    assert data["funnel"] == {"submitted_total": 5} and "huge" not in data["fit"]
+    assert data["mail"]["scanned"] == 9 and "unplaced" not in data["mail"] and data["spam_hiring"] == 2
+    assert data["boards"]["hirist"]["facts"] == {"applied_listed": 3} and len(data["boards"]["hirist"]["messages"]) == 1
+    assert data["resume"] == {"headline": "SE"}
+    (folder / "diagnostics.json").write_text("{not json")
+    assert server.diagnostics_json("2026-10-12")["exists"] is False
+
+
 
 def at(day, hour):
     """A ledger timestamp (UTC, like the bots write) for a local day and hour."""

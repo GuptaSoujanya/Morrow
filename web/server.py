@@ -258,6 +258,7 @@ def status_json(runner: Runner) -> Dict[str, Any]:
         "date": today.isoformat(),
         "date_long": long_date(today),
         "report": {"ready": state.report_path().is_file(), "days": state.report_days()[:60]},
+        "diagnostics": {"ready": state.diagnostics_path().is_file(), "days": state.diagnostics_days()[:60]},
         "questions": [{"line": line, "questions": qs} for line, qs in state.unanswered_questions(state.ANSWERS)],
         "facts": [{"line": line, "key": key} for line, key in state.blank_facts(state.PROFILE)],
         "sites": state.company_sites(state.COMPANY_SITES),
@@ -288,6 +289,22 @@ def report_json(day_text: str) -> Dict[str, Any]:
         "title": f"Report for {long_date(day)}",
         "exists": exists,
         "html": state.report_html(day) if exists else "",
+    }
+
+
+def diagnostics_json(day_text: str) -> Dict[str, Any]:
+    """The funnel audit (`python -m diagnose`) for a day: why nobody is calling, with its plan and its checks."""
+    day = state.parse_day(day_text)
+    days = state.diagnostics_days()
+    exists = state.diagnostics_path(day).is_file()
+    data = state.diagnostics_data(day) if exists else {}
+    return {
+        "day": day.isoformat(),
+        "title": f"Why nobody is calling — {long_date(day)}",
+        "exists": bool(data),
+        "days": days[:60],
+        "markdown_url": f"/reports/{day.isoformat()}/{state.DIAGNOSTICS_MD}" if exists else "",
+        **data,
     }
 
 
@@ -652,6 +669,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.json(overview_json(query.get("days", "")))
             elif route == "/api/report":
                 self.json(report_json(query.get("day", "")))
+            elif route == "/api/diagnostics":
+                self.json(diagnostics_json(query.get("day", "")))
             elif route == "/api/file":
                 self.json(file_json(query.get("name", "")))
             else:

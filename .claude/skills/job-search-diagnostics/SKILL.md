@@ -27,8 +27,25 @@ Output: `user/reports/<date>/diagnostics.md` (read this), `diagnostics.json` (nu
 Preconditions and their fixes:
 - `locked` for a site: that browser profile is open elsewhere (dashboard, running bot). Stop it or skip the site.
 - `needs_sign_in`: sign in once via the dashboard Connections page, re-run.
-- Mail not read: `.env` needs `GMAIL_APP_PASSWORD` (Google account > Security > 2-Step > App passwords) or
-  `REPLY_INBOXES=address:app-password`. A `REPLY_INBOXES` entry without a password reads nothing.
+- Mail not read: either sign in to Google once in a browser profile the audit can open (Naukri, startups or
+  LinkedIn profile; it then reads Gmail's list pages without a password), or set `GMAIL_APP_PASSWORD` /
+  `REPLY_INBOXES=address:app-password` for IMAP.
+- "Model did not answer": `LLM_BACKEND=claude-cli` shells out to `claude -p`, which can hang; the audit
+  drops the model after two silent calls and says so in "How each step was checked". Run with `--no-llm`
+  or set `LLM_BACKEND=anthropic` with a key. The dashboard tab **Why no replies** shows the same report.
+
+## What the model does, and how each step is checked
+
+Every model step is recorded as research → verify → check → execute (report section "How each step was
+checked", JSON key `trail`). A step whose check fails keeps the rules' result.
+- Targeted Gmail searches: rule-made (positive subject words, Cutshort replies, Naukri non-alerts, the
+  companies applied to) plus up to 6 model-proposed; each is lint-checked (operator allow-list, balanced
+  quotes, `newer_than` capped, `in:anywhere`), dropped when it returns over 300 rows.
+- Verification of the rules' verdicts: batches of 25 (search hits and rule positives first); a batch is
+  trusted only when it agrees with the rules on positive-or-not at 60%+; a verdict changes only above 70%
+  confidence. Numbers: `mail.verification` (agreement_kind, agreement_positive, changed, promoted, demoted).
+- Review of the causes: the model reads a digest of the numbers; agreement moves confidence ±; an added
+  cause is kept only when its evidence quotes a number present in the digest, capped at medium severity.
 
 ## Read the report in this order
 

@@ -381,6 +381,62 @@ def report_days() -> List[str]:
     return sorted((p.parent.name for p in REPORTS.glob("*/report.md")), reverse=True)
 
 
+DIAGNOSTICS_JSON = "diagnostics.json"
+DIAGNOSTICS_MD = "diagnostics.md"
+
+
+def diagnostics_path(day: Optional[dt.date] = None, name: str = DIAGNOSTICS_JSON) -> Path:
+    """Where ``python -m diagnose`` leaves its funnel audit for the day."""
+    return REPORTS / (day or dt.date.today()).isoformat() / name
+
+
+def diagnostics_days() -> List[str]:
+    if not REPORTS.is_dir():
+        return []
+    return sorted((p.parent.name for p in REPORTS.glob("*/" + DIAGNOSTICS_JSON)), reverse=True)
+
+
+def diagnostics_data(day: dt.date) -> Dict[str, Any]:
+    """The day's audit as the dashboard shows it: causes, plan, review, trail and the headline numbers, not the raw dumps."""
+    import json
+
+    try:
+        payload = json.loads(_read(diagnostics_path(day)) or "{}")
+    except ValueError:
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+    local = payload.get("local") or {}
+    mail = payload.get("mail") or {}
+    sites = payload.get("sites") or {}
+    boards = {}
+    for site, data in sites.items() if isinstance(sites, dict) else []:
+        summary = (data or {}).get("summary") or {}
+        boards[site] = {
+            "state": (data or {}).get("state"),
+            "message": (data or {}).get("message", ""),
+            "facts": summary.get("facts") or {},
+            "status_counts": summary.get("status_counts") or {},
+            "messages": [m for m in summary.get("messages", []) if m.get("action")][:12],
+        }
+    return {
+        "generated_at": payload.get("generated_at", ""),
+        "causes": payload.get("causes") or [],
+        "plan": payload.get("plan") or {"today": [], "week": [], "code": []},
+        "review": payload.get("review") or {},
+        "trail": payload.get("trail") or [],
+        "funnel": local.get("funnel_all") or {},
+        "fit": {k: v for k, v in (local.get("fit") or {}).items() if k in ("score_bands", "median_score", "below_min_score", "min_score", "mismatched_titles")},
+        "mail": {k: mail.get(k) for k in ("account", "days", "scanned", "positive_total", "positive_by_kind", "positive_by_platform",
+                                          "error", "via", "model", "queries", "verification")} if mail else {},
+        "positives": (mail.get("positives") or [])[:40] if mail else [],
+        "spam_hiring": len(mail.get("spam_hiring") or []) if mail else 0,
+        "boards": boards,
+        "resume": {k: v for k, v in (payload.get("resume") or {}).items()
+                   if k in ("headline", "coverage", "bullets", "bullets_with_metric", "missing_in_demand", "weak_words", "error")},
+    }
+
+
 def report_html(day: dt.date) -> str:
     """The day's report as HTML, its own links pointing at the files saved next to it."""
     from markdown_it import MarkdownIt

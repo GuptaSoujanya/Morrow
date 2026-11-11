@@ -816,9 +816,20 @@ It never applies, sends or clicks a form. It writes `user/reports/<date>/diagnos
 (were there replies the pipeline missed?), the causes ranked critical to low — each with the numbers behind
 it and the fix as an `.env` value, a code change, a saved answer, a resume line or a skill — plus
 `diagnostics.json` and `diagnostics/<site>-<page>.txt`, the visible text of every page read, as evidence.
+Without an app password the mailbox is read through a browser profile that is already signed in to Google
+(the Naukri, startups or LinkedIn profile), list pages only.
+The model (`LLM_BACKEND`) helps at three points, and every step is written down as research → verify →
+check → execute in the report's "How each step was checked" table: it proposes extra Gmail searches on top
+of the rule-made ones (every search is lint-checked against Gmail's operators and bounded to the window),
+re-judges the mails that matter in batches of 25 and is trusted only where it broadly agrees with the rules
+(a batch under 60% agreement is dropped; a verdict changes only above 70% confidence), and reviews the
+ranked causes, adding one only when it quotes a number from the data. Two unanswered calls in a row and
+the rest of the run goes on with the rules alone, which the report says plainly.
 Flags: `--days 45`, `--skip-mail`, `--skip-browser`, `--sites naukri,hirist`, `--no-llm` (rules only).
-In the pipeline it is the `diagnose` stage (browser skipped, final); the Claude skill
-`.claude/skills/job-search-diagnostics/SKILL.md` explains how to turn each cause into a change.
+In the pipeline it is the `diagnose` stage (browser skipped, final); the dashboard shows the latest audit
+under **Why no replies** (causes, plan, model review, mailbox searches, boards, the step-by-step checks)
+with a button that runs the stage; the Claude skill `.claude/skills/job-search-diagnostics/SKILL.md`
+explains how to turn each cause into a change.
 
 ### Cold emails to recruiters (drafts only)
 
