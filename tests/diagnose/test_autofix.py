@@ -205,6 +205,36 @@ def test_fix_code_reverts_when_tests_get_worse_or_a_forbidden_file_is_touched(tm
     assert (repo / ".env").read_text() == "MIN_SCORE=30\n"
 
 
+def test_fix_code_reverts_edits_inside_a_submodule(tmp_path):
+    repo = _repo(tmp_path)
+    env = {**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@x", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@x",
+           "HOME": str(tmp_path)}
+    dash = tmp_path / "dash"
+    dash.mkdir()
+    (dash / "app.js").write_text("export const a = 1;\n")
+    for args in ([], ["add", "app.js"], ["commit", "-q", "-m", "dash"]):
+        subprocess.run(["git", *(args or ["init", "-q"])], cwd=dash, check=True, env=env, capture_output=True)
+    subprocess.run(["git", "-c", "protocol.file.allow=always", "submodule", "add", "-q", str(dash), "dashboard"],
+                   cwd=repo, check=True, env=env, capture_output=True)
+    subprocess.run(["git", "commit", "-q", "-m", "sub"], cwd=repo, check=True, env=env, capture_output=True)
+    assert autofix.submodule_paths(repo) == ["dashboard"]
+
+    def sub_cli(command, cwd, timeout):
+        (repo / "dashboard" / "app.js").write_text("export const a = 2;\n")
+        (repo / "dashboard" / "new.js").write_text("x\n")
+        (repo / "common" / "answers.py").write_text("def f():\n    return 3\n")
+        return 0, "done", ""
+
+    trail = Trail()
+    result = autofix.fix_code(repo, "2026-11-11", CAUSES, {}, trail, clis=["claude"], timeout_s=5, dry_run=False,
+                              folder=tmp_path / "w", cli_runner=sub_cli, test_runner=lambda c, w, t: (0, "ok"))
+    assert not trail.steps[-1].ok and "dashboard/app.js" in trail.steps[-1].check and "dashboard/new.js" in trail.steps[-1].check
+    assert (repo / "dashboard" / "app.js").read_text() == "export const a = 1;\n"
+    assert not (repo / "dashboard" / "new.js").exists() and (tmp_path / "w" / "rejected" / "dashboard" / "new.js").is_file()
+    assert (repo / "common" / "answers.py").read_text() == "def f():\n    return 1\n"
+    assert "submodule dashboard" in Path(result["rejected_patch"]).read_text()
+
+
 def test_fix_code_without_a_cli_or_baseline_changes_nothing(tmp_path):
     repo = _repo(tmp_path)
     trail = Trail()

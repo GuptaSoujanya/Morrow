@@ -46,13 +46,13 @@ FOLDER = "autofix"
 
 CLIS = ("opencode", "claude", "kiro")
 BINARIES = {"opencode": "opencode", "claude": "claude", "kiro": "kiro-cli"}
-DEFAULT_TIMEOUT_S = int(os.getenv("AUTOFIX_TIMEOUT_S") or 1800)
+DEFAULT_TIMEOUT_S = int(os.getenv("AUTOFIX_TIMEOUT_S") or 3600)
 TEST_TIMEOUT_S = 900
 MAX_TASKS = 12
 #: Where the coding CLI may write. Anything else it touches is reverted.
 ALLOWED_ROOTS = ("common/", "naukri_bot/", "hirist_bot/", "instahyre_bot/", "wellfound_bot/", "cutshort_bot/",
                  "sites_bot/", "startup_bot/", "linkedin_bot/", "pipeline/", "diagnose/", "web/", "tests/", "scripts/",
-                 "GUIDE.md", "README.md", "docs/")
+                 "GUIDE.md", "README.md", "QUARRY.md", "docs/", ".env.example", ".claude/")
 #: Environment variables that point the CLIs at a proxy; a stale one makes them hang, so the report names them.
 PROXY_VARIABLES = ("ANTHROPIC_BASE_URL", "CLAUDE_PROXY_PORT", "HTTPS_PROXY", "HTTP_PROXY", "ALL_PROXY")
 
@@ -533,42 +533,96 @@ def _git(repo: Path, *args: str) -> str:
     return done.stdout if done.returncode == 0 else ""
 
 
+def _listed(repo: Path, *args: str) -> List[str]:
+    return [path for path in _git(repo, "ls-files", "-z", *args).split("\0") if path]
+
+
+def tracked_files(repo: Path) -> set:
+    return set(_listed(repo))
+
+
+def submodule_paths(repo: Path) -> List[str]:
+    return [line.split("\t", 1)[1] for line in _git(repo, "ls-files", "--stage").splitlines() if line.startswith("160000 ")]
+
+
+def submodule_state(repo: Path) -> Dict[str, str]:
+    """'<submodule>/<path>' -> git status letters for every changed or untracked file inside a submodule."""
+    found: Dict[str, str] = {}
+    for sub in submodule_paths(repo):
+        for line in _git(repo / sub, "status", "--porcelain", "--untracked-files=all").splitlines():
+            if len(line) > 3:
+                found[sub + "/" + line[3:].strip().strip('"')] = line[:2]
+    return found
+
+
+def revert_submodules(repo: Path, paths_touched: Sequence[str], rejected_dir: Path) -> List[str]:
+    notes: List[str] = []
+    subs = submodule_paths(repo)
+    for path in paths_touched:
+        sub = next((s for s in subs if path.startswith(s + "/")), None)
+        if sub is None:
+            continue
+        rel = path[len(sub) + 1:]
+        if rel in set(_listed(repo / sub)):
+            subprocess.run(["git", "checkout", "--", rel], cwd=str(repo / sub), capture_output=True, check=False)
+            notes.append("restored: " + path)
+        elif (repo / path).is_file():
+            target = rejected_dir / path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(repo / path), str(target))
+            notes.append("moved to %s: %s" % (rejected_dir, path))
+    return notes
+
+
 def tree_state(repo: Path) -> Dict[str, str]:
-    """path -> two-letter git status for every changed or untracked file (empty: clean)."""
+    """path -> content hash for every tracked and every untracked-not-ignored file ('' when it is gone)."""
+    import hashlib
+
     state: Dict[str, str] = {}
+    for path in set(_listed(repo)) | set(_listed(repo, "--others", "--exclude-standard")):
+        full = repo / path
+        try:
+            state[path] = hashlib.sha1(full.read_bytes()).hexdigest() if full.is_file() else ""
+        except OSError:
+            state[path] = ""
+    return state
+
+
+def dirty_paths(repo: Path) -> set:
+    """Paths git already showed as changed or untracked before the CLI ran: not ours to revert."""
+    found = set()
     for line in _git(repo, "status", "--porcelain", "--untracked-files=all").splitlines():
         if len(line) > 3:
             path = line[3:]
             if " -> " in path:
                 path = path.split(" -> ", 1)[1]
-            state[path.strip().strip('"')] = line[:2]
-    return state
+            found.add(path.strip().strip('"'))
+    return found
 
 
 def touched_files(before: Dict[str, str], after: Dict[str, str]) -> List[str]:
-    """Files whose git status changed during the CLI run (edited, created, deleted)."""
-    return sorted(path for path in set(before) | set(after) if before.get(path) != after.get(path))
+    """Files whose content changed during the CLI run (edited, created, deleted)."""
+    return sorted(path for path in set(before) | set(after) if before.get(path, "") != after.get(path, ""))
 
 
 def forbidden(paths_touched: Sequence[str]) -> List[str]:
     return [path for path in paths_touched if not path.startswith(ALLOWED_ROOTS)]
 
 
-def deleted_tests(after: Dict[str, str], paths_touched: Sequence[str]) -> List[str]:
-    return [path for path in paths_touched if path.startswith("tests/") and "D" in after.get(path, "")]
+def deleted_tests(before: Dict[str, str], after: Dict[str, str], paths_touched: Sequence[str]) -> List[str]:
+    return [path for path in paths_touched if path.startswith("tests/") and before.get(path) and not after.get(path)]
 
 
-def revert(repo: Path, before: Dict[str, str], after: Dict[str, str], paths_touched: Sequence[str],
-           rejected_dir: Path) -> List[str]:
+def revert(repo: Path, dirty_before: set, tracked: set, paths_touched: Sequence[str], rejected_dir: Path) -> List[str]:
     """Put the touched files back as they were before the run; new files move to rejected_dir (never deleted)."""
     notes: List[str] = []
     for path in paths_touched:
         full = repo / path
-        if path in before:
+        if path in dirty_before:
             # Already modified or untracked before the run: the CLI's edit cannot be separated from the earlier
             # one, so the file is kept and named in the report instead of being reverted.
             notes.append("kept (was already changed before the run): " + path)
-        elif after.get(path, "").startswith("??"):
+        elif path not in tracked:
             if full.is_file():
                 target = rejected_dir / path
                 target.parent.mkdir(parents=True, exist_ok=True)
@@ -624,6 +678,8 @@ def fix_code(repo: Path, day: str, causes: Sequence[Dict[str, Any]], plan: Optio
                   check="not run", execute="not applied", ok=False)
         return result
     before = tree_state(repo)
+    dirty_before = dirty_paths(repo)
+    sub_before = submodule_state(repo)
     env_file = repo / ".env"
     env_before = env_file.read_bytes() if env_file.is_file() else None
     baseline, base_tail = run_tests(repo, runner=test_runner)
@@ -662,10 +718,13 @@ def fix_code(repo: Path, day: str, causes: Sequence[Dict[str, Any]], plan: Optio
     result["used"] = run.cli
     result["summary"] = run.output[-2500:]
     after = tree_state(repo)
-    touched = touched_files(before, after)
+    tracked = tracked_files(repo)
+    sub_after = submodule_state(repo)
+    sub_touched = sorted(p for p in set(sub_before) | set(sub_after) if sub_before.get(p) != sub_after.get(p))
+    touched = touched_files(before, after) + sub_touched
     result["files"] = touched
     bad = forbidden(touched)
-    gone = deleted_tests(after, touched)
+    gone = deleted_tests(before, after, touched)
     problems = []
     env_after = env_file.read_bytes() if env_file.is_file() else None
     if env_after != env_before:
@@ -695,14 +754,21 @@ def fix_code(repo: Path, day: str, causes: Sequence[Dict[str, Any]], plan: Optio
         "no forbidden path, no deleted test" if not problems else "; ".join(problems))) if touched else \
         "%s answered but changed no file" % run.cli
     if problems:
-        undone = revert(repo, before, after, touched, folder / "rejected")
+        rejected = _git(repo, "diff", "--", *[p for p in touched if p in tracked])
+        for sub in {s for s in submodule_paths(repo) if any(p.startswith(s + "/") for p in sub_touched)}:
+            rejected += "\n--- submodule %s ---\n%s" % (sub, _git(repo / sub, "diff"))
+        if rejected.strip():
+            (folder / "rejected.patch").write_text(rejected, encoding="utf-8")
+            result["rejected_patch"] = str(folder / "rejected.patch")
+        undone = revert(repo, dirty_before, tracked, [p for p in touched if p not in sub_touched], folder / "rejected")
+        undone += revert_submodules(repo, sub_touched, folder / "rejected")
         result["reverted"] = undone
         trail.add("Code changes through a coding CLI", research=research, verify=verify, check=check,
                   execute="reverted every file the CLI changed (new files kept under %s)" % (folder / "rejected"), ok=False)
         return result
     if touched:
-        patch = _git(repo, "diff", "--", *[p for p in touched if p in before or not after.get(p, "").startswith("??")])
-        untracked = [p for p in touched if after.get(p, "").startswith("??")]
+        patch = _git(repo, "diff", "--", *[p for p in touched if p in tracked])
+        untracked = [p for p in touched if p not in tracked and after.get(p)]
         for path in untracked:
             try:
                 patch += "\n--- new file: %s ---\n%s" % (path, (repo / path).read_text(encoding="utf-8")[:20000])
