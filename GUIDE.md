@@ -804,6 +804,22 @@ What is board-specific lives in that bot's `board.py`: one `Board` record with i
 addresses, profile page, job-link pattern and the words on its Apply and Applied buttons. A new board is
 a new `<name>_bot/` package with the same files and one line in `BOARDS` in `sites_bot/platforms.py`.
 
+### Funnel audit: why nobody is calling
+
+`python3 -m diagnose` answers "I applied everywhere and heard nothing" from the records rather than from
+guesses. It is read-only: it opens the ledger and every backup copy, the company-site ledger, saved answers,
+profile, resume, employer replies, the Cutshort questionnaire journal; then the Gmail account over IMAP
+(All Mail and Spam, headers first, `GMAIL_APP_PASSWORD` or `REPLY_INBOXES=address:app-password`); then
+each board's own applied, activity and inbox pages in the saved browser profiles (`--skip-browser` while
+the dashboard or a bot holds them; a site that is `locked` or `needs_sign_in` is reported, never forced).
+It never applies, sends or clicks a form. It writes `user/reports/<date>/diagnostics.md` with the verdict
+(were there replies the pipeline missed?), the causes ranked critical to low — each with the numbers behind
+it and the fix as an `.env` value, a code change, a saved answer, a resume line or a skill — plus
+`diagnostics.json` and `diagnostics/<site>-<page>.txt`, the visible text of every page read, as evidence.
+Flags: `--days 45`, `--skip-mail`, `--skip-browser`, `--sites naukri,hirist`, `--no-llm` (rules only).
+In the pipeline it is the `diagnose` stage (browser skipped, final); the Claude skill
+`.claude/skills/job-search-diagnostics/SKILL.md` explains how to turn each cause into a change.
+
 ### Cold emails to recruiters (drafts only)
 
 - **Who gets one:** only an address a company published for applications: a posting's text, a career

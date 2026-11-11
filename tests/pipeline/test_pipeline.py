@@ -289,7 +289,8 @@ def test_stage_order_and_selection():
     assert names == ["learn", "profile:naukri", "profile:linkedin", "profile:hirist", "profile:instahyre",
                      "apply:naukri",
                      "apply:hirist", "apply:instahyre", "research:resume", "brief:goal",
-                     "brief:system-design", "brief:papers", "brief:tech-news", "brief:companies", "brief:repositories", "research:companies"]
+                     "brief:system-design", "brief:papers", "brief:tech-news", "brief:companies", "brief:repositories",
+                     "diagnose", "research:companies"]
     stages = run.build_stages(_args(), ["hirist"])
     assert [s.name for s in run.selected(stages, ["profile"], [])] == ["profile:naukri", "profile:linkedin",
                                                                        "profile:hirist"]
