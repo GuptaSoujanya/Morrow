@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 from urllib.parse import parse_qs, unquote, urlsplit, quote
 
-from . import state
+from . import state, waiting
 from .state import Command
 from .runner import BatchCommand, Runner
 
@@ -671,6 +671,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.json(report_json(query.get("day", "")))
             elif route == "/api/diagnostics":
                 self.json(diagnostics_json(query.get("day", "")))
+            elif route == "/api/waiting":
+                self.json(waiting.waiting_json(query))
             elif route == "/api/file":
                 self.json(file_json(query.get("name", "")))
             else:
