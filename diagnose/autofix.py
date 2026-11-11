@@ -1,10 +1,11 @@
 """python3 -m diagnose.autofix [--day YYYY-MM-DD] [--cli auto|opencode|claude|kiro] [--no-settings] [--no-answers]
-                             [--no-code] [--dry-run] [--timeout 1800] [--env PATH] [-v]
+                             [--no-code] [--dry-run] [--timeout 3600] [--env PATH] [-v]
 
 Turns the day's funnel audit (user/reports/<day>/diagnostics.json) into changes.
 
 Three kinds of fix, each researched, verified, checked and only then executed, and every
-step written down in user/reports/<day>/autofix.md and autofix.json:
+step written down in user/reports/<day>/autofix.md and autofix.json (a dry run writes
+autofix.dry-run.md and .json instead, so the record of a real run is never replaced):
 
 * settings — the `.env` values the causes name (MIN_SCORE, EXCLUDE_TITLES, MAX_YEARS_OVER,
   TARGET_APPLICATIONS, DAILY_QUOTA, MAX_CANDIDATES); applied here, by this code, with the old
@@ -42,6 +43,9 @@ logger = logging.getLogger("diagnose.autofix")
 
 MD_NAME = "autofix.md"
 JSON_NAME = "autofix.json"
+# A dry run must never replace the record of a real run, so it reports under its own names.
+DRY_MD_NAME = "autofix.dry-run.md"
+DRY_JSON_NAME = "autofix.dry-run.json"
 FOLDER = "autofix"
 
 CLIS = ("opencode", "claude", "kiro")
@@ -677,6 +681,12 @@ def fix_code(repo: Path, day: str, causes: Sequence[Dict[str, Any]], plan: Optio
                   verify="%s is not a git work tree, so the CLI's edits could not be checked or reverted" % repo,
                   check="not run", execute="not applied", ok=False)
         return result
+    if dry_run:
+        result["prompt"] = build_prompt(repo, day, tasks)
+        trail.add("Code changes through a coding CLI", research=research,
+                  verify="dry run: the tree and the test baseline were not read", check="dry run",
+                  execute="dry run: would hand %d tasks to %s" % (len(tasks), clis[0]), ok=True)
+        return result
     before = tree_state(repo)
     dirty_before = dirty_paths(repo)
     sub_before = submodule_state(repo)
@@ -693,10 +703,6 @@ def fix_code(repo: Path, day: str, causes: Sequence[Dict[str, Any]], plan: Optio
         return result
     prompt = build_prompt(repo, day, tasks)
     result["prompt"] = prompt
-    if dry_run:
-        trail.add("Code changes through a coding CLI", research=research, verify=verify, check="dry run",
-                  execute="dry run: would hand %d tasks to %s" % (len(tasks), clis[0]), ok=True)
-        return result
     folder.mkdir(parents=True, exist_ok=True)
     (folder / "prompt.txt").write_text(prompt, encoding="utf-8")
     run: Optional[CliRun] = None
@@ -879,7 +885,10 @@ def build_markdown(day: str, payload: Dict[str, Any]) -> str:
 
 def write(folder: Path, day: str, payload: Dict[str, Any]) -> Dict[str, str]:
     folder.mkdir(parents=True, exist_ok=True)
-    md_path, json_path = folder / MD_NAME, folder / JSON_NAME
+    if payload.get("dry_run"):
+        md_path, json_path = folder / DRY_MD_NAME, folder / DRY_JSON_NAME
+    else:
+        md_path, json_path = folder / MD_NAME, folder / JSON_NAME
     with locked_file(md_path) as target:
         atomic_write_text(target, build_markdown(day, payload))
     with locked_file(json_path) as target:
@@ -970,15 +979,21 @@ def main(argv: Optional[List[str]] = None) -> int:
     except Exception:  # noqa: BLE001
         logger.exception("The fix run failed")
         return EXIT_FAILED
-    print("Report:", payload["paths"]["markdown"])
+    dry = bool(payload.get("dry_run"))
+    print("Report:", payload["paths"]["markdown"], "(dry run: nothing was changed)" if dry else "")
     changes = (payload.get("settings") or {}).get("changes") or {}
-    print("Settings changed:", ", ".join("%s=%s" % (k, v["value"]) for k, v in changes.items()) or "none")
+    print("Settings %s:" % ("that would change" if dry else "changed"),
+          ", ".join("%s=%s" % (k, v["value"]) for k, v in changes.items()) or "none")
     answers = payload.get("answers") or {}
-    print("Answers fixed:", len(answers.get("rewritten") or []) + len(answers.get("deleted") or []))
+    print("Answers %s:" % ("that would be fixed" if dry else "fixed"),
+          len(answers.get("rewritten") or []) + len(answers.get("deleted") or []))
     code = payload.get("code") or {}
     if code.get("tasks"):
-        print("Code: %d tasks -> %s%s" % (len(code["tasks"]), code.get("used") or "no CLI succeeded",
-                                         ("; files: " + ", ".join(code["files"])) if code.get("files") else ""))
+        if dry:
+            print("Code: %d tasks -> dry run, no CLI ran" % len(code["tasks"]))
+        else:
+            print("Code: %d tasks -> %s%s" % (len(code["tasks"]), code.get("used") or "no CLI succeeded",
+                                             ("; files: " + ", ".join(code["files"])) if code.get("files") else ""))
     if payload["failed_steps"]:
         print("Steps that failed their check:", ", ".join(payload["failed_steps"]))
     return EXIT_OK

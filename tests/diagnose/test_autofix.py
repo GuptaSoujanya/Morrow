@@ -245,9 +245,13 @@ def test_fix_code_without_a_cli_or_baseline_changes_nothing(tmp_path):
                      cli_runner=lambda *a: (0, "x", ""), test_runner=lambda c, w, t: (2, "pytest: error"))
     assert not trail.steps[-1].ok and "test baseline" in trail.steps[-1].check
     trail = Trail()
+
+    def never(*args):
+        raise AssertionError("a dry run must start neither a CLI nor the test-suite")
     result = autofix.fix_code(repo, "2026-11-11", CAUSES, {}, trail, clis=["claude"], timeout_s=5, dry_run=True, folder=tmp_path / "w",
-                              cli_runner=lambda *a: (0, "x", ""), test_runner=lambda c, w, t: (0, "ok"))
+                              cli_runner=never, test_runner=never)
     assert trail.steps[-1].ok and "dry run" in trail.steps[-1].execute and "prompt" in result
+    assert not (tmp_path / "w").exists()
 
 
 def test_run_cli_records_timeouts_and_missing_binaries(tmp_path):
@@ -290,7 +294,10 @@ def test_main_turns_autofix_false_into_a_dry_run(tmp_path, monkeypatch):
     monkeypatch.setattr(autofix.config, "load_settings", lambda path: SimpleNamespace(
         report_dir=str(reports), db_path=str(tmp_path / "none.db"), data_dir=str(tmp_path), autofix=False))
     monkeypatch.setattr("common.profile.load_profile", lambda s: SimpleNamespace(current_location="Gurugram", preferred_locations=[]))
+    (reports / "2026-11-11" / "autofix.json").write_text('{"dry_run": false, "generated_at": "2026-11-11T14:34"}')
     assert autofix.main(["--env", str(env), "--no-code"]) == 0
     assert env.read_text() == "MIN_SCORE=30\nAUTOFIX=false\n"
-    assert json.loads((reports / "2026-11-11" / "autofix.json").read_text())["dry_run"] is True
+    assert json.loads((reports / "2026-11-11" / "autofix.dry-run.json").read_text())["dry_run"] is True
+    assert "(dry run)" in (reports / "2026-11-11" / "autofix.dry-run.md").read_text()
+    assert json.loads((reports / "2026-11-11" / "autofix.json").read_text()) == {"dry_run": False, "generated_at": "2026-11-11T14:34"}
     assert autofix.main(["--env", str(env), "--day", "bad"]) == autofix.EXIT_CONFIG

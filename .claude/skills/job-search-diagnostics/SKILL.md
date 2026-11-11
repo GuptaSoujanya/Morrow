@@ -83,7 +83,7 @@ checked", JSON key `trail`). A step whose check fails keeps the rules' result.
 | `answers` (location answers saying Others/Remote/Any) | Morrow itself, from `profile.yaml` | refuses when the profile has no city; cached rows deleted so the bot re-learns |
 | `code` causes and the plan's code lines | a coding CLI: opencode → claude → kiro (`AUTOFIX_CLI`, `--cli`) | may edit bot packages and tests only; tests must not get worse; no test deleted; otherwise every change reverted; never committed |
 
-Dry run with `--dry-run` (or `AUTOFIX=false` in `.env`). A CLI that hangs usually has a stale proxy in its
+Dry run with `--dry-run` (or `AUTOFIX=false` in `.env`); it reads neither the tree nor the test baseline and writes `autofix.dry-run.md`, never `autofix.md`. A CLI that hangs usually has a stale proxy in its
 environment; the report lists `ANTHROPIC_BASE_URL`-style variables that were set.
 
 ## Benchmarks to quote

@@ -843,8 +843,9 @@ Kiro** (`AUTOFIX_CLI=claude,kiro` reorders or restricts; `--cli` for one run), w
 packages and tests only. Afterwards the test-suite must do no worse than before, no test may be gone and no
 forbidden path (`.env`, `user/`, the dashboard, `.git`) touched, or every file the CLI changed is reverted
 (new files are kept under `autofix/rejected/`). The diff is saved as `autofix/changes.patch`; nothing is
-committed. `AUTOFIX=false` keeps the stage as a report of what would change (`--dry-run` for one run);
-`--no-settings`, `--no-answers`, `--no-code` leave one kind alone; `--timeout 1800` bounds the CLI.
+committed. `AUTOFIX=false` keeps the stage as a report of what would change (`--dry-run` for one run),
+written to `autofix.dry-run.md` so the record of a real run is never replaced;
+`--no-settings`, `--no-answers`, `--no-code` leave one kind alone; `--timeout 3600` (or `AUTOFIX_TIMEOUT_S`) bounds the CLI.
 In the pipeline it is the `autofix` stage, right after `diagnose`. If a CLI hangs, look at the proxy
 variables the report names (`ANTHROPIC_BASE_URL` and the like): a stale one in the shell that started
 Morrow stops the CLI from reaching its model.
