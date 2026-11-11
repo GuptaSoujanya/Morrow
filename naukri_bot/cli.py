@@ -28,6 +28,7 @@ from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional, Set
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from common.models import (
     ApplyResult,
@@ -59,6 +60,12 @@ REFUSAL_COOLOFF_S = 90
 # Accenture listed 34 roles in one run and each failed the same way, taking the
 # whole company-site budget, so a second identical failure retires the company.
 SITE_FAILURES_PER_COMPANY = 2
+#: Days a job stays held once its questionnaire stopped at a question nobody has
+#: answered since. Every retry spends a Naukri slot and ends at the same question.
+QUESTION_HOLD_DAYS = 7
+#: Naukri's own per-account allowance, used for the "frees at" estimate when
+#: DAILY_QUOTA=0 leaves the bot without a ceiling of its own.
+NAUKRI_ACCOUNT_QUOTA = 50
 
 # Generic resume words that make terrible job-search keywords on their own.
 _WEAK_KEYWORDS = {
@@ -560,6 +567,28 @@ def _log_summary(summary: RunSummary, settings: Settings) -> None:
     logger.info("=" * 70)
 
 
+def _still_unanswered(ledger: Any, settings: Settings) -> Set[str]:
+    from common import answers as answers_module
+
+    stopped = ledger.stopped_at_question(QUESTION_HOLD_DAYS * 24)
+    if not stopped:
+        return set()
+    book = answers_module.AnswerBook(answers_module.answers_file_path(settings))
+    return {job_id for job_id, question in stopped.items() if book.answer_for(question) is None}
+
+
+def _quota_frees_text(ledger: Any, settings: Settings, slots: int = 1) -> str:
+    cap = settings.daily_quota if settings.daily_quota > 0 else NAUKRI_ACCOUNT_QUOTA
+    frees_at = ledger.quota_frees_at(cap, slots)
+    if frees_at is None:
+        return ""
+    try:
+        local = frees_at.astimezone(ZoneInfo(settings.run_timezone or "Asia/Kolkata"))
+    except (ValueError, ZoneInfoNotFoundError):
+        local = frees_at
+    return " By this ledger's count the next slot frees at %s." % local.strftime("%H:%M %Z on %a")
+
+
 def _tally(summary: RunSummary, result: ApplyResult) -> None:
     summary.results.append(result)
     summary.attempted += 1
@@ -638,7 +667,7 @@ def run(
                 return summary
             logger.warning(
                 "Daily quota already exhausted; this run applies on company sites only "
-                "(up to %d).", settings.external_apply_limit,
+                "(up to %d).%s", settings.external_apply_limit, _quota_frees_text(ledger, settings),
             )
 
         wanted = settings.target_applications
@@ -771,7 +800,7 @@ def run(
             ranked, settings, ledger.has_applied, source="Naukri"
         )
         facts = answers_module.facts_fingerprint(profile, settings)
-        waiting = ledger.waiting_on_you(facts)
+        waiting = ledger.waiting_on_you(facts) | _still_unanswered(ledger, settings)
         held = [scored for scored in selected if scored.job.job_id in waiting]
         summary.held_back = len(held)
         if held:
@@ -1007,11 +1036,13 @@ def run(
                     # share it, so those postings are still worth the rest of the run.
                     naukri_open = False
                     logger.warning(
-                        "Naukri reports the daily quota is exhausted; going on with company sites only."
+                        "Naukri reports the daily quota is exhausted; going on with company sites only.%s",
+                        _quota_frees_text(ledger, settings),
                     )
                 else:
                     logger.warning(
-                        "Naukri reports the daily quota is exhausted. Stopping."
+                        "Naukri reports the daily quota is exhausted. Stopping.%s",
+                        _quota_frees_text(ledger, settings),
                     )
                     break
             refused_in_a_row = (

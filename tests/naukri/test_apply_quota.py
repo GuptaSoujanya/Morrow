@@ -122,3 +122,65 @@ def test_a_quota_refusal_after_the_questionnaire_stops_naukri_instead_of_reading
     assert result.status == ApplyStatus.QUOTA_EXPIRED, result.detail
     assert result.status in ApplyStatus.TERMINAL
     assert result.questions_answered == 3 and not result.quota_consumed
+
+
+def _page_that_accepted(status):
+    class _Page:
+        def execute_script(self, script, *args):
+            if script is apply_module._WATCH_APPLY_SCRIPT:
+                return True
+            return status
+    return _Page()
+
+
+def _stub_job_page(monkeypatch):
+    class _Button:
+        def click(self):
+            pass
+
+    monkeypatch.setattr(apply_module, "safe_get", lambda driver, url: True)
+    monkeypatch.setattr(apply_module, "_on_job_page", lambda driver: True)
+    monkeypatch.setattr(apply_module, "_looks_logged_out", lambda driver: False)
+    monkeypatch.setattr(apply_module, "_wait_for_apply_controls", lambda driver: True)
+    monkeypatch.setattr(apply_module, "classify_apply_button", lambda driver: (_Button(), "native"))
+    monkeypatch.setattr(apply_module, "_visible_message", lambda driver, xpath: "")
+    monkeypatch.setattr(apply_module, "_find_visible", lambda driver, by, selector: object())
+    monkeypatch.setattr(apply_module, "verify_applied", lambda driver: (False, "no confirmation"))
+    monkeypatch.setattr(apply_module, "_reload_and_check_applied", lambda driver, job: "")
+
+
+@pytest.mark.parametrize("accepted, spent", [
+    ({"status": 200, "message": "", "body": '{"status":"success"}'}, True),
+    (None, False),
+])
+def test_a_questionnaire_abandoned_after_naukri_took_the_click_still_spent_the_slot(monkeypatch, tmp_path, accepted, spent):
+    """Naukri debits the day's allowance when it accepts the Apply click, not when the
+    questionnaire ends. Recorded as free, the same unanswerable job was clicked again on
+    every run of 2026-11-05: 22 of the day's 49 slots went to seven jobs that never applied."""
+    from common.models import ChatbotOutcome, JobPosting, Profile, Settings
+
+    _stub_job_page(monkeypatch)
+    question = "How many years of experience do you have in AI Agents?"
+    monkeypatch.setattr(apply_module, "handle_chatbot",
+                        lambda driver, profile, engine, settings: ChatbotOutcome(False, 1, 1, question))
+    job = JobPosting("j2", "https://www.naukri.com/job-listings-j2", title="AI Engineer", company="Acme")
+
+    result = apply_module.apply_to_job(_page_that_accepted(accepted), job, Profile(full_name="T"), object(),
+                                       Settings(dry_run=False, data_dir=str(tmp_path)))
+
+    assert result.status == ApplyStatus.ABSTAINED and result.detail == question
+    assert result.quota_consumed is spent
+
+
+def test_a_stalled_questionnaire_after_an_accepted_click_spent_the_slot_too(monkeypatch, tmp_path):
+    from common.models import ChatbotOutcome, JobPosting, Profile, Settings
+
+    _stub_job_page(monkeypatch)
+    monkeypatch.setattr(apply_module, "handle_chatbot",
+                        lambda driver, profile, engine, settings: ChatbotOutcome(False, 0, 0, "stalled; question='In which domain?' controls={}"))
+    job = JobPosting("j3", "https://www.naukri.com/job-listings-j3", title="AI Engineer", company="Acme")
+
+    result = apply_module.apply_to_job(_page_that_accepted({"status": 200, "message": "", "body": ""}), job,
+                                       Profile(full_name="T"), object(), Settings(dry_run=False, data_dir=str(tmp_path)))
+
+    assert result.status == ApplyStatus.CHATBOT_TIMEOUT and result.quota_consumed

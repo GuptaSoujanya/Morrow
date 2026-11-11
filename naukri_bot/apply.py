@@ -257,6 +257,24 @@ def _server_refusal(driver: WebDriver) -> Tuple[str, str]:
     return ApplyStatus.NAUKRI_REFUSED, "Naukri says: %s (%d)" % (message or "no reason given", code)
 
 
+def _server_accepted(driver: WebDriver) -> bool:
+    """Whether Naukri's apply call answered 2xx to the Apply click.
+
+    That answer is when Naukri debits the day's allowance, before any questionnaire
+    opens, so an application that then stops at a question has still spent a slot.
+    """
+    try:
+        recorded = driver.execute_script("return window.__morrowApply")
+    except WebDriverException:
+        return False
+    if not isinstance(recorded, dict) or not recorded.get("status"):
+        return False
+    try:
+        return 200 <= int(recorded["status"]) < 300
+    except (TypeError, ValueError):
+        return False
+
+
 def _visible_message(driver: WebDriver, xpath: str) -> str:
     for element in driver.find_elements(By.XPATH, xpath):
         if element.is_displayed():
@@ -500,12 +518,16 @@ def apply_to_job(
                 refused, said = _server_refusal(driver)
                 if refused:
                     return _result(job, refused, said, False, outcome.answered, outcome.abstained)
+                # Naukri took the slot when it accepted the click; a questionnaire
+                # left unfinished does not give it back, so the ledger must count it
+                # or the next run spends another slot on the same question.
+                accepted = _server_accepted(driver)
                 if outcome.abstained > 0:
                     return _result(
                         job,
                         ApplyStatus.ABSTAINED,
                         outcome.reason,
-                        False,
+                        accepted,
                         outcome.answered,
                         outcome.abstained,
                     )
@@ -514,7 +536,7 @@ def apply_to_job(
                         job,
                         ApplyStatus.CHATBOT_TIMEOUT,
                         outcome.reason,
-                        False,
+                        accepted,
                         outcome.answered,
                         outcome.abstained,
                     )
@@ -539,7 +561,7 @@ def apply_to_job(
                     job,
                     status,
                     detail,
-                    verified,
+                    verified or accepted,
                     outcome.answered,
                     outcome.abstained,
                 )
@@ -574,6 +596,7 @@ def apply_to_job(
             ApplyStatus.ERROR,
             "application outcome was not verified (url=%s, controls=%s)"
             % (_safe_url(driver) or "unknown", controls or "none"),
+            _server_accepted(driver),
         )
     except (
         TimeoutException,

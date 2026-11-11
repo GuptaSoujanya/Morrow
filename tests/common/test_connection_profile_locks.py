@@ -154,7 +154,8 @@ def test_local_hostnames_collect_every_name_macos_can_write(monkeypatch):
             self.stdout = stdout
             self.returncode = 0
 
-    answers = {"LocalHostName": "Soujanya-Mac\n", "ComputerName": "Soujanya Mac\n", "HostName": "HostName: not set\n"}
+    answers = {"LocalHostName": "Soujanya-Mac\n", "ComputerName": "Soujanya Mac\n", "HostName": "HostName: not set\n",
+               "hw.model": "MacBookPro18,1\n"}
 
     def fake_run(argv, **kwargs):
         return Done(answers[argv[-1]])
@@ -190,3 +191,22 @@ def test_foreign_lock_error_does_not_claim_browser_is_running(profile, monkeypat
     assert "old-machine" in str(error.value)
     assert "may be stale" in str(error.value)
     assert "already open" not in str(error.value)
+
+
+def test_model_name_fallback_hostname_counts_as_local(monkeypatch):
+    class Done:
+        returncode = 0
+
+        def __init__(self, stdout):
+            self.stdout = stdout
+
+    def fake_run(cmd, **_):
+        if cmd[0] == "sysctl":
+            return Done("MacBookPro18,1\n")
+        return Done("Soujanya-Mac\n")
+
+    monkeypatch.setattr(connections.socket, "gethostname", lambda: "Soujanya-Mac.local")
+    monkeypatch.setattr(connections.subprocess, "run", fake_run)
+    names = connections.local_hostnames()
+    assert "macbookpro" in names
+    assert "soujanya-mac" in names and "soujanya-mac.local" in names

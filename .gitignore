@@ -95,3 +95,5 @@ user/
 database/
 .env.*
 !.env.example
+brag-output-2026-11-04-142032/
+launch-kit/

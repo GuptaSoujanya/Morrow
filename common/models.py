@@ -77,7 +77,8 @@ class ScoredJob:
 class ApplyStatus:
     """Outcome of a single apply attempt.
 
-    Only APPLIED consumes Naukri quota. EXTERNAL_SKIPPED exists because Naukri's
+    Only APPLIED counts as an application; any status in MAY_CONSUME_QUOTA can
+    still have spent a Naukri slot (see there). EXTERNAL_SKIPPED exists because Naukri's
     "Apply on company site" button navigates off-site and applies to nothing on
     Naukri -- the legacy scripts counted that as success, which is why their
     counters drifted from the real 50/day quota.
@@ -112,6 +113,14 @@ class ApplyStatus:
 
     #: Statuses that mean a Naukri application was really submitted.
     CONSUMES_QUOTA = (APPLIED,)
+
+    #: Statuses a result may carry with quota_consumed=True. Naukri debits its
+    #: daily allowance the moment it accepts the Apply click, before the
+    #: questionnaire opens, so a questionnaire that was abandoned (ABSTAINED,
+    #: CHATBOT_TIMEOUT) or whose outcome could not be read (ERROR) has still
+    #: spent the slot. On 2026-11-05, 22 such retries plus 27 applications made
+    #: up the whole 50-slot day.
+    MAY_CONSUME_QUOTA = (APPLIED, ABSTAINED, CHATBOT_TIMEOUT, ERROR)
 
     #: Statuses that mean "stop the run immediately".
     TERMINAL = (QUOTA_EXPIRED, SESSION_EXPIRED)

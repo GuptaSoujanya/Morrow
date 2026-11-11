@@ -554,3 +554,61 @@ def test_a_daily_quota_below_the_run_target_caps_naukri_and_leaves_the_rest_to_c
 
     assert len(attempted) == 2 and summary.applied == 2 and summary.quota_after == 2
     assert len(sites) == (3 if company_sites else 0)
+
+
+def test_a_job_stopped_at_a_question_waits_for_that_question_not_for_any_answer(fake_naukri, tmp_path, monkeypatch):
+    """Any new answer anywhere used to release every held job, and each retry spent a
+    Naukri slot on the same unanswered question. Only the question itself releases it now."""
+    install, attempted = fake_naukri
+    install([_scored(80.0, 1, "a"), _scored(75.0, 1, "b")], {})
+    question = "How many years of experience do you have in AI Agents?"
+
+    def _apply(driver, job, profile, engine, settings):
+        attempted.append(job.job_id)
+        if job.job_id == "a":
+            stopped = _result(job, ApplyStatus.ABSTAINED)
+            stopped.detail = question
+            stopped.quota_consumed = True
+            return stopped
+        return _result(job, ApplyStatus.APPLIED)
+
+    monkeypatch.setattr(apply_module, "apply_to_job", _apply)
+    answers = tmp_path / "user" / "inputs" / "answers.txt"
+    answers.parent.mkdir(parents=True, exist_ok=True)
+
+    _run(tmp_path, _settings(target_applications=5))
+    assert attempted == ["a", "b"]
+
+    answers.write_text("Q: What is your notice period?\nA: 30 days\n")
+    _run(tmp_path, _settings(target_applications=5))
+    assert attempted == ["a", "b"], "an unrelated answer must not spend another slot on the same question"
+
+    answers.write_text("Q: What is your notice period?\nA: 30 days\n\nQ: %s\nA: 1\n" % question)
+    _run(tmp_path, _settings(target_applications=5))
+    assert attempted == ["a", "b", "a"]
+
+
+def test_the_ledger_counts_spent_slots_and_says_when_they_free(tmp_path):
+    from datetime import datetime, timedelta, timezone
+    from common.ledger import Ledger
+
+    ledger = Ledger(str(tmp_path / "q.db"))
+    assert ledger.quota_frees_at(2) is None
+
+    ledger.record_attempt(_result(_scored(80.0, 1, "a").job, ApplyStatus.APPLIED))
+    abandoned = _result(_scored(80.0, 1, "b").job, ApplyStatus.ABSTAINED)
+    abandoned.detail = "How many years in X?"
+    abandoned.quota_consumed = True
+    ledger.record_attempt(abandoned)
+    stalled = _result(_scored(80.0, 1, "c").job, ApplyStatus.CHATBOT_TIMEOUT)
+    stalled.detail = "stalled; question='In which domain?' controls={'radios': 0}"
+    ledger.record_attempt(stalled)
+
+    assert ledger.quota_used() == 2
+    frees = ledger.quota_frees_at(2)
+    until = frees - datetime.now(timezone.utc)
+    assert timedelta(hours=23, minutes=59) < until <= timedelta(hours=24)
+    assert ledger.quota_frees_at(2, slots=2) >= frees
+    assert ledger.quota_frees_at(3) is None
+    assert ledger.stopped_at_question() == {"b": "How many years in X?", "c": "In which domain?"}
+    ledger.close()

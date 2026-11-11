@@ -6,6 +6,7 @@ import csv
 import json
 import logging
 import os
+import re
 import sqlite3
 import string
 import threading
@@ -28,6 +29,9 @@ class LedgerExportError(ValueError):
 def _now() -> str:
     """Return the current time as a UTC ISO-8601 string."""
     return datetime.now(timezone.utc).isoformat()
+
+
+_STALLED_QUESTION = re.compile(r"question='([^']*)'")
 
 
 def _normalise_question(text: str) -> str:
@@ -316,7 +320,9 @@ class Ledger:
     def record_attempt(
         self, result: ApplyResult, title: str = "", company: str = "", facts: str = ""
     ) -> None:
-        if (result.status == ApplyStatus.APPLIED) != result.quota_consumed:
+        if (result.status == ApplyStatus.APPLIED and not result.quota_consumed) or (
+            result.quota_consumed and result.status not in ApplyStatus.MAY_CONSUME_QUOTA
+        ):
             logger.warning(
                 "inconsistent application result for job %s: status=%s, quota_consumed=%s",
                 result.job_id,
@@ -431,6 +437,56 @@ class Ledger:
 
     def quota_remaining(self, daily_quota: int = 50, window_hours: int = 24) -> int:
         return max(0, daily_quota - self.quota_used(window_hours))
+
+    def quota_frees_at(
+        self, daily_quota: int = 50, slots: int = 1, window_hours: int = 24
+    ) -> Optional[datetime]:
+        """When `slots` of the allowance are free again (UTC); None when they are free now."""
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=window_hours)).isoformat()
+        try:
+            with self._lock:
+                rows = self._connection.execute(
+                    """SELECT at FROM applications
+                       WHERE quota_consumed = ? AND at >= ? ORDER BY at""",
+                    (1, cutoff),
+                ).fetchall()
+        except sqlite3.Error:
+            logger.exception("failed to calculate when the quota frees")
+            raise
+        free_now = daily_quota - len(rows)
+        if free_now >= slots:
+            return None
+        ageing_out = min(slots - free_now, len(rows))
+        if ageing_out <= 0:
+            return None
+        oldest_needed = datetime.fromisoformat(rows[ageing_out - 1]["at"])
+        if oldest_needed.tzinfo is None:
+            oldest_needed = oldest_needed.replace(tzinfo=timezone.utc)
+        return oldest_needed + timedelta(hours=window_hours)
+
+    def stopped_at_question(self, since_hours: int = 24 * 7) -> Dict[str, str]:
+        """job_id -> the questionnaire question its latest attempt stopped at."""
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=since_hours)).isoformat()
+        try:
+            with self._lock:
+                rows = self._connection.execute(
+                    """SELECT a.job_id, a.status, a.detail FROM applications a
+                       WHERE a.id = (SELECT MAX(b.id) FROM applications b WHERE b.job_id = a.job_id)
+                         AND a.status IN (?, ?) AND a.at >= ?""",
+                    (ApplyStatus.ABSTAINED, ApplyStatus.CHATBOT_TIMEOUT, cutoff),
+                ).fetchall()
+        except sqlite3.Error:
+            logger.exception("failed to list applications stopped at a question")
+            raise
+        stopped: Dict[str, str] = {}
+        for row in rows:
+            detail = (row["detail"] or "").strip()
+            if row["status"] == ApplyStatus.CHATBOT_TIMEOUT:
+                found = _STALLED_QUESTION.search(detail)
+                detail = found.group(1).strip() if found else ""
+            if detail:
+                stopped[row["job_id"]] = detail
+        return stopped
 
     def open_per_company(self, days: int = OPEN_APPLICATION_DAYS) -> Dict[str, int]:
         """Open applications per company_key(): sent in the last `days` days, every bot counted.

@@ -131,6 +131,14 @@ def local_hostnames() -> set:
         value = result.stdout.strip()
         if result.returncode == 0 and value and not value.endswith("not set"):
             names.update((value, value + ".local"))
+    # Off the network, macOS answers gethostname() with the model name ("MacBookPro18,1"
+    # becomes "MacBookPro"), which no scutil key records.
+    try:
+        model = subprocess.run(["sysctl", "-n", "hw.model"], capture_output=True, text=True, timeout=2)
+    except (OSError, subprocess.SubprocessError):
+        model = None
+    if model is not None and model.returncode == 0:
+        names.add(re.sub(r"[\d,].*$", "", model.stdout.strip()))
     return {name.casefold() for name in names if name} | {name.casefold().removesuffix(".local") for name in names if name}
 
 
