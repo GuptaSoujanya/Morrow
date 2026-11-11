@@ -19,33 +19,32 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument("--skip-browser", action="store_true", help="Do not open any job board in the saved browser profiles")
     parser.add_argument("--sites", default="naukri,hirist,instahyre,cutshort,wellfound",
                         help="Comma-separated boards to read (default all five)")
-    parser.add_argument("--no-llm", action="store_true", help="Classify mail by rules only; never call the model")
+    parser.add_argument("--no-llm", action="store_true",
+                        help="Rules only: no model-proposed searches, no verification of the rules' verdicts, no review of the causes")
     parser.add_argument("-v", "--verbose", action="store_true")
     return parser.parse_args(argv)
 
 
-def _mail(settings, days: int, use_llm: bool) -> Dict[str, Any]:
-    from common import llm
+def _mail(settings, days: int, client: Any, local: Dict[str, Any], trail) -> Dict[str, Any]:
     from diagnose import gmail
     from sites_bot.accounts import account_email
     from sites_bot.replies import inboxes
 
     account = account_email(settings)
     boxes = inboxes(settings, account)
-    client = llm.build_client(settings) if use_llm else None
     merged: Optional[Dict[str, Any]] = None
     readable = [(address, password) for address, password in boxes if address and password]
     if not readable:
         from diagnose import gmail_browser
 
         logger.info("No Gmail app password; reading Gmail through the signed-in browser profile instead")
-        result = gmail_browser.audit(settings, days, client)
+        result = gmail_browser.audit(settings, days, client, local, trail)
         if result.get("error"):
             result["error"] += " (Or set GMAIL_APP_PASSWORD in .env to read over IMAP without a browser.)"
         return result
     skipped = [address for address, password in boxes if not password]
     for address, password in readable:
-        result = gmail.audit(settings, address, password, days, client)
+        result = gmail.audit(settings, address, password, days, client, local, trail)
         if merged is None:
             merged = result
             if skipped:
@@ -59,6 +58,7 @@ def _mail(settings, days: int, use_llm: bool) -> Dict[str, Any]:
         merged["spam_hiring"] += result["spam_hiring"]
         merged["unplaced"] += result["unplaced"]
         merged["llm_used"] += result["llm_used"]
+        merged["queries"] = merged.get("queries", []) + result.get("queries", [])
         merged["account"] = "%s, %s" % (merged["account"], result["account"])
         for folder, count in result["folders"].items():
             merged["folders"][folder] = merged["folders"].get(folder, 0) + count
@@ -80,22 +80,34 @@ def main(argv: Optional[List[str]] = None) -> int:
     except Exception as exc:
         logger.error("Could not load settings: %s", exc)
         return EXIT_CONFIG
-    from diagnose import local, platforms, report, resume, rootcause
+    from common import llm
+    from diagnose import llm_review, local, platforms, report, resume, rootcause
+    from diagnose.trail import Trail
 
+    trail = Trail()
     try:
+        client = None if args.no_llm else llm.build_client(settings)
+        model = llm_review.Model(client) if client is not None and client.available() else None
+        trail.add("Model backend", research="LLM_BACKEND=%s, timeout %ss per call" % (settings.llm_backend, settings.llm_timeout_s),
+                  verify="the client reports itself %s" % ("available" if model else "unavailable (or --no-llm)"),
+                  check="after %d unanswered calls in a row the model is dropped for the rest of the run" % llm_review.MAX_FAILURES,
+                  execute="model steps %s" % ("run with batched, capped calls" if model else "are skipped; rules decide everything"),
+                  ok=True, available=bool(model))
         logger.info("Reading local ledgers, answers, profile, replies")
         local_data = local.analyse(settings)
         resume_data = resume.analyse(settings, local_data["applications"], local_data["profile"])
         mail_data = None
         if not args.skip_mail:
             logger.info("Reading the mailbox (read-only; IMAP with an app password, else the signed-in browser)")
-            mail_data = _mail(settings, args.days, not args.no_llm)
+            mail_data = _mail(settings, args.days, model, local_data, trail)
         sites_data = None
         if not args.skip_browser:
             wanted = tuple(s.strip() for s in args.sites.split(",") if s.strip())
             sites_data = platforms.read_sites(settings, wanted)
         causes = rootcause.rank(local_data, mail_data, sites_data, resume_data, settings.email)
-        written = report.write(settings, local_data, mail_data, sites_data, resume_data, causes)
+        text = llm_review.digest(local_data, mail_data, sites_data, resume_data, causes)
+        causes, review = llm_review.review_causes(model, text, causes, trail)
+        written = report.write(settings, local_data, mail_data, sites_data, resume_data, causes, review=review, trail=trail.as_dicts())
     except KeyboardInterrupt:
         logger.error("Stopped.")
         return EXIT_FAILED
@@ -107,6 +119,10 @@ def main(argv: Optional[List[str]] = None) -> int:
     print()
     for index, cause in enumerate(causes[:8], 1):
         print("%d. [%s] %s" % (index, cause["severity"].upper(), cause["title"]))
+    failed = trail.failed()
+    if failed:
+        print()
+        print("Model steps that did not pass their check (rules' results kept): %s" % "; ".join(step.name for step in failed))
     return EXIT_OK
 
 

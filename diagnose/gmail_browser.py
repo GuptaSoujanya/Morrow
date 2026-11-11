@@ -18,7 +18,8 @@ from urllib.parse import quote
 
 from common import browser_lanes, connections
 from common.models import Settings
-from diagnose import gmail, mail_rules
+from diagnose import gmail, llm_review
+from diagnose.trail import Trail
 
 logger = logging.getLogger(__name__)
 
@@ -76,19 +77,31 @@ def _rows_for(driver: Any, query: str) -> List[Dict[str, str]]:
     for page in range(1, PAGE_CAP + 1):
         suffix = "" if page == 1 else "/p%d" % page
         driver.get(GMAIL + "#search/" + quote(query) + suffix)
-        time.sleep(WAIT_S)
+        found = _settled_rows(driver)
         if not _signed_in(driver):
             return rows
-        found = driver.execute_script(_ROWS) or []
         fresh = [row for row in found if (row.get("from"), row.get("subject"), row.get("date")) not in seen]
         if not fresh:
             break
         for row in fresh:
             seen.add((row.get("from"), row.get("subject"), row.get("date")))
             rows.append(row)
-        if len(found) < 20:
-            break
     return rows
+
+
+def _settled_rows(driver: Any, timeout_s: float = 10.0) -> List[Dict[str, str]]:
+    """The result rows once Gmail has stopped adding them (two identical reads in a row)."""
+    deadline = time.monotonic() + timeout_s
+    previous: List[Dict[str, str]] = []
+    time.sleep(WAIT_S / 2)
+    while True:
+        found = driver.execute_script(_ROWS) or []
+        if found and len(found) == len(previous):
+            return found
+        previous = found
+        if time.monotonic() > deadline:
+            return found
+        time.sleep(1.0)
 
 
 def _sender(row: Dict[str, str]) -> str:
@@ -96,12 +109,12 @@ def _sender(row: Dict[str, str]) -> str:
     return "%s <%s>" % (name, address) if name and address else address or name
 
 
-def audit(settings: Settings, days: int, llm_client: Any = None) -> Dict[str, Any]:
+def audit(settings: Settings, days: int, llm_client: Any = None, local: Optional[Dict[str, Any]] = None,
+          trail: Optional[Trail] = None) -> Dict[str, Any]:
     """Same result shape as gmail.audit, read from the first signed-in browser profile."""
-    result: Dict[str, Any] = {
-        "account": "", "days": days, "folders": {}, "scanned": 0, "by_platform": {}, "positives": [],
-        "spam_hiring": [], "unplaced": [], "llm_used": 0, "error": "", "via": "browser",
-    }
+    result = gmail.empty_result("", days)
+    result["via"] = "browser"
+    trail = trail if trail is not None else Trail()
     profiles = candidate_profiles(settings)
     if not profiles:
         result["error"] = "No browser profile exists yet; connect Naukri or Google in the dashboard first."
@@ -125,8 +138,7 @@ def audit(settings: Settings, days: int, llm_client: Any = None) -> Dict[str, An
                 continue
             result["account"] = str(driver.execute_script(_ACCOUNT) or "") or ("(signed-in %s profile)" % name)
             result["profile"] = name
-            _sweep(driver, result, days, llm_client)
-            return _finish(result)
+            return _sweep(driver, result, days, llm_client, local or {}, trail)
         finally:
             try:
                 driver.quit()
@@ -136,64 +148,33 @@ def audit(settings: Settings, days: int, llm_client: Any = None) -> Dict[str, An
     return result
 
 
-def _sweep(driver: Any, result: Dict[str, Any], days: int, llm_client: Any) -> None:
-    per_platform: Dict[str, Dict[str, int]] = result["by_platform"]
-    unplaced: List[Tuple[str, Dict[str, str]]] = []
+def _sweep(driver: Any, result: Dict[str, Any], days: int, llm_client: Any, local: Dict[str, Any], trail: Trail) -> Dict[str, Any]:
+    """Folder sweep, targeted searches, model verification, body reads for the rest; then one tally of every record."""
+    model = llm_review.as_model(llm_client)
+    records: List[Dict[str, Any]] = []
     for folder, template in QUERIES:
-        query = template % days
-        rows = _rows_for(driver, query)
+        rows = _rows_for(driver, template % days)
         result["folders"][folder] = len(rows)
         for row in rows:
-            result["scanned"] += 1
-            sender = _sender(row)
-            verdict = mail_rules.classify(sender, row.get("subject") or "")
-            counts = per_platform.setdefault(verdict.platform, {})
-            counts[verdict.kind] = counts.get(verdict.kind, 0) + 1
-            record = {"date": row.get("date") or "", "from": sender[:80], "subject": (row.get("subject") or "")[:120],
-                      "platform": verdict.platform, "kind": verdict.kind, "folder": folder, "rule": verdict.rule}
-            if verdict.positive:
-                result["positives"].append(record)
-            if folder.endswith("spam") and verdict.hiring_related and not mail_rules.is_noise(verdict):
-                result["spam_hiring"].append(record)
-            if verdict.kind == "OTHER" and verdict.hiring_related:
-                unplaced.append((query, row))
-    if llm_client is None or not llm_client.available():
-        return
-    failures = 0
-    for query, row in unplaced[-gmail.MAX_BODY_FETCHES:]:
-        if failures >= gmail.MAX_LLM_FAILURES:
-            logger.warning("The model failed %d times in a row; the remaining %d unplaced mails stay OTHER.",
-                           failures, len(unplaced))
-            break
-        subject = row.get("subject") or ""
-        driver.get(GMAIL + "#search/" + quote('%s subject:"%s"' % (query, subject[:60].replace('"', ""))))
+            records.append(gmail.make_record(folder, _sender(row), row.get("subject") or "", row.get("date") or ""))
+
+    def fetch_rows(query: str) -> List[Dict[str, str]]:
+        return [{"from": _sender(row), "subject": row.get("subject") or "", "date": row.get("date") or ""}
+                for row in _rows_for(driver, query)]
+
+    queries = llm_review.propose_queries(model, local, days, trail)
+    result["queries"] = llm_review.run_queries(fetch_rows, queries, records, gmail.make_record, trail)
+    result["verification"] = llm_review.verify_kinds(model, records, trail)
+
+    def fetch_body(record: Dict[str, Any]) -> str:
+        subject = record["subject"][:60].replace('"', "")
+        driver.get(GMAIL + "#search/" + quote('in:anywhere subject:"%s"' % subject))
         time.sleep(WAIT_S)
         if not driver.execute_script(_OPEN, 0):
-            continue
+            return ""
         time.sleep(WAIT_S / 2)
-        body = str(driver.execute_script(_BODY) or "")[:4000]
-        header = {"from": _sender(row), "date": row.get("date") or "", "subject": subject}
-        judged = gmail._llm_kind(llm_client, header, body)
-        if not judged:
-            failures += 1
-            continue
-        failures = 0
-        result["llm_used"] += 1
-        kind = str(judged["kind"]).upper()
-        platform = mail_rules.platform_of(header["from"])
-        counts = per_platform.setdefault(platform, {})
-        counts["OTHER"] = max(0, counts.get("OTHER", 0) - 1)
-        counts[kind] = counts.get(kind, 0) + 1
-        record = {"date": header["date"], "from": header["from"][:80], "subject": subject[:120], "platform": platform,
-                  "kind": kind, "folder": "search", "rule": "llm", "summary": str(judged.get("summary", ""))[:200]}
-        (result["positives"] if kind in mail_rules.POSITIVE else result["unplaced"]).append(record)
+        return str(driver.execute_script(_BODY) or "")[:4000]
 
-
-def _finish(result: Dict[str, Any]) -> Dict[str, Any]:
-    result["by_platform"] = {platform: dict(sorted(kinds.items(), key=lambda kv: -kv[1]))
-                             for platform, kinds in sorted(result["by_platform"].items())}
-    result["positives"].sort(key=lambda item: item["date"], reverse=True)
-    result["positive_total"] = len(result["positives"])
-    result["positive_by_platform"] = gmail._count(result["positives"], "platform")
-    result["positive_by_kind"] = gmail._count(result["positives"], "kind")
-    return result
+    gmail.read_bodies(model, records, fetch_body, result, trail)
+    result["model"] = model.status() if model else "no model configured"
+    return gmail.tally(result, records)

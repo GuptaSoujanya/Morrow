@@ -171,6 +171,8 @@ def classify(sender: str, subject: str, snippet: str = "") -> Verdict:
         for kind, patterns in _COMPILED:
             if scope == "body" and kind in ("JOB_ALERT", "PROMO"):
                 continue  # Marketing words in a body must not override a real subject.
+            if kind == "REPLY" and automated:
+                continue  # A board's own "Re: <job>" notification is not a person writing back.
             for pattern in patterns:
                 if pattern.search(text):
                     return Verdict(platform, kind, "%s:%s" % (scope, pattern.pattern[:40]), automated, hiring)

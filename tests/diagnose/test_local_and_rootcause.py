@@ -123,3 +123,11 @@ def test_action_plan_groups_fixes_by_who_does_them():
     assert plan["today"] == ["Today: open each board inbox.", "Send 5 mails a day."]
     assert plan["week"] == ["MIN_SCORE=65 in .env."]
     assert plan["code"] == ["Code: add an inbox stage.", "Code: honour min_score in lanes."]
+
+
+def test_action_plan_lists_each_lead_to_answer_first():
+    causes = [{"id": "unanswered-messages", "fix_kind": "code", "fix": ["Today: open inboxes.", "Code: inbox stage."],
+               "evidence": ["[questionnaire] instahyre Shreya: please fill", "The bots never read board inboxes."]}]
+    plan = report.action_plan(causes)
+    assert plan["today"][0] == "Answer: [questionnaire] instahyre Shreya: please fill"
+    assert plan["today"][1] == "Today: open inboxes."

@@ -92,23 +92,67 @@ CODE_KINDS = ("code",)
 def action_plan(causes: List[Dict[str, Any]]) -> Dict[str, List[str]]:
     """Three lists: what to do by hand today, what to change this week, what to change in the bots."""
     plan: Dict[str, List[str]] = {"today": [], "week": [], "code": []}
+
+    def add(group: str, lines) -> None:
+        for line in lines:
+            if line not in plan[group]:
+                plan[group].append(line)
+
     for cause in causes:
         if cause["id"] in ("silence-confirmed", "too-early"):
             continue
         fixes = cause["fix"]
+        if cause["id"] == "unanswered-messages":
+            add("today", ["Answer: %s" % line for line in cause.get("evidence", []) if line.startswith("[")])
+        if cause["id"] == "calls-exist":
+            add("today", ["Answer: %s" % line for line in cause.get("evidence", [])[1:-1]])
         if cause["fix_kind"] in TODAY_KINDS:
-            plan["today"].extend(fixes)
+            add("today", fixes)
         elif cause["fix_kind"] in CODE_KINDS:
-            plan["today"].extend(f for f in fixes if f.lower().startswith("today"))
-            plan["code"].extend(f for f in fixes if not f.lower().startswith("today"))
+            add("today", (f for f in fixes if f.lower().startswith("today")))
+            add("code", (f for f in fixes if not f.lower().startswith("today")))
         else:
-            plan["week"].extend(f for f in fixes if not f.lower().startswith("code:"))
-            plan["code"].extend(f for f in fixes if f.lower().startswith("code:"))
+            add("week", (f for f in fixes if not f.lower().startswith("code:")))
+            add("code", (f for f in fixes if f.lower().startswith("code:")))
     return plan
 
 
+def model_review_lines(review: Optional[Dict[str, Any]], trail: Optional[List[Dict[str, Any]]]) -> List[str]:
+    """The model's second opinion, or the plain statement that there was none."""
+    out = ["## Model review\n"]
+    if not review or not review.get("used"):
+        reason = ""
+        for step in trail or []:
+            if step.get("name") == "Model review of the ranked causes":
+                reason = step.get("check", "")
+        out.append("The model did not review this run (%s). Every cause above comes from the rules and the numbers they quote.\n" % (
+            reason or "no model available"))
+        return out
+    out.append("The model read the same numbers and the ranked causes. Verdict: %s\n" % (review.get("verdict") or "(none given)"))
+    out.append("It agreed with %d causes, disagreed with %d, and added %d of its own (kept only when they quote a number from the data; %d rejected).\n" % (
+        review.get("agreed", 0), review.get("disagreed", 0), review.get("added", 0), review.get("rejected_additions", 0)))
+    if review.get("first_three_actions"):
+        out.append("Its first three actions:")
+        for index, action in enumerate(review["first_three_actions"], 1):
+            out.append("%d. %s" % (index, action))
+        out.append("")
+    return out
+
+
+def trail_lines(trail: Optional[List[Dict[str, Any]]]) -> List[str]:
+    out = ["## How each step was checked\n"]
+    if not trail:
+        out.append("No model steps ran.\n")
+        return out
+    out.append("Every model-assisted step went research → verify → check → execute; a step whose check failed kept the rules' result.\n")
+    out.append(_table(["step", "researched", "verified before asking", "accuracy check", "executed", "passed"],
+                      [[s["name"], s["research"], s["verify"], s["check"], s["execute"], "yes" if s.get("ok") else "**no**"] for s in trail]))
+    return out
+
+
 def build_markdown(local: Dict[str, Any], mail: Optional[Dict[str, Any]], sites: Optional[Dict[str, Any]],
-                   resume: Dict[str, Any], causes: List[Dict[str, Any]]) -> str:
+                   resume: Dict[str, Any], causes: List[Dict[str, Any]], review: Optional[Dict[str, Any]] = None,
+                   trail: Optional[List[Dict[str, Any]]] = None) -> str:
     funnel = local["funnel_all"]
     live = local["funnel_live"]
     out: List[str] = []
@@ -119,11 +163,12 @@ def build_markdown(local: Dict[str, Any], mail: Optional[Dict[str, Any]], sites:
     out.append("")
     top = [c for c in causes if c["severity"] in ("critical", "high")]
     for index, cause in enumerate(top[:6], 1):
-        out.append("%d. **%s** %s" % (index, cause["title"] + ".", PLAIN_WORDS.get(cause["id"], "")))
+        out.append("%d. **%s** %s" % (index, cause["title"] + ".", cause.get("plain") or PLAIN_WORDS.get(cause["id"], "")))
     out.append("")
     out.append("The silence is not bad luck: with normal fit, %d submissions would produce roughly %s to %s interviews. "
                "Each of the points above cuts the chance of a call to near zero on its own, and all of them are present at once.\n" % (
                    funnel["submitted_total"], *_expected(funnel["submitted_total"])))
+    out.extend(model_review_lines(review, trail))
     plan = action_plan(causes)
     out.append("## What to do, in order\n")
     out.append("### Today, by hand\n")
@@ -148,6 +193,8 @@ def build_markdown(local: Dict[str, Any], mail: Optional[Dict[str, Any]], sites:
             out.append("- %s" % line)
         if cause.get("where"):
             out.append("\nWhere: %s" % ", ".join("`%s`" % w for w in cause["where"]))
+        if cause.get("model_note"):
+            out.append("\n_%s_ (confidence now %.2f)" % (cause["model_note"], float(cause.get("confidence", 0))))
         out.append("")
     out.append("## What was read\n")
     out.append(_table(["Ledger", "rows", "new rows merged"],
@@ -179,12 +226,28 @@ def build_markdown(local: Dict[str, Any], mail: Optional[Dict[str, Any]], sites:
     elif mail.get("error"):
         out.append("Not read: %s\n" % mail["error"])
     else:
-        out.append("%s, last %d days, %d messages in %s; model read %d bodies.\n" % (
-            mail["account"], mail["days"], mail["scanned"], mail["folders"], mail["llm_used"]))
+        out.append("%s, last %d days, %d messages in %s; model read %d bodies; model: %s.\n" % (
+            mail["account"], mail["days"], mail["scanned"], mail["folders"], mail["llm_used"], mail.get("model", "not used")))
         rows = []
         for platform, kinds in mail["by_platform"].items():
             rows.append([platform, sum(kinds.values()), ", ".join("%s %d" % kv for kv in kinds.items())])
         out.append(_table(["sender", "mails", "kinds"], rows))
+        if mail.get("queries"):
+            out.append("### Targeted searches (%d)\n" % len(mail["queries"]))
+            out.append("Each search is a filter run inside Gmail; new rows are mails the folder sweep had not listed.\n")
+            out.append(_table(["search", "purpose", "made by", "rows", "new", "positive", "status"],
+                              [[("`%s`" % q["query"][:90]), q.get("purpose", "")[:50], q.get("source", ""), q.get("rows", 0),
+                                q.get("new_rows", 0), q.get("positives", 0), q.get("status", "")] for q in mail["queries"]]))
+        verification = mail.get("verification") or {}
+        if verification.get("used"):
+            out.append("Model verification: %d mails re-judged in %d batches; agreed with the rules on the kind %s of the time and on "
+                       "positive-or-not %s; %d verdicts changed (%d promoted to a positive signal, %d demoted); %d batches distrusted.\n" % (
+                           verification.get("items", 0), verification.get("batches", 0), verification.get("agreement_kind"),
+                           verification.get("agreement_positive"), verification.get("changed", 0), verification.get("promoted", 0),
+                           verification.get("demoted", 0), verification.get("distrusted_batches", 0)))
+        elif verification:
+            out.append("Model verification did not run (%s); the kinds below are the rules' verdicts.\n" % (
+                "the model did not answer" if verification.get("batches") else "no model available"))
         out.append("### Positive signals (%d mails, %d distinct)\n" % (mail["positive_total"], len(grouped_positives(mail["positives"]))))
         out.append(_table(["latest", "platform", "kind", "from", "subject", "mails"],
                           [[g["date"][:16], g["platform"], g["kind"], g["from"][:36], g["subject"][:70], g["count"]]
@@ -236,6 +299,7 @@ def build_markdown(local: Dict[str, Any], mail: Optional[Dict[str, Any]], sites:
             for line in resume["weak_lines"]:
                 out.append("- %s" % line)
             out.append("")
+    out.extend(trail_lines(trail))
     out.append("## Reference points\n")
     out.append(SOURCES + "\n")
     out.append("\n_Read-only audit by `python3 -m diagnose`. Nothing was applied, sent or changed._\n")
@@ -243,12 +307,16 @@ def build_markdown(local: Dict[str, Any], mail: Optional[Dict[str, Any]], sites:
 
 
 def write(settings: Settings, local: Dict[str, Any], mail: Optional[Dict[str, Any]], sites: Optional[Dict[str, Any]],
-          resume: Dict[str, Any], causes: List[Dict[str, Any]], day: Optional[date] = None) -> Dict[str, Path]:
+          resume: Dict[str, Any], causes: List[Dict[str, Any]], day: Optional[date] = None,
+          review: Optional[Dict[str, Any]] = None, trail: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Path]:
     folder = report_dir(settings, day)
-    markdown = build_markdown(local, mail, sites, resume, causes)
+    markdown = build_markdown(local, mail, sites, resume, causes, review, trail)
     payload = {
         "generated_at": local["generated_at"],
         "causes": causes,
+        "plan": action_plan(causes),
+        "review": review or {},
+        "trail": trail or [],
         "local": {key: value for key, value in local.items() if key != "applications"},
         "mail": mail,
         "sites": sites,

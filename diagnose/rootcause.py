@@ -28,6 +28,8 @@ class Cause:
     fix: List[str]
     confidence: float = 0.7
     where: List[str] = field(default_factory=list)
+    plain: str = ""        # the cause in plain words, when the generic PLAIN_WORDS text does not fit
+    model_note: str = ""   # what the model said about this cause on review, if it was asked
 
     def sort_key(self):
         return (SEVERITY_ORDER.get(self.severity, 9), -self.confidence)
@@ -43,6 +45,11 @@ def expected_interviews(submitted: int) -> Dict[str, float]:
             "naukri_only": round(submitted * NAUKRI_SHORTLIST_RATE, 1)}
 
 
+#: Invitations for roles nobody with this profile should chase; they are evidence, not leads.
+JUNK_ROLE = re.compile(r"data entry|mis executive|operator|tester|telecaller|bpo|sales|back office|typist|"
+                       r"\b[0-4](\.\d)? ?- ?[0-5](\.\d)? lpa\b", re.I)
+
+
 def _site_causes(sites: Dict[str, Any], local: Dict[str, Any]) -> List[Cause]:
     causes: List[Cause] = []
     waiting: List[str] = []
@@ -54,6 +61,8 @@ def _site_causes(sites: Dict[str, Any], local: Dict[str, Any]) -> List[Cause]:
         for message in summary.get("messages", []):
             header = " ".join(part for part in (site, message.get("who", "?"), message.get("date", ""), message.get("about", "")) if part)
             line = "%s: %s" % (header, message.get("text", "")[:160])
+            if message.get("action") == "apply-invitation" and JUNK_ROLE.search(message.get("text", "")):
+                continue
             if message.get("action"):
                 waiting.append("[%s] %s" % (message["action"], line))
             if message.get("rejection"):
@@ -74,7 +83,7 @@ def _site_causes(sites: Dict[str, Any], local: Dict[str, Any]) -> List[Cause]:
                 "site-funnel-%s" % site, "high" if not moved else "medium",
                 "%s: %d applications, %d shortlisted or in conversation" % (site, listed, moved),
                 detail, "manual",
-                ["On %s the recruiters who did act chose other applicants: fewer, closer-fit applies, and answer every message the same day." % site],
+                ["Pause %s applies until MIN_SCORE and EXCLUDE_TITLES are fixed, then at most 5 close-fit applies a day there." % site],
                 0.85, data.get("evidence", [])[:2]))
     if waiting:
         causes.append(Cause(
@@ -98,8 +107,7 @@ def _site_causes(sites: Dict[str, Any], local: Dict[str, Any]) -> List[Cause]:
         actions = naukri_facts.get("recruiter_actions", 0)
         statuses = (sites.get("naukri") or {}).get("summary", {}).get("status_counts", {})
         nvites = [m for m in (sites.get("naukri") or {}).get("summary", {}).get("messages", []) if m.get("action") == "apply-invitation"]
-        junk = re.compile(r"data entry|mis executive|operator|tester|telecaller|bpo|sales|back office|typist|\b[0-4](\.\d)? ?- ?[0-5](\.\d)? lpa\b", re.I)
-        junk_nvites = [m["about"] for m in nvites if junk.search(m.get("text", ""))]
+        junk_nvites = [m["about"] for m in nvites if JUNK_ROLE.search(m.get("text", ""))]
         evidence = [
             "Naukri's own profile-performance page: %d search appearances and %d recruiter actions in 90 days; the actions by type: %s." % (
                 appearances, actions, ", ".join("%s %d" % (k.replace("Recruiter action: ", ""), v) for k, v in statuses.items() if k.startswith("Recruiter action")) or "not shown"),
@@ -203,7 +211,7 @@ def rank(local: Dict[str, Any], mail: Optional[Dict[str, Any]], sites: Optional[
                            "Compare the address with %s and NAUKRI_EMAIL in .env." % (mail["account"] or "the mailbox read")],
                 0.75, ["user/inputs/profile.yaml", ".env"]))
         for platform, count in funnel["submitted_by_channel"].items():
-            if platform in ("naukri", "unknown") or count < 10:
+            if platform in ("naukri", "unknown", "other", "instahyre") or count < 10:
                 continue
             kinds = mail["by_platform"].get(platform, {})
             acks = kinds.get("ACKNOWLEDGEMENT", 0) + kinds.get("SHORTLIST", 0) + kinds.get("REJECTION", 0)
@@ -212,9 +220,8 @@ def rank(local: Dict[str, Any], mail: Optional[Dict[str, Any]], sites: Optional[
                     "no-ack-%s" % platform, "high", "%s: %d applications recorded, no application mail at all" % (platform, count),
                     ["Mail from %s in %d days: %s" % (platform, mail["days"], kinds or "none"),
                      "Every board confirms a real application by mail; none means the submissions may not have landed."],
-                    "manual", ["Open %s's applied list (see the platform pages section) and count what it shows." % platform,
-                               "If the board shows fewer applications than the ledger, the %s_bot 'applied' detection is wrong "
-                               "and marks a job applied before the site confirms it." % platform],
+                    "manual", ["Compare %s's own applied list (platform pages section) with the ledger's %d; fewer on the site means "
+                               "%s_bot marks a job applied before the site confirms it." % (platform, count, platform)],
                     0.7, ["%s_bot/" % platform]))
     elif mail and mail.get("error"):
         causes.append(Cause("mail-unread", "medium", "The mailbox could not be read", [mail["error"]], "env",

@@ -65,3 +65,8 @@ def test_interview_marketing_and_google_notices_are_not_interviews():
     assert not mail_rules.classify("Google <no-reply@accounts.google.com>", "You shared some Google Account data with interview-7d0b2.firebaseapp.com").positive
     assert mail_rules.classify("The Goodfit Team <invitations@goodfit.io>", "Goodfit Interview - Login Link").kind == "INTERVIEW"
     assert mail_rules.classify("naukri <naukri@naukri.com>", "You are Shortlisted-Follow the steps to move forward.").kind == "SHORTLIST"
+
+
+def test_board_notification_with_re_prefix_is_not_a_reply():
+    verdict = mail_rules.classify("hirist.tech <noreply@hirist.tech>", "Re: AI Engineer - Enterprise Conversational Platform")
+    assert verdict.kind != "REPLY"
