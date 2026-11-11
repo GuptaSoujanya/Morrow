@@ -41,7 +41,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     common = (["--env", args.env] if args.env else []) + (["-v"] if args.verbose else [])
     common += ["--dry-run"] if args.dry_run else []
     common += ["--limit", str(args.limit)] if args.limit is not None else []
-    wanted = [name.lower() for name in args.only] or ["mail", "naukri", *settings.platforms]
+    boards_on = [name.strip().lower() for name in str(settings.platforms or "").split(",") if name.strip()]
+    wanted = [name.lower() for name in args.only] or ["mail", "naukri", *boards_on]
     worst = EXIT_OK
     for name in wanted:
         if name == "mail":

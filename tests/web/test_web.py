@@ -739,7 +739,7 @@ def test_leads_stages_reserve_the_board_browsers_and_the_gmail_drafts():
     assert "browser:lane:hirist" in hirist and "browser:lane:instahyre" not in hirist
     assert conflicts(hirist, resources("boards", "-m", "sites_bot.platforms", "--site", "hirist"))
     mail = pipeline("--only", "leads")
-    assert "stage:leads:mail" in mail and "email:drafts" in mail and "browser:main" not in mail
+    assert "stage:leads:mail" in mail and "email:drafts" in mail and "browser:main" in mail
     assert conflicts(mail, resources("cold_email", "-m", "sites_bot.cold_email"))
     assert not conflicts(mail, pipeline("--only", "learn"))
 

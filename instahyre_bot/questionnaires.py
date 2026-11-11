@@ -162,7 +162,8 @@ def finish_pending(driver, profile, settings, limit=10):
             workdir.mkdir(parents=True, exist_ok=True)
             atomic_write_text(workdir / "questionnaire-report.json",
                               json.dumps({"url": url, "state": state, "report": report}, indent=2))
-            results.append({"thread": identity, "state": state})
+            results.append({"thread": identity, "state": state, "company": row.get("company", ""),
+                            "title": row.get("title", "")})
             logger.info("Instahyre questionnaire: %s (%s)", state, report.get("why") or run.problem)
         except Exception:
             _record(settings, identity, state="uncertain", folder=str(workdir))

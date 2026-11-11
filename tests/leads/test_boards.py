@@ -183,3 +183,94 @@ def test_main_maps_the_outcome_to_exit_codes(tmp_path, monkeypatch):
     assert boards.main(["--board", "cutshort", "--limit", "1", "--dry-run"]) == EXIT_QUOTA
     assert boards.main(["--board", "naukri"]) == EXIT_LOGIN
     assert seen == [("hirist", 3, False), ("cutshort", 1, True), ("naukri", 3, False)]
+
+
+def test_nvite_misfit_names_junk_excluded_and_over_experienced_invitations():
+    settings = Settings(exclude_titles=["Senior", "SDET"], max_years_over=1.0)
+    profile = Profile(total_experience_years=2.9)
+    junk = {"kind": "RECRUITER_OUTREACH", "title": "Data Entry Operator, Delhi / NCR",
+            "text": "A recruiter invited you to apply: Data Entry Operator (Delhi / NCR, 0 - 4 Years2 - 4 LPA)"}
+    assert "data entry" in boards.nvite_misfit(junk, settings, profile).lower()
+    senior = {"kind": "RECRUITER_OUTREACH", "title": "Senior Backend Engineer, Pune",
+              "text": "A recruiter invited you to apply: Senior Backend Engineer (Pune, 2 - 5 Years20 - 25 LPA)"}
+    assert "Senior" in boards.nvite_misfit(senior, settings, profile)
+    far = {"kind": "RECRUITER_OUTREACH", "title": "AI Engineer, Noida",
+           "text": "A recruiter invited you to apply: AI Engineer (Noida, 6 - 9 Years30 - 40 LPA)"}
+    assert "6+ years" in boards.nvite_misfit(far, settings, profile)
+    low = {"kind": "RECRUITER_OUTREACH", "title": "Junior Data Engineer, Gurugram",
+           "text": "A recruiter invited you to apply: Junior Data Engineer (Gurugram, 1 - 3 Years3 - 5 LPA)"}
+    assert "at most 5 LPA" in boards.nvite_misfit(low, settings, Profile(total_experience_years=2.9, current_ctc_lpa=16))
+    low["text"] = "A recruiter invited you to apply: Python Full stack Developer (Visakhapatnam, 2 - 4 Years1 - 4.5 LPA)"
+    assert "at most 4.5 LPA" in boards.nvite_misfit(low, settings, profile), "5 LPA is the floor when the CTC is unknown"
+    fit = {"kind": "RECRUITER_OUTREACH", "title": "AI Engineer, Noida",
+           "text": "A recruiter invited you to apply: AI Engineer (Noida, 2 - 5 Years20 - 25 LPA)"}
+    assert boards.nvite_misfit(fit, settings, profile) == ""
+    assert boards.nvite_misfit(dict(fit, text="A recruiter invited you to apply: AI Engineer (Noida, 2 - 5 YearsNot disclosed)"),
+                               settings, profile) == ""
+    assert "Apply" in boards.instruction("naukri", fit) and "job_url" in boards.instruction("naukri", fit)
+    assert "Never apply to any job other than this one invitation" in boards.instruction("naukri", fit)
+
+
+NAUKRI_READ = {"state": "read", "message": "", "pages": [], "evidence": [], "summary": {"messages": [
+    {"date": "", "who": "Naukri NVite", "about": "AI Engineer, Noida", "action": "apply-invitation", "rejection": False,
+     "text": "A recruiter invited you to apply: AI Engineer (Noida, 2 - 5 Years20 - 25 LPA)"},
+    {"date": "", "who": "Naukri NVite", "about": "Data Entry Operator, Delhi / NCR", "action": "apply-invitation",
+     "rejection": False, "text": "A recruiter invited you to apply: Data Entry Operator (Delhi / NCR, 0 - 4 Years2 - 4 LPA)"},
+]}}
+
+
+def test_process_board_closes_unfit_nvites_and_hands_the_fit_one_to_the_agent(tmp_path, monkeypatch):
+    settings = _settings(tmp_path)
+    calls = _wire(monkeypatch, read=NAUKRI_READ)
+    counts = boards.process_board(object(), "naukri", settings, Profile(total_experience_years=2.9), 10, False)
+    assert counts["found"] == 2 and counts["skipped"] == 1 and counts["answered"] == 1 and len(calls) == 1
+    by_title = {lead["title"]: lead for lead in store.load(settings).values()}
+    assert by_title["Data Entry Operator, Delhi / NCR"]["state"] == "skipped"
+    assert "data entry" in by_title["Data Entry Operator, Delhi / NCR"]["why"].lower()
+    assert by_title["AI Engineer, Noida"]["state"] == "answered"
+
+
+def test_record_nvite_apply_writes_a_ledger_row_only_with_a_job_address(tmp_path):
+    import sqlite3
+
+    settings = _settings(tmp_path, db_path=str(tmp_path / "ledger.db"))
+    lead = {"id": "board:naukri:abc123", "title": "AI Engineer, Noida", "company": ""}
+    assert boards.record_nvite_apply(settings, lead, {"job_url": ""}) is False
+    assert boards.record_nvite_apply(settings, lead, {"job_url": "https://www.naukri.com/job-listings-ai-engineer-noida-123456789?src=nvite"})
+    rows = sqlite3.connect(settings.db_path).execute("SELECT job_id, status, quota_consumed, title FROM applications").fetchall()
+    assert rows == [("123456789", "applied", 1, "AI Engineer")]
+
+
+def test_mirror_updates_the_lead_the_inbox_page_recorded(tmp_path, monkeypatch):
+    settings = _settings(tmp_path)
+    calls = _wire(monkeypatch, read={"state": "read", "message": "", "pages": [], "evidence": [], "summary": {"messages": [
+        {"date": "Nov 02", "who": "Shreya Rani", "about": "GreyOrange - Software Engineer II",
+         "text": "Please fill the questionnaire", "action": "questionnaire", "rejection": False}]}})
+    import instahyre_bot.questionnaires as iq
+
+    monkeypatch.setattr(iq, "finish_pending", lambda driver, profile, settings, limit: [
+        {"thread": "greyorange|software-engineer-ii", "state": "done", "company": "GreyOrange", "title": "Software Engineer II"}])
+    counts = boards.process_board(object(), "instahyre", settings, Profile(), 10, False)
+    leads = list(store.load(settings).values())
+    assert len(leads) == 1 and leads[0]["company"] == "GreyOrange" and leads[0]["title"] == "Software Engineer II"
+    assert leads[0]["state"] == "answered" and "Instahyre questionnaire: done" in leads[0]["why"]
+    assert counts["questionnaires"] == 1 and calls == []
+
+
+def test_questionnaires_on_a_finisher_board_are_never_handed_to_the_generic_agent(tmp_path, monkeypatch):
+    settings = _settings(tmp_path)
+    read = {"state": "read", "message": "", "pages": [], "evidence": [], "summary": {"messages": [
+        {"date": "5 hours ago", "who": "Techjays", "about": "Senior AI Engineer at Techjays",
+         "text": "Pending questionnaire for Senior AI Engineer", "action": "questionnaire", "rejection": False},
+        {"date": "1 day ago", "who": "Incubyte", "about": "Software Craftsperson at Incubyte",
+         "text": "Could you share your notice period?", "action": "reply", "rejection": False}]}}
+    calls = _wire(monkeypatch, read=read)
+    import cutshort_bot.questionnaires as cq
+
+    monkeypatch.setattr(cq, "finish_pending", lambda driver, profile, settings, limit: [
+        {"thread": "0123456789abcdef01234567", "state": "uncertain", "company": "Techjays", "title": "Senior AI Engineer"}])
+    boards.process_board(object(), "cutshort", settings, Profile(), 10, False)
+    by_company = {lead["company"]: lead for lead in store.load(settings).values()}
+    assert by_company["Techjays"]["state"] == "needs_you", "an uncertain submit waits for a person, not a second Submit"
+    assert by_company["Incubyte"]["state"] == "answered"
+    assert len(calls) == 1 and calls[0] == by_company["Incubyte"]["id"]

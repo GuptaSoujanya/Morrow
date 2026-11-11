@@ -133,6 +133,30 @@ def cutshort_dashboard(text: str) -> Dict[str, Any]:
     return out
 
 
+def cutshort_conversations(text: str) -> Dict[str, Any]:
+    """The conversations list: a company line, 'For job TITLE', when, then the preview ('[Questionnaire]' or words)."""
+    out = _empty()
+    lines = _lines(text)
+    for index, line in enumerate(lines):
+        match = re.match(r"^For job\s+(.+)$", line)
+        if not match or index == 0:
+            continue
+        company = lines[index - 1]
+        if company == "Agency job" and index >= 2:
+            company = lines[index - 2]
+        when = lines[index + 1] if index + 1 < len(lines) else ""
+        preview = lines[index + 2] if index + 2 < len(lines) else ""
+        if re.match(r"^For job\s", preview) or preview in ("Agency job",):
+            preview = ""
+        title = match.group(1).strip()
+        questionnaire = "[questionnaire]" in preview.casefold()
+        snippet = ("Pending questionnaire for %s" % title) if questionnaire else preview[:400]
+        out["messages"].append({"date": when, "who": company, "about": "%s at %s" % (title, company), "text": snippet,
+                                "action": "questionnaire" if questionnaire else _action(preview),
+                                "rejection": bool(REJECTION_WORDS.search(preview))})
+    return out
+
+
 def wellfound_applications(text: str) -> Dict[str, Any]:
     out = _empty()
     lines = _lines(text)
@@ -265,6 +289,7 @@ PARSERS = (
     ("instahyre", re.compile(r"instahyre\.com/candidate/activity"), instahyre_activity),
     ("instahyre", re.compile(r"instahyre\.com/candidate/inbox"), instahyre_inbox),
     ("cutshort", re.compile(r"cutshort\.io/profile/candidate-dashboard"), cutshort_dashboard),
+    ("cutshort", re.compile(r"cutshort\.io/profile/candidate-conversations"), cutshort_conversations),
     ("wellfound", re.compile(r"wellfound\.com/jobs/applications"), wellfound_applications),
     ("wellfound", re.compile(r"wellfound\.com/jobs/messages"), wellfound_messages),
 )

@@ -134,6 +134,49 @@ def test_wellfound_applications_and_messages():
     assert messages["messages"][0]["action"] == "assessment"
 
 
+CUTSHORT_CONVERSATIONS = """Interested in you
+
+Employer actions on your 26 applications
+
+Pending
+25
+Shortlisted
+Closed
+1
+Techjays
+For job Senior AI Engineer
+
+5 hours ago
+
+[Questionnaire]
+Hardwin
+Agency job
+For job Gen-AI Full stack
+
+2 days ago
+
+[Questionnaire]
+Incubyte
+For job Software Craftsperson/Typescript- II
+
+1 day ago
+
+Could you share your notice period and current CTC?
+"""
+
+
+def test_cutshort_conversations_rows_become_messages():
+    parsed = pages.parse("cutshort", "https://cutshort.io/profile/candidate-conversations?i=all&stage=awaiting",
+                         CUTSHORT_CONVERSATIONS)
+    assert [m["who"] for m in parsed["messages"]] == ["Techjays", "Hardwin", "Incubyte"]
+    assert parsed["messages"][0]["about"] == "Senior AI Engineer at Techjays"
+    assert parsed["messages"][0]["action"] == "questionnaire" and parsed["messages"][0]["date"] == "5 hours ago"
+    assert parsed["messages"][1]["who"] == "Hardwin" and "Gen-AI Full stack" in parsed["messages"][1]["text"]
+    assert parsed["messages"][2]["action"] == "reply" and parsed["messages"][2]["text"].startswith("Could you share")
+    assert pages.parse("cutshort", "https://cutshort.io/profile/candidate-conversations?i=all",
+                       "Messages\nNo conversations here.")["messages"] == []
+
+
 def test_summarise_counts_actions_across_pages():
     merged = pages.summarise("instahyre", [
         {"parsed": pages.instahyre_inbox(INSTAHYRE_INBOX)},

@@ -14,7 +14,8 @@ Every feature, command and setting in detail. For the short version, see the [RE
    - Applying: [Naukri](#applying-on-naukri), [Scoring and ranking](#job-scoring-and-ranking),
      [Early Access](#early-access-on-naukri), [The application ledger](#the-application-ledger),
      [Company websites](#company-websites-apply-on-company-site), [Browser agent](#browser-agent-claude-code-takes-over-a-stuck-site),
-     [Other job boards](#other-job-boards-hirist-instahyre-cutshort-wellfound)
+     [Other job boards](#other-job-boards-hirist-instahyre-cutshort-wellfound),
+     [Recruiter leads](#recruiter-leads-questionnaires-inbox-threads-and-hiring-mail-answered-for-you)
    - Your profile and resume: [Profile updater and review](#keeping-the-naukri-profile-recently-updated-and-reviewing-it-everywhere),
      [Resume and tailoring](#your-resume-edit-the-latex-the-bot-does-the-rest), [Your data folder and answers](#your-data-folder-the-files-you-edit)
    - Outreach: [Cold emails](#cold-emails-to-recruiters-drafts-only), [LinkedIn](#linkedin-one-post-a-day)
@@ -391,6 +392,7 @@ browser agent; `--dry-run` signs in, opens the profile and stops. It has no `--h
 
 | Command | Does |
 |---|---|
+| `./scripts/install_apply_scheduler.sh` | launchd agent `com.morrow.apply-scheduler` that keeps `scripts/apply_scheduler.sh` running: apply rounds until the goals are met, and a leads round (board inboxes, questionnaires, Gmail) every `APPLY_LEADS_EVERY_S` seconds; `scripts/apply_scheduler.sh status` shows both |
 | `./scripts/install_profile_updater.sh` | launchd agent `com.naukri-bot.profile-update`, every 15 min, runs `naukri_bot.update_profile --if-due` (slots 09:00, 13:30, 18:30; a review every `PROFILE_REVIEW_DAYS`) |
 | `./scripts/profile_update_status.sh` | is it loaded, which slots ran today, last log lines, and whether macOS is blocking it |
 | `./scripts/install_linkedin_poster.sh` | launchd agent `com.naukri-bot.linkedin-post`, every 30 min, runs `linkedin_bot --if-due` |
@@ -803,6 +805,35 @@ dashboard's **Connections** page, or let `--create-profile` sign in or sign up a
 What is board-specific lives in that bot's `board.py`: one `Board` record with its feed and search
 addresses, profile page, job-link pattern and the words on its Apply and Applied buttons. A new board is
 a new `<name>_bot/` package with the same files and one line in `BOARDS` in `sites_bot/platforms.py`.
+
+### Recruiter leads: questionnaires, inbox threads and hiring mail, answered for you
+
+A **lead** is one thread a recruiter started or answered: a questionnaire on Cutshort or Instahyre,
+a Hirist chat, a Wellfound message, a Naukri NVite, an interview or assessment mail in Gmail. The
+funnel audit found that these arrived and nobody read them, so the pipeline now answers them before
+it applies to anything new. Two stages do it, both writing one journal, `user/inputs/leads.json`:
+
+| Stage | What it reads | What it does |
+|---|---|---|
+| `inbox:<board>` (`python3 -m leads.boards --board hirist`) | The board's own inbox pages in its browser lane: Naukri `/mnjuser/inbox` (NVites), Hirist `/chats`, Instahyre `/candidate/inbox/`, Cutshort conversations, Wellfound `/jobs/messages`. The page text is kept under `user/reports/<date>/leads/`. | Records every thread that asks something as a lead. On Cutshort and Instahyre the board's own questionnaire finisher runs first (`<board>_bot/questionnaires.py`, verified submission, its own journal) and its result lands on the lead. Every other waiting thread goes to the browser agent (`BROWSER_AGENT=true`), which answers it in the thread from your saved facts only. |
+| `leads:mail` (`python3 -m leads.mail`) | Gmail, All Mail and Spam, for the last `LEADS_DAYS` days (30 the first time the journal holds no mail). With an app password (`GMAIL_APP_PASSWORD` or `REPLY_INBOXES=address:password`) over IMAP; without one, through the bot's signed-in browser profile, no password needed. | Classifies each mail (`diagnose/mail_rules.py`), records the hiring-positive ones, reads each body, drafts a reply from your facts (`sites_bot/replies.py`) and sends it: over SMTP, or in the Gmail thread through the browser agent. Board notifications are left to the board's inbox stage. |
+
+What is never done for you: an assessment or coding test (the lead becomes `needs_you` after the
+agent tells the recruiter you will take it), an offer, a reply that needs a fact you have not saved (the
+draft stays in Gmail Drafts and the lead names the missing fact). A Naukri NVite is an invitation to
+apply, so a fit one is applied to (and recorded in the ledger like any Naukri apply) and a junk,
+excluded (`EXCLUDE_TITLES`) or over-experienced one is closed as `skipped` with the reason.
+
+Each lead has a state: `new`, `answered`, `needs_you`, `deferred` (retried after a cooldown or once
+the model's quota window resets), `failed` (retried next run), `skipped`. A thread is answered once:
+the journal keeps the facts fingerprint the answer used, and a `needs_you` lead is tried again only
+after you add facts. The dashboard shows it all under **Why no replies → Leads** (`/api/leads`).
+
+By hand: `python3 -m leads [--only mail|naukri|hirist|...] [--limit N] [--dry-run]`. Settings:
+`LEADS_AUTO_REPLY` (false records and drafts only), `LEADS_DAYS`, `LEADS_LIMIT` (answers per run
+per source), `BROWSER_AGENT`. The apply scheduler (`scripts/apply_scheduler.sh`, installed by
+`scripts/install_apply_scheduler.sh`) runs a leads round every `APPLY_LEADS_EVERY_S` seconds (3600;
+0 turns it off), goals met or not, as `python3 -m pipeline run --only inbox --only leads:mail --redo`.
 
 ### Funnel audit: why nobody is calling
 

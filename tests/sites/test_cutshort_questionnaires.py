@@ -220,7 +220,7 @@ def test_pending_pass_records_results_separately_from_job_applications(tmp_path,
         return SimpleNamespace(report=report, problem="")
     monkeypatch.setattr(browser_agent, "run_agent", run)
     result = q.finish_pending(driver, Profile(email="jane@example.com"), config)
-    assert result == [{"thread": THREAD, "state": state}]
+    assert result == [{"thread": THREAD, "state": state, "company": "Acme", "title": "AI Engineer"}]
     assert len(calls) == 1
     if state == "done":
         assert URL in opened, "reload proof after Submit"
@@ -300,7 +300,8 @@ def test_held_rows_do_not_spend_questionnaire_attempt_limit(tmp_path, monkeypatc
         calls.append(1)
         return SimpleNamespace(report={"status": "needs_you", "submission_attempted": False, "blocker": "missing_facts"}, problem="")
     monkeypatch.setattr(browser_agent, "run_agent", run)
-    assert q.finish_pending(driver, Profile(), config, limit=1) == [{"thread": rows[-1]["element"], "state": "needs_you"}]
+    assert q.finish_pending(driver, Profile(), config, limit=1) == [
+        {"thread": rows[-1]["element"], "state": "needs_you", "company": "Acme", "title": "Engineer"}]
     assert calls == [1]
 
 

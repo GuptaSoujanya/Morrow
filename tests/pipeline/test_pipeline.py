@@ -711,3 +711,19 @@ def test_the_startup_bot_is_its_own_browser_lane_when_turned_on(monkeypatch):
     stages["apply:startups"].work()
     assert seen == [["--dry-run"]]
     assert "find:startups" not in stages
+
+
+def test_leads_mail_runs_after_the_lanes_when_gmail_is_read_through_the_browser(monkeypatch):
+    monkeypatch.setattr(run, "_replies_on", lambda env: "browser")
+    stages = run.build_stages(_args(), ["hirist"])
+    mail = next(s for s in stages if s.name == "leads:mail")
+    names = [s.name for s in stages]
+    assert mail.final and not mail.parallel
+    assert names.index("leads:mail") < names.index("diagnose")
+    assert "read:replies" not in names
+
+    monkeypatch.setattr(run, "_replies_on", lambda env: "imap")
+    stages = run.build_stages(_args(), ["hirist"])
+    mail = next(s for s in stages if s.name == "leads:mail")
+    assert mail.parallel and not mail.final
+    assert "read:replies" in [s.name for s in stages]

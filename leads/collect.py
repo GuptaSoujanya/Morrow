@@ -38,8 +38,14 @@ INBOX_URLS = {
 _ABOUT_SPLIT = re.compile(r"\s+(?:at|@|-|–|—|,)\s+")
 
 
-def _company_title(message: Dict[str, Any]) -> Tuple[str, str]:
-    """'Software Engineer II at GreyOrange' -> ('GreyOrange', 'Software Engineer II'); best effort."""
+def _company_title(message: Dict[str, Any], site: str = "") -> Tuple[str, str]:
+    """(company, title) from the message's 'about' line, best effort.
+
+    'Software Engineer II at GreyOrange' names the title first; Instahyre's
+    'GreyOrange - Software Engineer II' names the company first. A line with no
+    separator is the company on Wellfound (its rows lead with the company) and the
+    role everywhere else (Naukri NVites: 'AI Engineer, Noida').
+    """
     about = " ".join(str(message.get("about") or "").split())
     if not about:
         return "", ""
@@ -48,7 +54,9 @@ def _company_title(message: Dict[str, Any]) -> Tuple[str, str]:
         return match.group("company").strip(), match.group("title").strip()
     parts = _ABOUT_SPLIT.split(about, maxsplit=1)
     if len(parts) == 2:
-        return parts[1].strip(), parts[0].strip()
+        return parts[0].strip(), parts[1].strip()
+    if site == "wellfound":
+        return about, ""
     return "", about
 
 
@@ -65,7 +73,7 @@ def from_board_summary(site: str, summary: Dict[str, Any]) -> List[Dict[str, Any
         if not action and not who:
             continue
         kind = ACTION_KINDS.get(action, "REPLY")
-        company, title = _company_title(message)
+        company, title = _company_title(message, site)
         lead = store.make_lead("board", site, kind, company=company, title=title, who=who,
                                text=text, url=str(message.get("url") or INBOX_URLS.get(site, "")),
                                received_at=str(message.get("date") or ""),
@@ -97,7 +105,7 @@ def from_mail_records(records: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]
             continue
         sender = str(record.get("from") or "")
         subject = str(record.get("subject") or "")
-        who = re.sub(r"<.*?>", "", sender).strip().strip('"') or sender
+        who = sender.split("<", 1)[0].strip().strip('"') or sender
         lead = store.make_lead("mail", record.get("platform") or mail_rules.platform_of(sender), kind,
                                company=_mail_company(record), who=who, subject=subject,
                                text=str(record.get("summary") or ""), received_at=str(record.get("date") or ""),

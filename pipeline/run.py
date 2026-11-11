@@ -15,7 +15,8 @@ the same day skips the done ones and retries the rest.
 0. inbox:<site>         yesterday's and today's recruiter threads in the site's own inbox (Naukri
                         NVites, Hirist chats, Instahyre inbox, Cutshort conversations, Wellfound
                         messages), recorded as leads and answered by the browser agent (leads.boards);
-   leads:mail           the same for hiring mail in Gmail, All Mail and Spam (leads.mail, IMAP)
+   leads:mail           the same for hiring mail in Gmail, All Mail and Spam (leads.mail; IMAP with an
+                        app password, else the signed-in browser after the lanes finish)
 1. profile:naukri       the Naukri headline toggle, then the Playwright agent reviews the whole
                         profile (naukri_bot.update_profile --review)
 2. profile:linkedin     the LinkedIn profile via the Playwright agent (linkedin_bot.update_profile)
@@ -135,14 +136,18 @@ def _startup_bot(flags: List[str]) -> int:
     return cli.main(flags)
 
 
-def _replies_on(env: Optional[str]) -> bool:
-    """Whether any inbox the reply scanner reads has an app password: its own, or a REPLY_INBOXES one."""
+def _replies_on(env: Optional[str]) -> str:
+    """How Gmail can be read: "imap" with an app password, "browser" through a signed-in profile, "" neither."""
     from common import config
     from sites_bot.accounts import account_email
     from sites_bot.replies import inboxes
 
     settings = config.load_settings(env)
-    return bool(settings.gmail_app_password) or any(password for _, password in inboxes(settings, account_email(settings)))
+    if settings.gmail_app_password or any(password for _, password in inboxes(settings, account_email(settings))):
+        return "imap"
+    from diagnose import gmail_browser
+
+    return "browser" if gmail_browser.candidate_profiles(settings) else ""
 
 
 def _employer_replies(flags: List[str]) -> int:
@@ -290,11 +295,16 @@ def build_stages(args: argparse.Namespace, boards: List[str]) -> List[Stage]:
             "brief:%s" % agent.key,
             lambda agent=agent: _ai_stage(lambda: briefing.run_agent(agent, team, day, briefing.context(day))),
             True, (briefing.output_of(agent, day),)))
-    if _replies_on(args.env):
+    gmail_via = _replies_on(args.env)
+    if gmail_via == "imap":
         # IMAP only, no browser: hiring mail in All Mail and Spam becomes leads and is answered
         # (LEADS_AUTO_REPLY), then the older reader drafts answers to mail linked to applications.
         stages.append(Stage("leads:mail", lambda: _mail_leads(dry + common), True))
         stages.append(Stage("read:replies", lambda: _employer_replies(dry + common), True))
+    elif gmail_via == "browser":
+        # No app password: leads:mail reads Gmail through the signed-in browser profile, so it runs
+        # after the lanes have released the browser and before the audit counts what it answered.
+        stages.append(Stage("leads:mail", lambda: _mail_leads(dry + common), final=True))
     # Read-only funnel audit; the lanes hold the browser profiles during a run, so pages are skipped here.
     stages.append(Stage("diagnose", lambda: _diagnose(common + ["--skip-browser"]), final=True))
     # Applies the audit's settings and answer fixes and hands its code fixes to a local coding CLI

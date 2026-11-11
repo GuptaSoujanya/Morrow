@@ -83,8 +83,9 @@ def resources_for(command: Command, action: str) -> frozenset[str]:
     if "profile:linkedin" in selected:
         resources.add("browser:linkedin")
     if "leads:mail" in selected:
-        # It writes replies and drafts in the same Gmail account as the recruiter and company emails.
-        resources.add("email:drafts")
+        # It writes replies and drafts in the same Gmail account as the recruiter and company emails,
+        # and without an app password it reads Gmail through the main browser profile.
+        resources.update(("email:drafts", "browser:main"))
     return frozenset(resources)
 
 

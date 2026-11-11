@@ -11,7 +11,9 @@
 # (python -m naukri_bot.quota) and Naukri's last "daily quota exceeded" refusal is older
 # than APPLY_QUOTA_COOLDOWN_H hours (its allowance has refused ~30 applies a day lately,
 # so the ledger's 50-slot count alone starts rounds too early), the boards and startups
-# once a day after APPLY_BOARDS_AFTER.
+# once a day after APPLY_BOARDS_AFTER. Every APPLY_LEADS_EVERY_S seconds (goals met or not) a
+# leads round answers the boards' inboxes and Gmail (pipeline --only inbox --only leads:mail):
+# questionnaires, recruiter messages and replies; 0 turns it off.
 # Goals, counted from APPLY_GOAL_SINCE: APPLY_GOAL_NAUKRI (Naukri + company sites reached
 # from Naukri), APPLY_GOAL_BOARDS (Hirist/Instahyre/Cutshort/Wellfound), APPLY_GOAL_STARTUPS.
 # Settings come from .env; the environment overrides it (TARGET_APPLICATIONS, PLATFORM_LIMIT ...).
@@ -19,7 +21,7 @@ set -u
 cd "$(dirname "$0")/.."
 export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
 # A local Anthropic proxy in the shell (headroom) answers the claude CLI with 421s.
-unset ANTHROPIC_BASE_URL HEADROOM_BACKEND CLAUDE_PROXY_PORT
+unset ANTHROPIC_BASE_URL HEADROOM_BACKEND CLAUDE_PROXY_PORT CLAUDE_AGENT_SDK_VERSION HEADROOM_HOST HEADROOM_PORT HEADROOM_MODE HEADROOM_MEMORY_ENABLED
 # Naukri answers headless Chrome with an access-denied page.
 export BACKGROUND=false HEADLESS=false
 export LLM_TIMEOUT_S="${LLM_TIMEOUT_S:-180}"
@@ -35,12 +37,14 @@ CHECK_EVERY=${APPLY_CHECK_EVERY_S:-1800}
 BOARDS_AFTER=${APPLY_BOARDS_AFTER:-10:00}
 STARTUP_LIMIT=${APPLY_STARTUP_LIMIT:-10}
 QUOTA_COOLDOWN_H=${APPLY_QUOTA_COOLDOWN_H:-12}
+LEADS_EVERY=${APPLY_LEADS_EVERY_S:-3600}
 
 PY=venv/bin/python
 [ -x "$PY" ] || PY=python3
 RUNS=.runtime/runs
 LOG=$RUNS/scheduler.log
 LOCK=.runtime/apply-scheduler.pid
+LEADS_STAMP=.runtime/leads.last
 mkdir -p "$RUNS" .runtime
 
 log() { print -r -- "$(date '+%Y-%m-%d %H:%M:%S') $*" | tee -a "$LOG"; }
@@ -107,16 +111,33 @@ run_round() {
   "$@" > "$out" 2>&1
   local code=$?
   local tally
-  tally=$(grep -E "applied \(verified\)|applied, company site|applied +:|funnel" "$out" | tail -n 4 | tr -s ' ' | tr '\n' ';')
+  tally=$(grep -E "applied \(verified\)|applied, company site|applied +:|funnel|Leads in|inbox: state" "$out" | tail -n 4 | tr -s ' ' | tr '\n' ';')
   log "round $name ended (exit $code) ${tally:-no summary line}"
+}
+
+leads_due() {
+  [ "$LEADS_EVERY" -gt 0 ] || return 1
+  [ -e "$LEADS_STAMP" ] || return 0
+  [ $(( $(date +%s) - $(stat -f %m "$LEADS_STAMP") )) -ge "$LEADS_EVERY" ]
+}
+
+leads_round() {
+  leads_due || return 0
+  touch "$LEADS_STAMP"
+  run_round leads "$PY" -m pipeline run --only inbox --only leads:mail --redo --ignore-window
 }
 
 cycle() {
   local counts naukri_done boards_done startups_done
+  leads_round
   counts=$(progress) || { log "could not read progress from the ledger"; return 1; }
   read -r naukri_done boards_done startups_done <<< "$counts"
   log "progress since $GOAL_SINCE: naukri $naukri_done/$GOAL_NAUKRI, boards $boards_done/$GOAL_BOARDS, startups $startups_done/$GOAL_STARTUPS"
   if [ "$naukri_done" -ge "$GOAL_NAUKRI" ] && [ "$boards_done" -ge "$GOAL_BOARDS" ] && [ "$startups_done" -ge "$GOAL_STARTUPS" ]; then
+    if [ "$LEADS_EVERY" -gt 0 ]; then
+      log "every goal is met; only the leads rounds continue (every ${LEADS_EVERY}s)"
+      return 0
+    fi
     log "every goal is met; nothing to do"
     return 2
   fi
@@ -159,6 +180,11 @@ status() {
   if alive "$pid"; then print "scheduler: running (pid $pid)"; else print "scheduler: not running"; fi
   local counts; counts=$(progress) && print "progress since $GOAL_SINCE (naukri boards startups): $counts  goals: $GOAL_NAUKRI $GOAL_BOARDS $GOAL_STARTUPS"
   "$PY" -m naukri_bot.quota --slots "$MIN_SLOTS"
+  if [ "$LEADS_EVERY" -gt 0 ]; then
+    [ -e "$LEADS_STAMP" ] && print "leads round: last $(date -r "$(stat -f %m "$LEADS_STAMP")" '+%Y-%m-%d %H:%M'), every ${LEADS_EVERY}s" || print "leads round: not run yet, every ${LEADS_EVERY}s"
+  else
+    print "leads round: off (APPLY_LEADS_EVERY_S=0)"
+  fi
   [ -f "$LOG" ] && { print "last log lines:"; tail -n 8 "$LOG"; }
   pgrep -fil "python -m (pipeline|startup_bot|naukri_bot|[a-z]+_bot)" 2>/dev/null | sed 's/^/running: /'
 }
@@ -182,7 +208,7 @@ if alive "$(cat "$LOCK" 2>/dev/null)"; then
 fi
 print $$ > "$LOCK"
 trap 'rm -f "$LOCK"; exit 0' INT TERM
-log "scheduler starts (pid $$): check every ${CHECK_EVERY}s, Naukri rounds at >= $MIN_SLOTS free slots, boards after $BOARDS_AFTER"
+log "scheduler starts (pid $$): check every ${CHECK_EVERY}s, leads every ${LEADS_EVERY}s, Naukri rounds at >= $MIN_SLOTS free slots, boards after $BOARDS_AFTER"
 while true; do
   cycle
   case $? in
