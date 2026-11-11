@@ -457,6 +457,12 @@ def _integer(value: Any, default: int, low: int, high: int) -> int:
     return number
 
 
+def summary(days: int = 14, **paths: Any) -> Dict[str, Any]:
+    """Just the counts the Launchpad shows: how many jobs wait, by what they need and by platform."""
+    data = waiting_json({"days": days, "size": 1}, **paths)
+    return {"total": data["total"], "days": data["days"], "kinds": data["kinds"], "boards": data["boards"]}
+
+
 def waiting_json(
     params: Optional[Dict[str, Any]] = None,
     db: Optional[Path] = None,

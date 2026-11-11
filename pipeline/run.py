@@ -12,6 +12,10 @@ is at the terminal, and stops with a pointer to it otherwise.
 Stages, in order. Each is recorded in user/memory/ the moment it ends; a second run
 the same day skips the done ones and retries the rest.
 
+0. inbox:<site>         yesterday's and today's recruiter threads in the site's own inbox (Naukri
+                        NVites, Hirist chats, Instahyre inbox, Cutshort conversations, Wellfound
+                        messages), recorded as leads and answered by the browser agent (leads.boards);
+   leads:mail           the same for hiring mail in Gmail, All Mail and Spam (leads.mail, IMAP)
 1. profile:naukri       the Naukri headline toggle, then the Playwright agent reviews the whole
                         profile (naukri_bot.update_profile --review)
 2. profile:linkedin     the LinkedIn profile via the Playwright agent (linkedin_bot.update_profile)
@@ -57,12 +61,13 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date
 from pathlib import Path
-from typing import Callable, List, NamedTuple, Optional, Sequence, Tuple
+from typing import Callable, Dict, List, NamedTuple, Optional, Sequence, Tuple
 
 from common import memory as memory_module
 from common.browser_lanes import BOARD_LANES
 from common.pipeline_diagnostics import StageDiagnostics, sanitize_detail
-from common.run import EXIT_BROWSER_LOCKED, EXIT_CONFIG, EXIT_FAILED, EXIT_OK, configure_logging, outside_run_window
+from common.run import (EXIT_BROWSER_LOCKED, EXIT_CONFIG, EXIT_FAILED, EXIT_OK, EXIT_QUOTA, configure_logging,
+                        outside_run_window)
 
 from . import briefing, content, lanes as lanes_module, learning
 from common import paths
@@ -146,6 +151,18 @@ def _employer_replies(flags: List[str]) -> int:
     return replies.main(flags)
 
 
+def _mail_leads(flags: List[str]) -> int:
+    from leads import mail
+
+    return mail.main(flags)
+
+
+def _board_inbox(flags: List[str]) -> int:
+    from leads import boards
+
+    return boards.main(flags)
+
+
 def _board_bot(name: str, tool: str, flags: List[str]) -> int:
     """Run one board's own bot: <name>_bot.cli (apply) or <name>_bot.update_profile."""
     return importlib.import_module("%s_bot.%s" % (name, tool)).main(flags)
@@ -217,11 +234,18 @@ def board_names(env: Optional[str] = None) -> List[str]:
     return [board.name for board in platforms.chosen_boards(None, settings)]
 
 
+QUOTA_DETAIL = ("The model is out of quota (session or usage limit); the lane paused here and "
+                "`python3 -m pipeline continue` picks it up once the window resets.")
+
+
 def _ai_stage(work: Callable[[], object]) -> int:
-    from common.ai_cli import AIError
+    from common.ai_cli import AIError, QuotaError
 
     try:
         work()
+    except QuotaError as exc:
+        logger.warning("AI CLI: %s", exc)
+        return EXIT_QUOTA
     except AIError as exc:
         logger.error("AI CLI: %s", exc)
         return EXIT_FAILED
@@ -236,6 +260,12 @@ def build_stages(args: argparse.Namespace, boards: List[str]) -> List[Stage]:
     day = args.today or date.today()
     stages = [Stage("learn", lambda: _ai_stage(lambda: learning.write_today(ask, today=day)), False,
                     (learning.content_root(learning.LEARNING) / "daily" / ("%s.md" % day.isoformat()),))]
+    # Leads first: a recruiter's questionnaire or reply from yesterday is worth more than any new
+    # apply, and each site's inbox is read in that site's own lane before its profile and apply stages.
+    for name in ["naukri", *boards]:
+        inbox_flags = dry + common + ["--board", name]
+        stages.append(_bot("inbox:%s" % name, "leads.boards", inbox_flags,
+                           lambda inbox_flags=inbox_flags: _board_inbox(inbox_flags)))
     naukri_flags = dry + common + ["--review"]
     stages.append(_bot("profile:naukri", "naukri_bot.update_profile", naukri_flags,
                        lambda: _naukri_profile(naukri_flags)))
@@ -261,7 +291,9 @@ def build_stages(args: argparse.Namespace, boards: List[str]) -> List[Stage]:
             lambda agent=agent: _ai_stage(lambda: briefing.run_agent(agent, team, day, briefing.context(day))),
             True, (briefing.output_of(agent, day),)))
     if _replies_on(args.env):
-        # IMAP only, no browser; drafts answers to employers' mail and never sends.
+        # IMAP only, no browser: hiring mail in All Mail and Spam becomes leads and is answered
+        # (LEADS_AUTO_REPLY), then the older reader drafts answers to mail linked to applications.
+        stages.append(Stage("leads:mail", lambda: _mail_leads(dry + common), True))
         stages.append(Stage("read:replies", lambda: _employer_replies(dry + common), True))
     # Read-only funnel audit; the lanes hold the browser profiles during a run, so pages are skipped here.
     stages.append(Stage("diagnose", lambda: _diagnose(common + ["--skip-browser"]), final=True))
@@ -394,6 +426,10 @@ def run_day(args: argparse.Namespace, stages: List[Stage], mem: memory_module.Me
             return code
         if code == EXIT_OK and not all(Path(p).exists() for p in stage.outputs):
             code, detail = EXIT_FAILED, "exited 0 but wrote no %s" % ", ".join(str(p) for p in stage.outputs)
+        if code == EXIT_QUOTA:
+            mem.mark(stage.name, memory_module.PENDING, QUOTA_DETAIL, exit_code=code)
+            logger.warning("[pipeline] %s paused: %s", stage.name, QUOTA_DETAIL)
+            return code
         mem.mark(stage.name, memory_module.DONE if code == EXIT_OK else memory_module.FAILED, detail,
                  stage.outputs, exit_code=code)
         logger.log(logging.INFO if code == EXIT_OK else logging.ERROR,
@@ -438,17 +474,19 @@ def run_day(args: argparse.Namespace, stages: List[Stage], mem: memory_module.Me
         show(args, [lanes_module.lane_of(stages[0].name) for stages in lanes if stages])
 
     def lane(stages: List[Stage]) -> None:
-        blocked_sites = set()
+        paused: Dict[str, str] = {}
         for stage in stages:
             site = lanes_module.lane_of(stage.name)
-            if site in blocked_sites and not mem.is_done(stage.name):
-                detail = "Browser profile is locked; resolve the earlier %s browser error, then continue." % site
-                logger.warning("[pipeline] %s deferred: %s", stage.name, detail)
+            if site in paused and not mem.is_done(stage.name):
+                logger.warning("[pipeline] %s deferred: %s", stage.name, paused[site])
                 if not args.dry_run:
-                    mem.mark(stage.name, memory_module.PENDING, detail)
+                    mem.mark(stage.name, memory_module.PENDING, paused[site])
                 continue
-            if one(stage) == EXIT_BROWSER_LOCKED:
-                blocked_sites.add(site)
+            code = one(stage)
+            if code == EXIT_BROWSER_LOCKED:
+                paused[site] = "Browser profile is locked; resolve the earlier %s browser error, then continue." % site
+            elif code == EXIT_QUOTA:
+                paused[site] = QUOTA_DETAIL
 
     with ThreadPoolExecutor(max_workers=max(1, args.agents) + 1, thread_name_prefix="agent") as pool, \
             ThreadPoolExecutor(max_workers=max(1, workers), thread_name_prefix="bot") as bots:

@@ -21,10 +21,11 @@ from .answer_notifications import PREFIX as ANSWER_EVENT_PREFIX, MAX_EVENT_BYTES
 _ANSI = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07]*\x07")
 READ_GRACE_S = 1.0
 BOARDS = ("naukri", "hirist", "instahyre", "cutshort", "wellfound")
-STAGES = ("learn", "research:resume", "research:companies", "diagnose", "autofix", "profile:linkedin", "apply:startups",
-          *(f"{group}:{board}" for group in ("profile", "apply") for board in BOARDS),
+STAGES = ("learn", "research:resume", "research:companies", "diagnose", "autofix", "leads:mail", "profile:linkedin",
+          "apply:startups", *(f"{group}:{board}" for group in ("inbox", "profile", "apply") for board in BOARDS),
           *(f"brief:{name}" for name in ("goal", "system-design", "papers", "tech-news", "companies", "repositories")))
 STUDY_STAGES = frozenset(('learn', 'brief:papers', 'brief:tech-news', 'brief:repositories'))
+BOARD_STAGE_GROUPS = ("inbox:", "profile:", "apply:")
 
 
 def _now() -> str:
@@ -75,12 +76,15 @@ def resources_for(command: Command, action: str) -> frozenset[str]:
     resources = {"pipeline:writer", *(f"stage:{stage}" for stage in selected)}
     if "--fresh" in args:
         resources.add("pipeline:reset")
-    if any(stage.startswith(("profile:", "apply:")) and stage != "profile:linkedin" for stage in selected):
+    if any(stage.startswith(BOARD_STAGE_GROUPS) and stage != "profile:linkedin" for stage in selected):
         resources.add("browser:main")
         resources.update(f"browser:lane:{stage.split(':', 1)[1]}" for stage in selected
-                         if stage.startswith(("profile:", "apply:")) and stage.split(':', 1)[1] in BOARD_LANES)
+                         if stage.startswith(BOARD_STAGE_GROUPS) and stage.split(':', 1)[1] in BOARD_LANES)
     if "profile:linkedin" in selected:
         resources.add("browser:linkedin")
+    if "leads:mail" in selected:
+        # It writes replies and drafts in the same Gmail account as the recruiter and company emails.
+        resources.add("email:drafts")
     return frozenset(resources)
 
 

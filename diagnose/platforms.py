@@ -127,8 +127,8 @@ def evidence_dir(settings: Settings, day: Optional[date] = None) -> Path:
     return Path(settings.report_dir or paths.user("reports")) / day.isoformat() / "diagnostics"
 
 
-def read_site(site: str, settings: Settings, folder: Path) -> SiteResult:
-    """Load the site's account pages in its saved profile and return what they show."""
+def read_site(site: str, settings: Settings, folder: Path, seeds: Optional[Tuple[str, ...]] = None) -> SiteResult:
+    """Load the site's account pages (or just `seeds`) in its saved profile and return what they show."""
     plan = _PLAN[site]
     result = SiteResult(site=site, state="skipped", message="", pages=[], signals={}, evidence=[])
     profile = _profile_for(site, settings)
@@ -145,7 +145,7 @@ def read_site(site: str, settings: Settings, folder: Path) -> SiteResult:
         result.update(state="browser_error", message="%s: %s" % (type(exc).__name__, str(exc).splitlines()[0][:200]))
         return result
     try:
-        queue: List[str] = list(plan["seeds"])
+        queue: List[str] = list(seeds or plan["seeds"])
         visited = set()
         signed_in_checked = False
         while queue and len(result["pages"]) < MAX_PAGES:

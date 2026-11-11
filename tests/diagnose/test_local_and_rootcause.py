@@ -2,6 +2,7 @@ import json
 import os
 import sqlite3
 import sys
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -10,6 +11,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 
 from common.models import Settings
 from diagnose import local, report, resume, rootcause
+from leads import store
 
 SCHEMA = """
 CREATE TABLE applications(id INTEGER PRIMARY KEY, job_id TEXT, url TEXT, title TEXT, company TEXT, status TEXT,
@@ -131,3 +133,105 @@ def test_action_plan_lists_each_lead_to_answer_first():
     plan = report.action_plan(causes)
     assert plan["today"][0] == "Answer: [questionnaire] instahyre Shreya: please fill"
     assert plan["today"][1] == "Today: open inboxes."
+
+
+NOW = datetime(2026, 11, 11, 10, 0)
+
+
+def _journal(settings):
+    """A questionnaire waiting since yesterday, a mail answered today, an assessment only the person can take."""
+    waiting = store.make_lead("board", "instahyre", "QUESTION", company="GreyOrange", title="Software Engineer II | Python",
+                              who="Shreya Rani", text="Please answer three questions", received_at="Nov 10")
+    answered = store.make_lead("mail", "employer", "INTERVIEW", company="Acme", who="Priya", subject="Interview at Acme",
+                               text="Can we talk on Friday?", received_at="2026-11-10")
+    person = store.make_lead("board", "cutshort", "ASSESSMENT", company="Zeta", title="Backend Engineer", who="Ravi",
+                             text="Take the coding test", received_at="Nov 11")
+    store.record(settings, [waiting, answered], now=datetime(2026, 11, 10, 9, 0))
+    store.record(settings, [person], now=datetime(2026, 11, 11, 8, 0))
+    store.update(settings, answered["id"], "answered", why="replied from the saved facts", answer="Friday works.",
+                 now=datetime(2026, 11, 11, 9, 30))
+    store.update(settings, person["id"], "needs_you", why="an assessment to take", now=datetime(2026, 11, 11, 9, 45))
+
+
+def test_leads_journal_reaches_the_causes_the_plan_and_both_reports(settings):
+    _journal(settings)
+    data = local.analyse(settings, now=NOW)
+    leads = data["leads"]
+    assert (leads["total"], leads["waiting"], leads["needs_you"], leads["answered"], leads["day"]) == (3, 1, 1, 1, "2026-11-11")
+    assert leads["today"] == {"new": 1, "answered": 1, "needs_you": 1}
+    cv = resume.analyse(settings, data["applications"], data["profile"])
+    causes = rootcause.rank(data, None, None, cv)
+    by_id = {cause["id"]: cause for cause in causes}
+    waiting = by_id["leads-waiting"]
+    assert (waiting["severity"], waiting["fix_kind"], waiting["confidence"]) == ("critical", "manual", 0.95)
+    assert waiting["evidence"][:2] == [
+        "2 leads in the journal still unanswered: 1 waiting for the bots, 1 waiting for you; answered so far 1 (1 today)",
+        "instahyre question from Shreya Rani: Software Engineer II | Python (received Nov 10, state new)"]
+    assert waiting["where"] == ["user/inputs/leads.json", "leads/"]
+    assert by_id["leads-need-you"]["evidence"][1] == (
+        "cutshort assessment from Ravi: Backend Engineer (received Nov 11); why: an assessment to take")
+    assert by_id["leads-answered"]["title"] == "1 recruiter threads were answered today by the leads bot"
+    assert by_id["leads-answered"]["evidence"] == ["employer interview from Priya: Interview at Acme (answered at 09:30)"]
+    plan = report.action_plan(causes)
+    assert plan["today"][:2] == waiting["fix"] and plan["today"][0].startswith("Today: run `python3 -m leads`")
+    assert by_id["leads-need-you"]["fix"][0] in plan["today"]
+    assert not any(line.startswith("Nothing to do") for line in plan["today"])
+
+    written = report.write(settings, data, None, None, cv, causes)
+    text = written["markdown"].read_text()
+    section = text.index("## Leads: recruiter threads and what was done")
+    assert text.index("## What to do, in order") < section < text.index("## Every cause with its evidence")
+    assert "show 3 recruiter threads in the leads journal (1 answered, 2 still open)" in text
+    assert ("The journal holds 3 recruiter threads: 1 waiting for the bots, 1 waiting for you and 1 answered, "
+            "1 of them today; 1 came in today.") in text
+    assert "| received | platform | kind | company / role | from | state | answered | why |" in text
+    assert "| Nov 10 | instahyre | question | GreyOrange · Software Engineer II \\| Python | Shreya Rani | new | - | - |" in text
+    assert "| 2026-11-10 | employer | interview | Acme · Interview at Acme | Priya | answered | 2026-11-11 09:30 |" in text
+    assert "| instahyre | 1 | 1 | 0 | 0 |" in text and "| cutshort | 1 | 0 | 0 | 1 |" in text
+    payload = json.loads(written["json"].read_text())
+    assert payload["leads"]["total"] == 3 and payload["leads"]["by_state"] == {"needs_you": 1, "answered": 1, "new": 1}
+    assert {cause["id"] for cause in payload["causes"]} >= {"leads-waiting", "leads-need-you", "leads-answered"}
+
+
+def test_a_lead_first_seen_today_is_high_not_critical(settings):
+    store.record(settings, [store.make_lead("board", "hirist", "REPLY", company="Acme", who="Asha")], now=NOW)
+    data = local.analyse(settings, now=NOW)
+    causes = rootcause.rank(data, None, None, resume.analyse(settings, data["applications"], data["profile"]))
+    waiting = next(cause for cause in causes if cause["id"] == "leads-waiting")
+    assert waiting["severity"] == "high" and waiting["evidence"][1] == "hirist reply from Asha: (no subject) (received 2026-11-11, state new)"
+
+
+def test_the_leads_section_says_what_it_could_not_read(settings):
+    data = local.analyse(settings, now=NOW)
+    assert (data["leads"]["total"], data["leads"]["items"]) == (0, [])
+    cv = resume.analyse(settings, data["applications"], data["profile"])
+    causes = rootcause.rank(data, None, None, cv)
+    assert not [cause for cause in causes if cause["id"].startswith("leads-")]
+    assert "No lead recorded yet; the inbox:<board> and leads:mail stages fill this." in report.build_markdown(data, None, None, cv, causes)
+    older = {key: value for key, value in data.items() if key != "leads"}
+    assert "The leads journal was not read for this audit." in report.build_markdown(older, None, None, cv, rootcause.rank(older, None, None, cv))
+    assert json.loads(report.write(settings, older, None, None, cv, causes)["json"].read_text())["leads"] == {}
+    Path(settings.data_dir, "leads.json").write_text("{not json")
+    broken = local.analyse(settings, now=NOW)["leads"]
+    assert broken["total"] == 0 and "not valid JSON" in broken["error"]
+    assert "The leads journal could not be read: " in report.build_markdown({**data, "leads": broken}, None, None, cv, causes)
+
+
+def test_mail_the_leads_bot_answered_is_not_asked_for_again(settings):
+    _journal(settings)
+    data = local.analyse(settings, now=NOW)
+    cv = resume.analyse(settings, data["applications"], data["profile"])
+    mail = {"error": "", "days": 30, "scanned": 50, "folders": {"INBOX": 50}, "positive_total": 2,
+            "positives": [{"platform": "employer", "kind": "INTERVIEW", "from": "Priya <priya@acme.com>",
+                           "subject": "Re: Interview at Acme", "date": "2026-11-10"},
+                          {"platform": "naukri", "kind": "SHORTLIST", "from": "Naukri <info@naukri.com>",
+                           "subject": "You are shortlisted", "date": "2026-11-09"}],
+            "positive_by_kind": {"INTERVIEW": 1, "SHORTLIST": 1}, "by_platform": {"naukri": {"SHORTLIST": 1}},
+            "spam_hiring": [], "account": "a@x.com", "llm_used": 0}
+    causes = rootcause.rank(data, mail, None, cv)
+    evidence = next(cause for cause in causes if cause["id"] == "calls-exist")["evidence"]
+    assert 'employer interview from Priya <priya@acme.com>: "Re: Interview at Acme" (answered by the leads bot)' in evidence
+    assert evidence[-2] == "1 of these threads have since been answered by the leads bot (see Leads)"
+    assert evidence[-1].startswith("The reply reader")
+    answers = [line for line in report.action_plan(causes)["today"] if line.startswith("Answer: ")]
+    assert answers == ['Answer: naukri shortlist from Naukri <info@naukri.com>: "You are shortlisted"']

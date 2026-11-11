@@ -122,6 +122,39 @@ def test_browser_lock_defers_only_that_sites_remaining_work(tmp_path, caplog):
     assert calls == ["hirist", "naukri"]
 
 
+def test_a_spent_model_window_pauses_the_lane_instead_of_failing_each_job(tmp_path, caplog):
+    import logging
+
+    calls = []
+    stages = [
+        run.Stage("profile:hirist", lambda: run.EXIT_QUOTA),
+        run.Stage("apply:hirist", lambda: calls.append("hirist") or 0),
+        run.Stage("apply:instahyre", lambda: calls.append("instahyre") or 0),
+    ]
+    with caplog.at_level(logging.INFO):
+        assert run.run_day(_args(), stages, Memory(tmp_path, DAY)) == run.EXIT_OK
+    assert calls == ["instahyre"], "the other lane goes on; the paused lane sends nothing"
+    mem = Memory(tmp_path, DAY)
+    for name in ("profile:hirist", "apply:hirist"):
+        assert mem.stage(name)["status"] == "pending"
+        assert "out of quota" in mem.stage(name)["detail"]
+    assert not any(r.levelno == logging.ERROR and "FAILED" in r.message for r in caplog.records)
+    stages[0] = run.Stage("profile:hirist", lambda: 0)
+    run.run_day(_args(), stages, mem)
+    assert calls == ["instahyre", "hirist"]
+
+
+def test_an_ai_stage_reports_a_spent_window_as_the_quota_exit_code():
+    def spent():
+        raise ai_cli.QuotaError("claude is out of quota: You've hit your session limit")
+
+    def broken():
+        raise ai_cli.AIError("claude exited 1: boom")
+
+    assert run._ai_stage(spent) == run.EXIT_QUOTA
+    assert run._ai_stage(broken) == run.EXIT_FAILED
+
+
 def test_a_done_stage_whose_file_is_gone_runs_again(tmp_path):
     out = tmp_path / "out.md"
     calls = []
@@ -286,7 +319,8 @@ def test_a_crashing_stage_does_not_stop_the_day(tmp_path):
 
 def test_stage_order_and_selection():
     names = [s.name for s in run.build_stages(_args(), ["hirist", "instahyre"])]
-    assert names == ["learn", "profile:naukri", "profile:linkedin", "profile:hirist", "profile:instahyre",
+    assert names == ["learn", "inbox:naukri", "inbox:hirist", "inbox:instahyre",
+                     "profile:naukri", "profile:linkedin", "profile:hirist", "profile:instahyre",
                      "apply:naukri",
                      "apply:hirist", "apply:instahyre", "research:resume", "brief:goal",
                      "brief:system-design", "brief:papers", "brief:tech-news", "brief:companies", "brief:repositories",
@@ -296,6 +330,25 @@ def test_stage_order_and_selection():
                                                                        "profile:hirist"]
     assert [s.name for s in run.selected(stages, ["brief"], [])][0] == "brief:goal"
     assert "apply:naukri" not in [s.name for s in run.selected(stages, [], ["apply:naukri"])]
+    assert [s.name for s in run.selected(stages, ["inbox"], [])] == ["inbox:naukri", "inbox:hirist"]
+
+
+def test_inbox_stages_read_each_boards_inbox_before_its_profile_and_apply(monkeypatch):
+    import importlib
+
+    boards = importlib.import_module("leads.boards")
+    seen = []
+    monkeypatch.setattr(boards, "main", lambda flags: seen.append(flags) or 0)
+    stages = run.build_stages(_args(dry_run=True), ["hirist"])
+    names = [s.name for s in stages]
+    assert names.index("inbox:hirist") < names.index("profile:hirist") < names.index("apply:hirist")
+    assert names.index("inbox:naukri") < names.index("profile:naukri")
+    inbox = next(s for s in stages if s.name == "inbox:hirist")
+    assert inbox.command == ("leads.boards", "--dry-run", "--board", "hirist")
+    inbox.work()
+    assert seen == [["--dry-run", "--board", "hirist"]]
+    assert lanes.group(names[1:3] + ["profile:hirist", "apply:hirist"]) == [
+        ["inbox:naukri"], ["inbox:hirist", "profile:hirist", "apply:hirist"]]
 
 
 def test_board_stages_run_each_boards_own_bot(monkeypatch):

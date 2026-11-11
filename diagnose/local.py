@@ -10,7 +10,7 @@ import logging
 import re
 import sqlite3
 from collections import Counter, defaultdict
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
@@ -326,6 +326,23 @@ def profile_facts(settings: Settings) -> Dict[str, Any]:
     }
 
 
+#: The report's leads section: the window counted as the period, and how many threads it lists.
+LEADS_DAYS = 14
+LEADS_LIMIT = 100
+
+
+def leads_journal(settings: Settings, day: date) -> Dict[str, Any]:
+    """user/inputs/leads.json as leads.store counts it for `day`: zeros and the error when it cannot be read."""
+    try:
+        from leads import store
+
+        return store.summary(settings, day=day, days=LEADS_DAYS, limit=LEADS_LIMIT)
+    except Exception as exc:  # noqa: BLE001 - the journal belongs to other stages; the audit still runs without it
+        return {"error": str(exc), "total": 0, "waiting": 0, "needs_you": 0, "answered": 0,
+                "today": {"new": 0, "answered": 0, "needs_you": 0}, "period": {"days": LEADS_DAYS, "new": 0, "answered": 0},
+                "by_platform": {}, "by_kind": {}, "by_state": {}, "items": [], "path": "", "day": day.isoformat()}
+
+
 def analyse(settings: Settings, now: Optional[datetime] = None) -> Dict[str, Any]:
     """Every local signal in one dictionary; each key is one section of the report."""
     now = now or datetime.now(timezone.utc)
@@ -342,6 +359,8 @@ def analyse(settings: Settings, now: Optional[datetime] = None) -> Dict[str, Any
         "company_sites": company_sites(settings),
         "replies": replies(settings),
         "cutshort": cutshort_journal(settings),
+        # The journal stamps local time, so "today" is the local day of `now`, not its UTC day.
+        "leads": leads_journal(settings, now.astimezone().date()),
         "profile": profile_facts(settings),
         "settings": {
             "min_score": settings.min_score,

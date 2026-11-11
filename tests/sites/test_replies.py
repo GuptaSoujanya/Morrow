@@ -156,6 +156,7 @@ class _Imap:
 
     def select(self, box, readonly=False):
         self.selected = (box, readonly)
+        self.selections = getattr(self, "selections", []) + [(box, readonly)]
         return "OK", [b"1"]
 
     def search(self, charset, *terms):
@@ -188,7 +189,9 @@ def test_gmail_is_read_read_only_and_the_answer_goes_to_drafts(tmp_path, monkeyp
     monkeypatch.setattr(imaplib, "IMAP4_SSL", lambda *a, **k: server)
     settings = _settings(tmp_path, gmail_app_password="pw", google_email="jane@example.org")
     mails = rp.read_mail(settings, "jane@example.org", 21)
-    assert server.selected == ("INBOX", True)
+    assert server.selections[0] == ("INBOX", True) and all(readonly for _, readonly in server.selections)
+    assert [box for box, _ in server.selections] == list(rp.FOLDERS)
+    assert len(mails) == 1 and mails[0].folder == "INBOX"
     assert mails[0].sender == "priya@acme.co.in" and mails[0].message_id == "<m9@acme>"
     rp.process(settings, Profile(full_name="Jane"), _Client(QUESTION, DRAFT), mails,
                [_app("Acme", url="https://acme.co.in")], [], account="jane@example.org", now=NOW)

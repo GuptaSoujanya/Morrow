@@ -45,6 +45,19 @@ _UNANSWERED_FILE = "user/worklists/unanswered_questions.md"
 _seen_unanswered = set()
 _unanswered_loaded = False
 
+_LOCATION_QUESTION = re.compile(r"\b(location|city|located|based (in|out of)|where do you (live|stay))\b")
+_LOCATION_PLACEHOLDERS = frozenset(
+    {"others", "other", "remote", "any", "anywhere", "any location", "not specified", "n/a", "na", "none"}
+)
+
+
+def is_location_placeholder(question: str, answer: str) -> bool:
+    """True when a location question would be answered with a non-answer such as 'Others' or 'Remote'."""
+    asked = _normalise(question)
+    if "relocat" in asked or not _LOCATION_QUESTION.search(asked):
+        return False
+    return _normalise(answer) in _LOCATION_PLACEHOLDERS
+
 _ANSWERS_FILE_NAME = "answers.txt"
 # An answer written like this in answers.txt is never sent as it stands: the AI
 # writes a fresh one for every posting from the resume and that posting.
@@ -965,6 +978,15 @@ class AnswerEngine:
             logger.info("[PROPOSE] %s -> %s", question, answer.text)
             return self._finish(
                 question, AnswerResolution.abstain("propose_mode"), False
+            )
+        if not getattr(self, "_current_options", None) and is_location_placeholder(question, answer.text):
+            # 'Others' or 'Remote' typed as a current location reads as evasive to a recruiter;
+            # the person has to name the city, so the question goes to the worklist instead.
+            # A fixed list that lacks the city leaves 'Other' as the only honest pick, so it stays.
+            return self._finish(
+                question,
+                AnswerResolution.abstain("location_answer_is_a_placeholder:%s" % answer.text),
+                False,
             )
         if persist:
             self.ledger.save_answer(

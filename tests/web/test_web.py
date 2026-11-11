@@ -222,6 +222,43 @@ def test_diagnostics_json_lists_days_and_trims_the_audit(tmp_path, monkeypatch):
     assert server.diagnostics_json("2026-10-12")["exists"] is False
 
 
+def test_autofix_data_prefers_a_real_run_over_a_dry_run(tmp_path, monkeypatch):
+    monkeypatch.setattr(state, "REPORTS", tmp_path)
+    day = dt.date(2026, 10, 12)
+    folder = tmp_path / "2026-10-12"
+    folder.mkdir()
+    assert state.autofix_data(day) == {}
+    (folder / "autofix.dry-run.json").write_text(json.dumps({"generated_at": "2026-10-12T10:00", "dry_run": True, "settings": {"changes": {"MIN_SCORE": {"value": "65"}}}}))
+    data = state.autofix_data(day)
+    assert data["dry_run"] is True and data["markdown_url"] == "/reports/2026-10-12/autofix.dry-run.md"
+    (folder / "autofix.json").write_text(json.dumps({"generated_at": "2026-10-12T09:00", "dry_run": False, "code": {"used": "opencode"}}))
+    data = state.autofix_data(day)
+    assert data["dry_run"] is False and data["code"]["used"] == "opencode" and data["markdown_url"] == "/reports/2026-10-12/autofix.md"
+
+
+def test_diagnostics_carry_the_audits_copy_of_the_leads(tmp_path, monkeypatch):
+    monkeypatch.setattr(state, "REPORTS", tmp_path)
+    folder = tmp_path / "2026-10-12"
+    folder.mkdir()
+    leads = {"total": 120, "waiting": 120, "needs_you": 0, "answered": 0, "today": {"new": 3, "answered": 0, "needs_you": 0},
+             "period": {"days": 14, "new": 120, "answered": 0},
+             "by_platform": {"hirist": {"total": 120, "waiting": 120, "answered": 0, "needs_you": 0}},
+             "by_kind": {"REPLY": 120}, "by_state": {"new": 120}, "path": "/private/leads.json", "day": "2026-10-12",
+             "items": [{"id": "board:hirist:%d" % n, "state": "new"} for n in range(120)]}
+    (folder / "diagnostics.json").write_text(json.dumps({"generated_at": "2026-10-12T09:00", "local": {"leads": leads}}))
+    view = server.diagnostics_json("2026-10-12")["leads"]
+    assert set(view) == {"total", "waiting", "needs_you", "answered", "today", "period", "by_platform", "by_kind", "by_state",
+                         "error", "items", "day"}
+    assert (view["total"], len(view["items"]), view["error"], view["today"]["new"]) == (120, 100, "", 3)
+    (folder / "diagnostics.json").write_text(json.dumps({"generated_at": "2026-10-12T09:00", "leads": {**leads, "total": 7},
+                                                         "local": {"leads": leads}}))
+    assert server.diagnostics_json("2026-10-12")["leads"]["total"] == 7
+    (folder / "diagnostics.json").write_text(json.dumps({"generated_at": "2026-10-12T09:00", "causes": []}))
+    older = server.diagnostics_json("2026-10-12")["leads"]
+    assert (older["total"], older["items"], older["by_platform"]) == (0, [], {})
+    assert older["today"] == {"new": 0, "answered": 0, "needs_you": 0}
+
+
 
 def at(day, hour):
     """A ledger timestamp (UTC, like the bots write) for a local day and hour."""
@@ -457,6 +494,32 @@ def test_overview_reads_the_ledger_for_the_days_asked(site):
     assert call(site, "GET", "/api/overview?days=-3")[0] == 400
 
 
+def test_leads_are_read_live_from_the_journal(site, tmp_path, monkeypatch):
+    from leads import store
+
+    monkeypatch.setenv("DATA_DIR", str(tmp_path / "user" / "inputs"))
+    status, data = call(site, "GET", "/api/leads")
+    assert status == 200 and data["exists"] is False and (data["day"], data["days"]) == (dt.date.today().isoformat(), 14)
+    assert (data["total"], data["waiting"], data["needs_you"], data["items"], data["error"]) == (0, 0, 0, [], "")
+    assert data["path"] == "user/inputs/leads.json" and data["period"] == {"days": 14, "new": 0, "answered": 0}
+    lead = store.make_lead("board", "hirist", "REPLY", company="Acme", title="AI Engineer", who="Asha", text="Free for a call?")
+    store.record(state.leads_settings(), [lead])
+    status, data = call(site, "GET", "/api/leads?days=7")
+    assert status == 200 and data["exists"] and data["days"] == 7 and data["period"]["days"] == 7
+    assert (data["total"], data["waiting"], data["by_platform"]["hirist"]["waiting"]) == (1, 1, 1)
+    assert (data["items"][0]["id"], data["items"][0]["company"], data["items"][0]["state"]) == (lead["id"], "Acme", "new")
+    assert call(site, "GET", "/api/status")[1]["leads"] == {"waiting": 1, "needs_you": 0, "today_new": 1, "today_answered": 0}
+    for bad in ("day=yesterday", "days=0", "days=two"):
+        assert call(site, "GET", "/api/leads?" + bad)[0] == 400
+    assert state.overview(7, db=tmp_path / "missing.db")["leads"] == {
+        "total": 1, "waiting": 1, "needs_you": 0, "answered": 0, "today": {"new": 1, "answered": 0, "needs_you": 0},
+        "period": {"days": 7, "new": 1, "answered": 0}}
+    (tmp_path / "user" / "inputs" / "leads.json").write_text("[]")
+    broken = call(site, "GET", "/api/leads")[1]
+    assert broken["exists"] is False and "not an object" in broken["error"]
+    assert state.overview(7, db=tmp_path / "missing.db")["leads"]["total"] == 0
+
+
 def test_marking_a_module_read(site):
     assert call(site, "POST", "/api/course/read", {"path": "02-dsa/01-arrays.md", "read": True})[0] == 200
     status, data = call(site, "GET", "/api/course")
@@ -656,6 +719,40 @@ def test_resource_conflicts_allow_independent_agents_and_protect_shared_files():
     assert conflicts(news, brief) and conflicts(learn, learn)
     assert conflicts(fresh, news)
     assert conflicts(resources("install"), news)
+
+
+def test_leads_stages_reserve_the_board_browsers_and_the_gmail_drafts():
+    import importlib.util
+    from web.runner import BOARDS, STAGES, conflicts, resources_for
+
+    def resources(action, *args):
+        return resources_for(Command(action, (sys.executable, *args)), action)
+
+    def pipeline(*args):
+        return resources("pipeline", "-m", "pipeline", "continue", *args)
+
+    assert {f"inbox:{board}" for board in BOARDS} | {"leads:mail"} <= set(STAGES)
+    inboxes = pipeline("--only", "inbox")
+    assert {"browser:main", "browser:lane:hirist", "browser:lane:wellfound", "stage:inbox:naukri"} <= inboxes
+    assert "email:drafts" not in inboxes and "stage:profile:hirist" not in inboxes
+    hirist = pipeline("--only", "inbox:hirist")
+    assert "browser:lane:hirist" in hirist and "browser:lane:instahyre" not in hirist
+    assert conflicts(hirist, resources("boards", "-m", "sites_bot.platforms", "--site", "hirist"))
+    mail = pipeline("--only", "leads")
+    assert "stage:leads:mail" in mail and "email:drafts" in mail and "browser:main" not in mail
+    assert conflicts(mail, resources("cold_email", "-m", "sites_bot.cold_email"))
+    assert not conflicts(mail, pipeline("--only", "learn"))
+
+    path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "froned-dashbord", "commands.py")
+    spec = importlib.util.spec_from_file_location("dashboard_commands", path)
+    commands = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(commands)
+    assert set(commands.STAGES) == set(STAGES) and {"inbox", "leads"} <= set(commands.GROUPS)
+    command = commands.pipeline_command({"group": "leads"})
+    assert command.argv[-2:] == ("--only", "leads") and command.label == "Answer recruiter leads · continue"
+    assert commands.pipeline_command({"group": "inbox"}).label == "Board inboxes · continue"
+    exact = commands.pipeline_command({"groups": ["inbox:naukri", "leads:mail"]})
+    assert exact.argv[-4:] == ("--only", "inbox:naukri", "--only", "leads:mail")
 
 
 def test_parallel_resume_requests_keep_separate_job_descriptions(monkeypatch, tmp_path):

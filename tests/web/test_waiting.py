@@ -178,6 +178,13 @@ def test_filters_and_pages_apply_after_the_tallies(workspace):
         waiting.waiting_json({"size": "0"}, **workspace)
 
 
+def test_summary_carries_only_the_counts(workspace):
+    full = waiting.waiting_json({"days": "0"}, **workspace)
+    data = waiting.summary(0, **workspace)
+    assert data == {"total": full["total"], "days": 0, "kinds": full["kinds"], "boards": full["boards"]}
+    assert data["total"] == 9 and "items" not in data
+
+
 def test_missing_files_give_an_empty_page(tmp_path):
     data = waiting.waiting_json({}, db=tmp_path / "none.db", agent_db=tmp_path / "none.sqlite", answers=tmp_path / "a.txt",
                                 sites=tmp_path / "s.md", profile=tmp_path / "p.yaml")

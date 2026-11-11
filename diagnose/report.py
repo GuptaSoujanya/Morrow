@@ -41,8 +41,12 @@ def _expected(submitted: int):
     return ("%d" % int(submitted * 0.02), "%d" % int(submitted * 0.03))
 
 
-def _signal_sentence(mail: Optional[Dict[str, Any]], sites: Optional[Dict[str, Any]]) -> str:
+def _signal_sentence(mail: Optional[Dict[str, Any]], sites: Optional[Dict[str, Any]],
+                     leads: Optional[Dict[str, Any]] = None) -> str:
     parts = []
+    if leads and leads.get("total"):
+        parts.append("%d recruiter threads in the leads journal (%d answered, %d still open)" % (
+            leads["total"], leads.get("answered", 0), leads.get("waiting", 0) + leads.get("needs_you", 0)))
     if mail and not mail.get("error"):
         parts.append("%d hiring-positive mails among %d scanned" % (mail.get("positive_total", 0), mail.get("scanned", 0)))
     elif mail:
@@ -82,11 +86,16 @@ PLAIN_WORDS = {
     "volume": "Hundreds of applications a day with one untailored resume.",
     "spam": "Hiring mail is going to Spam.",
     "naukri-mail-missing": "Naukri sends nothing to this mailbox although it records many applies.",
+    "leads-waiting": "Recruiters wrote on the boards or by mail and some of those threads still have no answer; the Leads section lists each one.",
+    "leads-need-you": "Some recruiter threads need something only you can give: an assessment to take, a fact missing from profile.yaml, or a Gmail draft to finish.",
 }
 
 TODAY_KINDS = ("manual",)
 WEEK_KINDS = ("env", "answers", "profile", "resume", "skill")
 CODE_KINDS = ("code",)
+#: rootcause marks a positive mail the leads bot already answered with this; the plan does not ask for it again.
+LEADS_ANSWERED = "answered by the leads bot"
+LEAD_COLUMNS = ["received", "platform", "kind", "company / role", "from", "state", "answered", "why"]
 
 
 def action_plan(causes: List[Dict[str, Any]]) -> Dict[str, List[str]]:
@@ -99,13 +108,13 @@ def action_plan(causes: List[Dict[str, Any]]) -> Dict[str, List[str]]:
                 plan[group].append(line)
 
     for cause in causes:
-        if cause["id"] in ("silence-confirmed", "too-early"):
+        if cause["id"] in ("silence-confirmed", "too-early", "leads-answered"):
             continue
         fixes = cause["fix"]
         if cause["id"] == "unanswered-messages":
             add("today", ["Answer: %s" % line for line in cause.get("evidence", []) if line.startswith("[")])
         if cause["id"] == "calls-exist":
-            add("today", ["Answer: %s" % line for line in cause.get("evidence", [])[1:-1]])
+            add("today", ["Answer: %s" % line for line in cause.get("evidence", [])[1:-1] if LEADS_ANSWERED not in line])
         if cause["fix_kind"] in TODAY_KINDS:
             add("today", fixes)
         elif cause["fix_kind"] in CODE_KINDS:
@@ -150,6 +159,49 @@ def trail_lines(trail: Optional[List[Dict[str, Any]]]) -> List[str]:
     return out
 
 
+def _cell(value: Any, limit: int) -> str:
+    text = " ".join(str(value or "").split())
+    if len(text) > limit:
+        text = text[:limit - 1].rstrip() + "…"
+    return text.replace("|", "\\|") or "-"
+
+
+def leads_lines(leads: Optional[Dict[str, Any]]) -> List[str]:
+    """The leads journal: its counts, the newest threads with what was done about each, and the boards they came from."""
+    out = ["## Leads: recruiter threads and what was done\n"]
+    if leads is None:
+        out.append("The leads journal was not read for this audit.\n")
+        return out
+    if leads.get("error"):
+        out.append("The leads journal could not be read: %s\n" % leads["error"])
+        return out
+    total = int(leads.get("total") or 0)
+    if not total:
+        out.append("No lead recorded yet; the inbox:<board> and leads:mail stages fill this.\n")
+        return out
+    today = leads.get("today") or {}
+    out.append("The journal holds %d recruiter threads: %d waiting for the bots, %d waiting for you and %d answered, "
+               "%d of them today; %d came in today.\n" % (
+                   total, leads.get("waiting", 0), leads.get("needs_you", 0), leads.get("answered", 0),
+                   today.get("answered", 0), today.get("new", 0)))
+    rows = []
+    for item in (leads.get("items") or [])[:40]:
+        role = " · ".join(part for part in (item.get("company"), item.get("title") or item.get("subject")) if part)
+        rows.append([_cell(item.get("received_at") or str(item.get("first_seen") or "")[:10], 16), _cell(item.get("platform"), 16),
+                     _cell(str(item.get("kind") or "").lower(), 18), _cell(role, 70), _cell(item.get("who"), 30),
+                     _cell(item.get("state"), 10), _cell(str(item.get("answered_at") or "")[:16].replace("T", " "), 16),
+                     _cell(item.get("why"), 90)])
+    out.append(_table(LEAD_COLUMNS, rows))
+    if total > len(rows):
+        out.append("The newest %d of %d are listed; the dashboard's Leads tab shows every one.\n" % (len(rows), total))
+    platforms = sorted((leads.get("by_platform") or {}).items(), key=lambda kv: (-int(kv[1].get("total") or 0), kv[0]))
+    out.append("By platform:\n")
+    out.append(_table(["platform", "total", "waiting", "answered", "needs you"],
+                      [[_cell(name, 20), counts.get("total", 0), counts.get("waiting", 0), counts.get("answered", 0),
+                        counts.get("needs_you", 0)] for name, counts in platforms]))
+    return out
+
+
 def build_markdown(local: Dict[str, Any], mail: Optional[Dict[str, Any]], sites: Optional[Dict[str, Any]],
                    resume: Dict[str, Any], causes: List[Dict[str, Any]], review: Optional[Dict[str, Any]] = None,
                    trail: Optional[List[Dict[str, Any]]] = None) -> str:
@@ -159,7 +211,7 @@ def build_markdown(local: Dict[str, Any], mail: Optional[Dict[str, Any]], sites:
     out.append("# Why nobody is calling — funnel audit %s\n" % local["generated_at"][:16].replace("T", " "))
     out.append("## The root cause, in plain words\n")
     out.append("%d applications were submitted in %d days. In the same time the job boards and the mailbox show %s." % (
-        funnel["submitted_total"], funnel["days_running"], _signal_sentence(mail, sites)))
+        funnel["submitted_total"], funnel["days_running"], _signal_sentence(mail, sites, local.get("leads"))))
     out.append("")
     top = [c for c in causes if c["severity"] in ("critical", "high")]
     for index, cause in enumerate(top[:6], 1):
@@ -182,6 +234,7 @@ def build_markdown(local: Dict[str, Any], mail: Optional[Dict[str, Any]], sites:
         out.append("- %s" % line.replace("Code: ", "", 1))
     out.append("\nThen apply for two weeks at the lower volume and run `python3 -m diagnose` again; the Naukri recruiter actions, "
                "Hirist 'Viewed' count and board inboxes are the numbers that should move first.\n")
+    out.extend(leads_lines(local.get("leads")))
     out.append("## Every cause with its evidence\n")
     for index, cause in enumerate(causes, 1):
         out.append("### %d. [%s] %s\n" % (index, cause["severity"].upper(), cause["title"]))
@@ -318,6 +371,7 @@ def write(settings: Settings, local: Dict[str, Any], mail: Optional[Dict[str, An
         "review": review or {},
         "trail": trail or [],
         "local": {key: value for key, value in local.items() if key != "applications"},
+        "leads": local.get("leads") or {},
         "mail": mail,
         "sites": sites,
         "resume": resume,

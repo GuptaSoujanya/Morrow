@@ -435,19 +435,68 @@ def diagnostics_data(day: dt.date) -> Dict[str, Any]:
         "resume": {k: v for k, v in (payload.get("resume") or {}).items()
                    if k in ("headline", "coverage", "bullets", "bullets_with_metric", "missing_in_demand", "weak_words", "error")},
         "autofix": autofix_data(day),
+        "leads": _leads_view(payload.get("leads") or local.get("leads") or {}),
     }
+
+
+# --- the leads journal --------------------------------------------------------
+
+LEADS_COUNTS = ("total", "waiting", "needs_you", "answered", "today", "period")
+LEADS_VIEW = (*LEADS_COUNTS, "by_platform", "by_kind", "by_state")
+
+
+def _leads_zero(day: Optional[dt.date], days: int, error: str = "") -> Dict[str, Any]:
+    return {"total": 0, "waiting": 0, "needs_you": 0, "answered": 0, "today": {"new": 0, "answered": 0, "needs_you": 0},
+            "period": {"days": days, "new": 0, "answered": 0}, "by_platform": {}, "by_kind": {}, "by_state": {},
+            "error": error, "items": [], "path": "", "day": day.isoformat() if day else ""}
+
+
+def _leads_view(leads: Any) -> Dict[str, Any]:
+    """The audit's copy of the leads journal, trimmed for the dashboard; zeros for an audit written before leads existed."""
+    leads = leads if isinstance(leads, dict) else {}
+    zero = _leads_zero(None, 0)
+    view = {key: leads.get(key) or zero[key] for key in LEADS_VIEW}
+    view.update(error=str(leads.get("error") or ""), items=list(leads.get("items") or [])[:100], day=str(leads.get("day") or ""))
+    return view
+
+
+def leads_settings() -> Settings:
+    """Where the bots keep user/inputs/leads.json: DATA_DIR from the environment, else apply/.env.
+
+    Read the way this module reads every bot setting (_setting), not with config.load_settings(),
+    which loads .env into this process's environment.
+    """
+    return Settings(data_dir=str(paths.resolve(_setting("DATA_DIR") or Settings.data_dir, APPLY)))
+
+
+def leads_data(day: dt.date, days: int = 14, limit: int = 200) -> Dict[str, Any]:
+    """The leads journal read now, not the audit's copy: counts for `day` and the `days` before it, newest threads first."""
+    try:
+        from leads import store
+
+        return {"error": "", **store.summary(leads_settings(), day, days=days, limit=limit)}
+    except Exception as exc:  # noqa: BLE001 - other stages write the journal; the dashboard must still load
+        return _leads_zero(day, days, str(exc))
 
 
 AUTOFIX_JSON = "autofix.json"
 AUTOFIX_MD = "autofix.md"
+AUTOFIX_DRY_JSON = "autofix.dry-run.json"
+AUTOFIX_DRY_MD = "autofix.dry-run.md"
 
 
 def autofix_data(day: dt.date) -> Dict[str, Any]:
-    """What ``python -m diagnose.autofix`` changed for the day, trimmed for the dashboard; {} when it has not run."""
+    """What ``python -m diagnose.autofix`` changed for the day, trimmed for the dashboard; {} when it has not run.
+
+    A real run wins over a dry run; the dry run's report is shown only when no real run exists for the day."""
     import json
 
+    markdown = AUTOFIX_MD
     try:
         payload = json.loads(_read(diagnostics_path(day, AUTOFIX_JSON)) or "{}")
+        if not payload:
+            payload = json.loads(_read(diagnostics_path(day, AUTOFIX_DRY_JSON)) or "{}")
+            markdown = AUTOFIX_DRY_MD
     except ValueError:
         return {}
     if not isinstance(payload, dict) or not payload:
@@ -479,7 +528,7 @@ def autofix_data(day: dt.date) -> Dict[str, Any]:
         },
         "trail": payload.get("trail") or [],
         "failed_steps": payload.get("failed_steps") or [],
-        "markdown_url": f"/reports/{day.isoformat()}/{AUTOFIX_MD}",
+        "markdown_url": f"/reports/{day.isoformat()}/{markdown}",
     }
 
 
@@ -884,6 +933,7 @@ def overview(
             funnels[group].update({key: int(summary.get(key) or 0) for key in _RUN_FIELDS})
 
     cutoff = now - dt.timedelta(hours=24)
+    leads = leads_data(today, days or 14, limit=0)
     return {
         "days": days,
         "start": start.isoformat(),
@@ -934,4 +984,5 @@ def overview(
             "left_out": {"practice": left_out["practice"], "older": left_out["older"], "unfinished": left_out["unfinished"]},
         },
         "runs": recent[::-1][:12],
+        "leads": {key: leads[key] for key in LEADS_COUNTS},
     }

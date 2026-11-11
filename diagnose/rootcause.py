@@ -9,6 +9,7 @@ add), manual (a thing only the person can do).
 
 import re
 from dataclasses import asdict, dataclass, field
+from datetime import date
 from typing import Any, Dict, List, Optional
 
 SEVERITY_ORDER = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
@@ -152,6 +153,77 @@ def _site_causes(sites: Dict[str, Any], local: Dict[str, Any]) -> List[Cause]:
     return causes
 
 
+#: The journal states leads.store counts as waiting for the bots, and as waiting for the person.
+LEAD_OPEN_STATES = ("new", "deferred", "failed")
+LEAD_PERSON_STATES = ("needs_you",)
+
+
+def _lead_line(item: Dict[str, Any]) -> str:
+    sender = item.get("who") or item.get("company") or "unknown"
+    about = item.get("title") or item.get("subject") or str(item.get("text") or "")[:80] or "(no subject)"
+    return "%s %s from %s: %s" % (item.get("platform") or "unknown", str(item.get("kind") or "REPLY").lower(),
+                                  str(sender)[:40], str(about)[:90])
+
+
+def _received(item: Dict[str, Any]) -> str:
+    return str(item.get("received_at") or str(item.get("first_seen") or "")[:10] or "?")
+
+
+def _thread(platform: Any, subject: Any) -> tuple:
+    subject = " ".join(str(subject or "").casefold().split())
+    return str(platform or "").casefold(), re.sub(r"^(?:(?:re|fwd?|fw)\s*:\s*)+", "", subject)
+
+
+def _answered_mail_threads(leads: Dict[str, Any]) -> set:
+    return {_thread(item.get("platform"), item.get("subject")) for item in leads.get("items") or []
+            if item.get("source") == "mail" and item.get("state") == "answered" and item.get("subject")}
+
+
+def _lead_causes(leads: Dict[str, Any]) -> List[Cause]:
+    causes: List[Cause] = []
+    day = str(leads.get("day") or date.today().isoformat())[:10]
+    items = [item for item in leads.get("items") or [] if isinstance(item, dict)]
+    today = leads.get("today") or {}
+    waiting, needs_you = int(leads.get("waiting") or 0), int(leads.get("needs_you") or 0)
+    answered, answered_today = int(leads.get("answered") or 0), int(today.get("answered") or 0)
+    if waiting:
+        open_items = [item for item in items if item.get("state") in LEAD_OPEN_STATES]
+        # summary() lists the newest updates first, so a waiting lead past its list was last updated before all of them.
+        stale = any(str(item.get("first_seen") or day)[:10] < day for item in open_items) or (
+            waiting > len(open_items) and bool(items) and min(str(item.get("updated_at") or "")[:10] for item in items) < day)
+        evidence = ["%d leads in the journal still unanswered: %d waiting for the bots, %d waiting for you; answered so far %d (%d today)" % (
+            waiting + needs_you, waiting, needs_you, answered, answered_today)]
+        evidence += ["%s (received %s, state %s)" % (_lead_line(item), _received(item), item.get("state")) for item in open_items[:10]]
+        if waiting > len(open_items[:10]):
+            evidence.append("%d more waiting; the Leads section lists the newest." % (waiting - len(open_items[:10])))
+        causes.append(Cause(
+            "leads-waiting", "critical" if stale else "high", "Recruiter threads are waiting for an answer", evidence, "manual",
+            ["Today: run `python3 -m leads` (stages inbox:<board> and leads:mail) or open each thread above and answer it; "
+             "a questionnaire or assessment dies in about 48 hours.",
+             "Keep LEADS_AUTO_REPLY=true so tomorrow's run answers them itself."],
+            0.95, ["user/inputs/leads.json", "leads/"]))
+    if needs_you:
+        person = [item for item in items if item.get("state") in LEAD_PERSON_STATES][:10]
+        evidence = ["%d leads wait for you, %d of them since today." % (needs_you, int(today.get("needs_you") or 0))]
+        evidence += ["%s (received %s); why: %s" % (_lead_line(item), _received(item), item.get("why") or "not recorded")
+                     for item in person]
+        if needs_you > len(person):
+            evidence.append("%d more wait for you; the Leads section lists the newest." % (needs_you - len(person)))
+        causes.append(Cause(
+            "leads-need-you", "high", "Leads the bots could not finish need you", evidence, "manual",
+            ["Open each one; the 'why' says what was missing (an assessment to take, a fact not in profile.yaml, a draft in Gmail to finish)."],
+            0.9, ["user/inputs/leads.json"]))
+    if answered_today:
+        done = [item for item in items if str(item.get("answered_at") or "")[:10] == day][:10]
+        evidence = ["%s (answered at %s)" % (_lead_line(item), str(item.get("answered_at"))[11:16]) for item in done]
+        if answered_today > len(done):
+            evidence.append("%d more answered today." % (answered_today - len(done)))
+        causes.append(Cause(
+            "leads-answered", "info", "%d recruiter threads were answered today by the leads bot" % answered_today,
+            evidence, "manual", ["Nothing to do; check the dashboard's Leads tab for what was written."], 0.9))
+    return causes
+
+
 def rank(local: Dict[str, Any], mail: Optional[Dict[str, Any]], sites: Optional[Dict[str, Any]],
          resume: Dict[str, Any], settings_email: str = "") -> List[Dict[str, Any]]:
     causes: List[Cause] = []
@@ -160,21 +232,33 @@ def rank(local: Dict[str, Any], mail: Optional[Dict[str, Any]], sites: Optional[
     submitted = funnel["submitted_total"]
     expected = expected_interviews(submitted)
 
+    # --- Leads: the threads recruiters started, and what the bots did with them ---
+    leads = local.get("leads") or {}
+    causes.extend(_lead_causes(leads))
+
     # --- Is the silence real, or were the calls missed? ---------------------
     mail_positive = (mail or {}).get("positive_total") if mail else None
     local_positive = local["replies"]["positive"]
     if mail and not mail.get("error"):
         if mail_positive:
-            from diagnose.report import grouped_positives
+            from diagnose.report import LEADS_ANSWERED, grouped_positives
 
             groups = grouped_positives(mail["positives"])
-            listed = ["%s %s from %s: \"%s\"%s" % (g["platform"], g["kind"].lower(), g["from"][:30], g["subject"][:80],
-                                                  " (x%d)" % g["count"] if g["count"] > 1 else "") for g in groups[:10]]
+            answered_threads = _answered_mail_threads(leads)
+            done = [_thread(g.get("platform"), g.get("subject")) in answered_threads for g in groups]
+            listed = ["%s %s from %s: \"%s\"%s%s" % (g["platform"], g["kind"].lower(), g["from"][:30], g["subject"][:80],
+                                                    " (x%d)" % g["count"] if g["count"] > 1 else "",
+                                                    " (%s)" % LEADS_ANSWERED if answered else "")
+                      for g, answered in zip(groups[:10], done)]
+            # Kept ahead of the reply-reader note: action_plan() reads evidence[1:-1] as the mails to answer.
+            since = (["%d of these threads have since been %s (see Leads)" % (sum(done), LEADS_ANSWERED)]
+                     if leads.get("answered") else [])
             causes.append(Cause(
                 "calls-exist", "critical", "Positive mail exists that nobody answered",
                 ["%d hiring-positive mails (%d distinct) in the last %d days: %s" % (
                     mail_positive, len(groups), mail["days"], ", ".join("%s %d" % kv for kv in mail["positive_by_kind"].items()))]
                 + listed
+                + since
                 + ["The reply reader (sites_bot/replies.py) only matches mail to one applied job and drops anything "
                    "from a job-board domain, so employer_replies.jsonl shows %d positives." % local_positive],
                 "code", ["Today: answer every item above; a shortlist, an assessment invite or a reply to a cold mail dies in 48 hours.",

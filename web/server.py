@@ -252,6 +252,7 @@ def course_json() -> Dict[str, Any]:
 def status_json(runner: Runner) -> Dict[str, Any]:
     today = dt.date.today()
     course = course_json()
+    leads = state.leads_data(today, limit=0)
     return {
         "greeting": state.greeting(),
         "name": state.first_name(state.PROFILE),
@@ -259,6 +260,8 @@ def status_json(runner: Runner) -> Dict[str, Any]:
         "date_long": long_date(today),
         "report": {"ready": state.report_path().is_file(), "days": state.report_days()[:60]},
         "diagnostics": {"ready": state.diagnostics_path().is_file(), "days": state.diagnostics_days()[:60]},
+        "leads": {"waiting": leads["waiting"], "needs_you": leads["needs_you"],
+                  "today_new": leads["today"]["new"], "today_answered": leads["today"]["answered"]},
         "questions": [{"line": line, "questions": qs} for line, qs in state.unanswered_questions(state.ANSWERS)],
         "facts": [{"line": line, "key": key} for line, key in state.blank_facts(state.PROFILE)],
         "sites": state.company_sites(state.COMPANY_SITES),
@@ -278,7 +281,12 @@ def overview_json(days_text: str) -> Dict[str, Any]:
         raise ValueError(f"days must be a whole number, not {days_text!r}") from None
     if days > MAX_OVERVIEW_DAYS:
         raise ValueError(f"days can be at most {MAX_OVERVIEW_DAYS}")
-    return state.overview(days)
+    data = state.overview(days)
+    try:
+        data["waiting"] = waiting.summary(days)
+    except Exception as exc:  # a broken worklist must not take the whole Launchpad down
+        data["waiting"] = {"total": 0, "days": days, "kinds": [], "boards": [], "error": str(exc)}
+    return data
 
 
 def report_json(day_text: str) -> Dict[str, Any]:
@@ -306,6 +314,21 @@ def diagnostics_json(day_text: str) -> Dict[str, Any]:
         "markdown_url": f"/reports/{day.isoformat()}/{state.DIAGNOSTICS_MD}" if exists else "",
         **data,
     }
+
+
+def leads_json(day_text: str, days_text: str) -> Dict[str, Any]:
+    """The leads journal read live: each recruiter thread the inbox and mail stages recorded, and what was done with it."""
+    day = state.parse_day(day_text)
+    try:
+        days = int(days_text or 14)
+    except ValueError:
+        raise ValueError(f"days must be a whole number, not {days_text!r}") from None
+    if not 1 <= days <= MAX_OVERVIEW_DAYS:
+        raise ValueError(f"days must be between 1 and {MAX_OVERVIEW_DAYS}")
+    data = state.leads_data(day, days)
+    if data.get("path"):
+        data["path"] = shown_path(Path(data["path"]))
+    return {"day": day.isoformat(), "days": days, "exists": data["total"] > 0, **data}
 
 
 def file_json(name: str) -> Dict[str, Any]:
@@ -671,6 +694,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.json(report_json(query.get("day", "")))
             elif route == "/api/diagnostics":
                 self.json(diagnostics_json(query.get("day", "")))
+            elif route == "/api/leads":
+                self.json(leads_json(query.get("day", ""), query.get("days", "")))
             elif route == "/api/waiting":
                 self.json(waiting.waiting_json(query))
             elif route == "/api/file":

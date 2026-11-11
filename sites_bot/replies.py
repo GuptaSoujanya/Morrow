@@ -43,13 +43,19 @@ GAP = "[…]"
 _SENT = (ApplyStatus.APPLIED, ApplyStatus.APPLIED_EXTERNAL, ApplyStatus.APPLIED_PLATFORM)
 
 # A free-mail or job-site domain says nothing about which employer wrote.
-_SHARED_DOMAINS = {
+_FREE_MAIL = {
     "gmail.com", "googlemail.com", "yahoo.com", "yahoo.co.in", "outlook.com", "hotmail.com",
     "live.com", "icloud.com", "rediffmail.com", "proton.me", "protonmail.com", "zoho.com",
+}
+# A board or ATS relays many employers' mail; it does say which board the application went through.
+_BOARD_DOMAINS = {
     "naukri.com", "linkedin.com", "indeed.com", "hirist.tech", "instahyre.com", "cutshort.io",
     "wellfound.com", "myworkdayjobs.com", "greenhouse.io", "lever.co", "ashbyhq.com",
     "smartrecruiters.com", "icims.com", "successfactors.com", "darwinbox.in", "keka.com",
 }
+_SHARED_DOMAINS = _FREE_MAIL | _BOARD_DOMAINS
+#: Gmail folders read for employers' mail; hiring mail lands in Spam too, and threads leave the Inbox.
+FOLDERS = ("INBOX", "[Gmail]/Spam", "[Gmail]/All Mail")
 _LEGAL_WORDS = re.compile(
     r"\b(pvt|private|ltd|limited|inc|llc|llp|corp|corporation|co|technologies|technology|"
     r"solutions|services|software|systems|india|labs|group)\b\.?"
@@ -66,6 +72,7 @@ class Mail:
     body: str
     sent_at: str = ""
     references: str = ""
+    folder: str = ""
 
 
 @dataclass
@@ -130,6 +137,10 @@ def link(mail: Mail, applications: List[Dict[str, Any]], contacts: List[Dict[str
             return _newest(by_domain)
     text = " ".join((mail.sender_name, domain.replace(".", " "), mail.subject)).casefold()
     text = " ".join(re.sub(r"[^a-z0-9 ]+", " ", text).split())
+    if domain in _BOARD_DOMAINS:
+        # A board relays its own recruiters' mail: match the company among the applications sent through it first.
+        through_board = [row for row in sent if base_domain(urlsplit(str(row.get("url") or "")).hostname or "") == domain]
+        sent = through_board or sent
     companies = {}  # type: Dict[str, List[Dict[str, Any]]]
     for row in sent:
         key = company_key(str(row.get("company") or ""))
@@ -138,6 +149,14 @@ def link(mail: Mail, applications: List[Dict[str, Any]], contacts: List[Dict[str
     if len(companies) == 1:
         return _newest(next(iter(companies.values())))
     return None
+
+
+def is_lead(mail: Mail) -> bool:
+    """Hiring mail about no known application: a recruiter's outreach, question or invite worth reading."""
+    from diagnose import mail_rules
+
+    verdict = mail_rules.classify(mail.sender, mail.subject, mail.body[:400])
+    return verdict.positive and not mail_rules.is_noise(verdict)
 
 
 def _newest(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -175,25 +194,34 @@ def read_mail(settings: Settings, account: str, days: int) -> List[Mail]:
         logger.warning("Could not reach Gmail: %s", exc)
         return []
     mails = []  # type: List[Mail]
+    seen = set()
     try:
         imap.login(account, settings.gmail_app_password)
-        imap.select("INBOX", readonly=True)
         since = (datetime.now(timezone.utc) - timedelta(days=max(days, 1))).strftime("%d-%b-%Y")
-        state, data = imap.search(None, "SINCE", since)
-        if state != "OK" or not data or not data[0]:
-            return []
-        for number in reversed(data[0].split()[-NEWEST_MESSAGES:]):
-            state, payload = imap.fetch(number, "(BODY.PEEK[])")
-            if state != "OK" or not payload or not isinstance(payload[0], tuple):
+        for folder in FOLDERS:
+            state, _ = imap.select(folder, readonly=True)
+            if state != "OK":
+                logger.info("Gmail has no %s folder to read; skipping it.", folder)
                 continue
-            message = email.message_from_bytes(payload[0][1])
-            name, address = parseaddr(_header(message.get("From")))
-            mails.append(Mail(
-                message_id=_header(message.get("Message-ID")) or "%s|%s" % (address, _header(message.get("Subject"))),
-                sender=address, sender_name=name, subject=_header(message.get("Subject")),
-                body=_body(message), sent_at=_header(message.get("Date")),
-                references=_header(message.get("References")),
-            ))
+            state, data = imap.search(None, "SINCE", since)
+            if state != "OK" or not data or not data[0]:
+                continue
+            for number in reversed(data[0].split()[-NEWEST_MESSAGES:]):
+                state, payload = imap.fetch(number, "(BODY.PEEK[])")
+                if state != "OK" or not payload or not isinstance(payload[0], tuple):
+                    continue
+                message = email.message_from_bytes(payload[0][1])
+                name, address = parseaddr(_header(message.get("From")))
+                mail = Mail(
+                    message_id=_header(message.get("Message-ID")) or "%s|%s" % (address, _header(message.get("Subject"))),
+                    sender=address, sender_name=name, subject=_header(message.get("Subject")),
+                    body=_body(message), sent_at=_header(message.get("Date")),
+                    references=_header(message.get("References")), folder=folder,
+                )
+                if mail.message_id in seen:
+                    continue
+                seen.add(mail.message_id)
+                mails.append(mail)
     except imaplib.IMAP4.error as exc:
         logger.warning("Gmail refused the app password or the search: %s", exc)
     except (OSError, ssl.SSLError) as exc:
@@ -385,6 +413,7 @@ def _save(settings: Settings, reply: Reply, now: datetime) -> Dict[str, Any]:
         "title": application.get("title") or "", "kind": reply.kind, "summary": reply.summary,
         "questions": reply.questions, "confirmed_time": reply.confirmed_time, "draft": draft_path,
         "gaps": reply.gaps, "handled": False, "read_at": now.isoformat(timespec="seconds"),
+        "lead": reply.application is None, "folder": reply.mail.folder,
     }
     path = log_path(settings)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -421,7 +450,7 @@ def process(settings: Settings, profile: Profile, client: Any, mails: List[Mail]
     """Link, classify and draft each new mail; counts of what happened. Never sends."""
     now = now or datetime.now()
     seen = {row.get("message_id") for row in read_log(settings)}
-    counts = {"read": 0, "linked": 0, "drafted": 0, "already read": 0}
+    counts = {"read": 0, "linked": 0, "leads": 0, "drafted": 0, "already read": 0}
     own = {(profile.email or "").casefold(), (account or "").casefold()} - {""}
     for mail in mails:
         counts["read"] += 1
@@ -432,20 +461,25 @@ def process(settings: Settings, profile: Profile, client: Any, mails: List[Mail]
             continue
         application = link(mail, applications, contacts)
         if application is None:
-            continue
-        counts["linked"] += 1
-        found = classify(client, mail, application) if client.available() else None
+            # Hiring mail about no recorded application is a lead (a recruiter wrote first), not noise.
+            if not is_lead(mail):
+                continue
+            counts["leads"] += 1
+        else:
+            counts["linked"] += 1
+        about = application or {}
+        found = classify(client, mail, about) if client.available() else None
         if found is None:
             continue
         reply = Reply(mail=mail, application=application, kind=found["kind"], summary=found["summary"],
                       questions=found["questions"], confirmed_time=found["confirmed_time"])
         if reply.kind in ANSWERED_KINDS:
-            drafted = draft_reply(client, profile, mail, application, found)
+            drafted = draft_reply(client, profile, mail, about, found)
             if drafted is not None:
                 reply.draft, reply.gaps = drafted["text"], drafted["gaps"]
                 counts["drafted"] += 1
         if dry_run:
-            print("%s | %s | %s\n%s\n" % (reply.kind, application.get("company"), reply.summary, reply.draft))
+            print("%s | %s | %s\n%s\n" % (reply.kind, about.get("company") or "lead", reply.summary, reply.draft))
             continue
         _save(settings, reply, now)
         seen.add(mail.message_id)

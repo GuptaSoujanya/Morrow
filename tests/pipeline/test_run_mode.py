@@ -75,7 +75,7 @@ def test_saved_preview_runs_callbacks_without_changing_checkpoint(configured_pip
 @pytest.mark.parametrize("selection", [
     ["study"],
     ["run", "--only", "learn", "--only", "brief"],
-    ["run", "--skip", "profile", "--skip", "apply"],
+    ["run", "--skip", "inbox", "--skip", "profile", "--skip", "apply"],
 ])
 def test_study_and_research_can_save_progress_with_applications_in_preview(
         configured_pipeline, monkeypatch, selection):
