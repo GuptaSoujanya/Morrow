@@ -429,11 +429,57 @@ def diagnostics_data(day: dt.date) -> Dict[str, Any]:
         "fit": {k: v for k, v in (local.get("fit") or {}).items() if k in ("score_bands", "median_score", "below_min_score", "min_score", "mismatched_titles")},
         "mail": {k: mail.get(k) for k in ("account", "days", "scanned", "positive_total", "positive_by_kind", "positive_by_platform",
                                           "error", "via", "model", "queries", "verification")} if mail else {},
-        "positives": (mail.get("positives") or [])[:40] if mail else [],
+        "positives": (mail.get("positives") or [])[:150] if mail else [],
         "spam_hiring": len(mail.get("spam_hiring") or []) if mail else 0,
         "boards": boards,
         "resume": {k: v for k, v in (payload.get("resume") or {}).items()
                    if k in ("headline", "coverage", "bullets", "bullets_with_metric", "missing_in_demand", "weak_words", "error")},
+        "autofix": autofix_data(day),
+    }
+
+
+AUTOFIX_JSON = "autofix.json"
+AUTOFIX_MD = "autofix.md"
+
+
+def autofix_data(day: dt.date) -> Dict[str, Any]:
+    """What ``python -m diagnose.autofix`` changed for the day, trimmed for the dashboard; {} when it has not run."""
+    import json
+
+    try:
+        payload = json.loads(_read(diagnostics_path(day, AUTOFIX_JSON)) or "{}")
+    except ValueError:
+        return {}
+    if not isinstance(payload, dict) or not payload:
+        return {}
+    settings = payload.get("settings") or {}
+    answers = payload.get("answers") or {}
+    code = payload.get("code") or {}
+    tests = code.get("tests") or {}
+    return {
+        "generated_at": payload.get("generated_at", ""),
+        "dry_run": bool(payload.get("dry_run")),
+        "clis": payload.get("clis") or [],
+        "settings": {"changes": settings.get("changes") or {}, "skipped": settings.get("skipped") or [],
+                     "overrode_notes": settings.get("overrode_notes") or []},
+        "answers": {"deleted": answers.get("deleted") or [], "rewritten": answers.get("rewritten") or [],
+                    "error": answers.get("error", "")},
+        "code": {
+            "tasks": code.get("tasks") or [],
+            "used": code.get("used", ""),
+            "attempts": [{k: a.get(k) for k in ("cli", "error", "seconds", "code")} for a in code.get("attempts") or []],
+            "files": code.get("files") or [],
+            "kept": bool(code.get("kept")),
+            "reverted": code.get("reverted") or [],
+            "tests": {"baseline_failed": len(tests.get("baseline_failed") or []),
+                      "after_failed": None if tests.get("after_failed") is None else len(tests.get("after_failed") or []),
+                      "ran_after": "after_failed" in tests},
+            "summary": (code.get("summary") or "")[:2500],
+            "proxies": code.get("proxies") or {},
+        },
+        "trail": payload.get("trail") or [],
+        "failed_steps": payload.get("failed_steps") or [],
+        "markdown_url": f"/reports/{day.isoformat()}/{AUTOFIX_MD}",
     }
 
 

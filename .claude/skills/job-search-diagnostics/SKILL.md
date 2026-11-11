@@ -72,6 +72,20 @@ checked", JSON key `trail`). A step whose check fails keeps the rules' result.
 | `profile-inconsistent` | Same notice period, experience and city on every board. |
 | `spam` / `naukri-mail-missing` | Gmail filters; Naukri Settings > Communication address and toggles. |
 
+## Applying the fixes automatically
+
+`python3 -m diagnose.autofix` (pipeline stage `autofix`, dashboard button **Fix it now**) reads the latest
+`diagnostics.json` and acts on it; `autofix.md` records every step as research → verify → check → execute.
+
+| Fix kind | Who applies it | Guard |
+|---|---|---|
+| `env` / `profile` settings the causes spell as `KEY=value` | Morrow itself, in `.env` | only to the stricter value; old value kept in a comment; copy under `autofix/` |
+| `answers` (location answers saying Others/Remote/Any) | Morrow itself, from `profile.yaml` | refuses when the profile has no city; cached rows deleted so the bot re-learns |
+| `code` causes and the plan's code lines | a coding CLI: opencode → claude → kiro (`AUTOFIX_CLI`, `--cli`) | may edit bot packages and tests only; tests must not get worse; no test deleted; otherwise every change reverted; never committed |
+
+Dry run with `--dry-run` (or `AUTOFIX=false` in `.env`). A CLI that hangs usually has a stale proxy in its
+environment; the report lists `ANTHROPIC_BASE_URL`-style variables that were set.
+
 ## Benchmarks to quote
 
 Cold applications → interview 2–3% (meta-analysis of 27 studies); Ashby Q1 2026 technical 3.6%;

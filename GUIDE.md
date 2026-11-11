@@ -831,6 +831,24 @@ under **Why no replies** (causes, plan, model review, mailbox searches, boards, 
 with a button that runs the stage; the Claude skill `.claude/skills/job-search-diagnostics/SKILL.md`
 explains how to turn each cause into a change.
 
+`python3 -m diagnose.autofix` then applies the audit. Every step is researched, verified and checked
+before it is executed, and written down in `user/reports/<date>/autofix.md` (and `autofix.json`, shown on
+the dashboard under **Why no replies → Fixes applied**, with a **Fix it now** button). Three kinds of fix:
+the `.env` values the causes name (`MIN_SCORE`, `EXCLUDE_TITLES`, `MAX_YEARS_OVER`, `TARGET_APPLICATIONS`,
+`DAILY_QUOTA`, `MAX_CANDIDATES`) are changed by Morrow itself, only ever to the stricter value, with the old
+value kept in a comment and a copy of the file under `autofix/`; saved location answers that say
+Others/Remote/Any are corrected from `profile.yaml` (the cached rows go, `answers.txt` is rewritten); the
+code changes are handed as one bounded task list to a local coding CLI, **opencode, else Claude Code, else
+Kiro** (`AUTOFIX_CLI=claude,kiro` reorders or restricts; `--cli` for one run), which may edit the bot
+packages and tests only. Afterwards the test-suite must do no worse than before, no test may be gone and no
+forbidden path (`.env`, `user/`, the dashboard, `.git`) touched, or every file the CLI changed is reverted
+(new files are kept under `autofix/rejected/`). The diff is saved as `autofix/changes.patch`; nothing is
+committed. `AUTOFIX=false` keeps the stage as a report of what would change (`--dry-run` for one run);
+`--no-settings`, `--no-answers`, `--no-code` leave one kind alone; `--timeout 1800` bounds the CLI.
+In the pipeline it is the `autofix` stage, right after `diagnose`. If a CLI hangs, look at the proxy
+variables the report names (`ANTHROPIC_BASE_URL` and the like): a stale one in the shell that started
+Morrow stops the CLI from reaching its model.
+
 ### Cold emails to recruiters (drafts only)
 
 - **Who gets one:** only an address a company published for applications: a posting's text, a career

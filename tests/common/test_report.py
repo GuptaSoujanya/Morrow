@@ -317,3 +317,70 @@ def test_each_run_keeps_its_log_next_to_the_report(tmp_path):
     text = report.build_report(settings, DAY, NOON)
     assert "- [naukri-090501.log](logs/naukri-090501.log)" in text
     assert "- [naukri-183000.log](logs/naukri-183000.log)" in text
+
+
+def _seen(monkeypatch, settings, when, job):
+    monkeypatch.setattr(ledger_module, "_now", lambda: _utc(when))
+    ledger = Ledger(settings.db_path)
+    try:
+        ledger.record_seen(job, 61.0, [])
+    finally:
+        ledger.close()
+
+
+def test_long_shots_are_marked_in_the_applied_table_and_under_replies(monkeypatch, tmp_path):
+    settings = _settings(tmp_path)
+    facts = tmp_path / "user" / "inputs" / "profile.yaml"
+    facts.parent.mkdir(parents=True, exist_ok=True)
+    facts.write_text("total_experience_years: 2.9\n", encoding="utf-8")
+    when = datetime(2026, 10, 10, 9, 0)
+    _seen(monkeypatch, settings, when, JobPosting(job_id="a", url="https://www.naukri.com/job-a", title="Backend Developer",
+                                                   company="Co a", experience="2-4 Yrs"))
+    _seen(monkeypatch, settings, when, JobPosting(job_id="b", url="https://www.naukri.com/job-b", title="Senior Backend Engineer",
+                                                   company="Co b", experience="5-8 Yrs"))
+    _seen(monkeypatch, settings, when, JobPosting(job_id="c", url="https://www.naukri.com/job-c", title="Python Developer",
+                                                   company="Co c", description="Looking for 4+ years of experience in Python."))
+    _record(monkeypatch, settings, datetime(2026, 10, 10, 9, 5), "a", ApplyStatus.APPLIED)
+    _record(monkeypatch, settings, datetime(2026, 10, 10, 9, 9), "b", ApplyStatus.APPLIED)
+    _record(monkeypatch, settings, datetime(2026, 10, 10, 9, 12), "c", ApplyStatus.APPLIED_PLATFORM)
+
+    text = report.build_report(settings, DAY, NOON)
+
+    assert "- Long shots among them (more years asked, or a senior title): 2" in text
+    assert "| 09:05 | Co a | Role a | Naukri | [job](https://www.naukri.com/job-a) | in range |" in text
+    assert ("| 09:09 | Co b | Role b | Naukri | [job](https://www.naukri.com/job-b) | "
+            "long shot: asks 5+ years, profile has 2.9; senior title (Senior) |") in text
+    assert "[job](https://www.naukri.com/job-c) | long shot: asks 4+ years, profile has 2.9 |" in text
+    assert "### Why a reply may not come" in text
+    assert "2 of today's 3 applications went to roles above the profile's range." in text
+    assert "- **Co b**, Role b: asks 5+ years, profile has 2.9; senior title (Senior)" in text
+    assert "- **Co c**, Role c: asks 4+ years, profile has 2.9" in text
+    assert "Co a**" not in text.split("### Why a reply may not come")[1].split("## Tried")[0]
+
+
+def test_a_reply_from_a_long_shot_is_marked_as_one():
+    rows = [{"company": "Co b", "job_id": "b", "kind": "INTERVIEW", "summary": "call tomorrow", "draft": "", "gaps": []}]
+    text = "\n".join(report.employer_replies_text(rows, {"b": "senior title (Senior)"}))
+    assert "| Co b (long shot: senior title (Senior)) | INTERVIEW |" in text
+
+
+def test_without_long_shots_the_section_says_so(monkeypatch, tmp_path):
+    settings = _settings(tmp_path)
+    _record(monkeypatch, settings, datetime(2026, 10, 10, 9, 5), "a", ApplyStatus.APPLIED)
+    text = report.build_report(settings, DAY, NOON)
+    assert "- Long shots among them (more years asked, or a senior title): 0" in text
+    assert "None today; every application was within the profile's range." in text
+
+
+def test_the_ledger_keeps_the_experience_label_and_returns_postings(monkeypatch, tmp_path):
+    settings = _settings(tmp_path)
+    monkeypatch.setattr(ledger_module, "_now", lambda: _utc(datetime(2026, 10, 10, 9, 0)))
+    ledger = Ledger(settings.db_path)
+    try:
+        ledger.record_seen(JobPosting(job_id="x", url="u", title="T", company="C", experience="3-5 Yrs", description="d"))
+        ledger.record_seen(JobPosting(job_id="x", url="u", title="T", company="C"))  # a later sighting without the label
+        found = ledger.postings(["x", "missing", "x"])
+    finally:
+        ledger.close()
+    assert set(found) == {"x"}
+    assert found["x"]["experience"] == "3-5 Yrs" and found["x"]["description"] == "d"

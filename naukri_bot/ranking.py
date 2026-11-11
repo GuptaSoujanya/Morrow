@@ -167,6 +167,26 @@ def experience_gap(gaps: List[str], bound: Optional[float]) -> Optional[str]:
     return None
 
 
+#: Title words that put a role above the profile's level. Such postings are still
+#: applied to since the net was widened on 2026-11-11; the daily report marks them as
+#: long shots so a silence from that employer reads as expected, and a call back
+#: from one says the bar can move.
+SENIOR_TITLE_WORDS = ("Senior", "Sr", "Lead", "Staff", "Principal", "Head", "Architect", "Director")
+
+
+def long_shot_reason(job: JobPosting, total_years: Optional[float]) -> str:
+    """Why an application to `job` has lower odds: it asks for more years than the
+    profile has, its title is senior-level, or both. Empty when the posting is in reach."""
+    reasons: List[str] = []
+    minimum = required_years(job)
+    if total_years is not None and minimum is not None and minimum > total_years:
+        reasons.append("asks %g+ years, profile has %g" % (minimum, total_years))
+    words = [word for word in SENIOR_TITLE_WORDS if _phrase_pattern(word).search(job.title or "")]
+    if words:
+        reasons.append("senior title (%s)" % ", ".join(words))
+    return "; ".join(reasons)
+
+
 def _is_remote(value: str) -> bool:
     normalised = " ".join(value.casefold().split())
     return any(term in normalised for term in _REMOTE_TERMS)

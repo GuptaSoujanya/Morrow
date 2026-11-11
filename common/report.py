@@ -143,6 +143,65 @@ def _ledger_rows(settings: Settings, day: date) -> Tuple[List[Dict[str, Any]], L
         ledger.close()
 
 
+def _total_years(settings: Settings) -> Optional[float]:
+    """total_experience_years from the facts file, None when it is blank or unreadable."""
+    try:
+        import yaml
+
+        data = yaml.safe_load(Path(settings.profile_path).read_text(encoding="utf-8")) or {}
+        value = data.get("total_experience_years") if isinstance(data, dict) else None
+        return float(value) if value not in (None, "") else None
+    except Exception as exc:  # a broken facts file must not stop the report
+        logger.debug("Could not read total_experience_years from %s: %s", settings.profile_path, exc)
+        return None
+
+
+def _long_shots(settings: Settings, rows: List[Dict[str, Any]]) -> Dict[str, str]:
+    """job_id -> why that application has lower odds (asked for more years than the
+    profile has, or a senior-level title). Read from jobs_seen; nothing for jobs it lacks."""
+    if not rows or not settings.db_path or not Path(settings.db_path).exists():
+        return {}
+    from naukri_bot.ranking import long_shot_reason
+    from .ledger import Ledger
+    from .models import JobPosting
+
+    total = _total_years(settings)
+    ledger = Ledger(settings.db_path)
+    try:
+        seen = ledger.postings(str(row.get("job_id") or "") for row in rows)
+    finally:
+        ledger.close()
+    out: Dict[str, str] = {}
+    for row in rows:
+        job_id = str(row.get("job_id") or "")
+        record = seen.get(job_id) or {}
+        job = JobPosting(
+            job_id=job_id, url=str(row.get("url") or ""),
+            title=str(record.get("title") or row.get("title") or ""),
+            experience=str(record.get("experience") or ""), description=str(record.get("description") or ""),
+        )
+        why = long_shot_reason(job, total)
+        if why:
+            out[job_id] = why
+    return out
+
+
+def long_shots_text(rows: List[Dict[str, Any]], long_shots: Dict[str, str]) -> List[str]:
+    """The applications sent today that were long shots, each with its reason."""
+    flagged = [row for row in rows if str(row.get("job_id") or "") in long_shots]
+    if not flagged:
+        return ["None today; every application was within the profile's range."]
+    out = [
+        "%d of today's %d applications went to roles above the profile's range. A silence from these "
+        "employers is expected; a call back from one of them is a sign the range can move." % (len(flagged), len(rows)),
+        "",
+    ]
+    out += ["- **%s**, %s: %s" % (
+        _cell(row.get("company") or "-", 60), _cell(row.get("title") or "-", 80),
+        _cell(long_shots[str(row.get("job_id") or "")], 160)) for row in flagged]
+    return out
+
+
 def _skill_gaps(settings: Settings, day: date) -> List[Dict[str, Any]]:
     """Jobs scored today with the requirements their scorer found missing from the profile."""
     if not settings.db_path or not Path(settings.db_path).exists():
@@ -265,18 +324,26 @@ def _employer_replies(settings: Settings, day: date) -> List[Dict[str, Any]]:
         return []
 
 
-def employer_replies_text(rows: List[Dict[str, Any]]) -> List[str]:
-    """Replies read today, counted by kind, each with its drafted answer (never sent)."""
+def employer_replies_text(rows: List[Dict[str, Any]], long_shots: Optional[Dict[str, str]] = None) -> List[str]:
+    """Replies read today, counted by kind, each with its drafted answer (never sent).
+
+    A reply to a long-shot application is marked as such: it is the evidence that the
+    range of roles applied to can widen further."""
     if not rows:
         return ["No employer replies were read today. Run `python3 -m sites_bot.replies`."]
+    long_shots = long_shots or {}
     kinds: Dict[str, int] = {}
     for row in rows:
         kinds[str(row.get("kind") or "OTHER")] = kinds.get(str(row.get("kind") or "OTHER"), 0) + 1
     out = ["- %s" % ", ".join("%s %d" % (kind.lower(), count) for kind, count in sorted(kinds.items())), ""]
     out += ["| Company | Kind | Summary | Draft (not sent) | Fill in first |", "|---|---|---|---|---|"]
     for row in rows:
+        company = _cell(row.get("company") or "-", 60)
+        why = long_shots.get(str(row.get("job_id") or ""))
+        if why:
+            company += " (long shot: %s)" % _cell(why, 100)
         out.append("| %s | %s | %s | %s | %s |" % (
-            _cell(row.get("company") or "-", 60), _cell(row.get("kind") or "-", 20),
+            company, _cell(row.get("kind") or "-", 20),
             _cell(row.get("summary") or "-"), _cell(row.get("draft") or "-", 200),
             _cell("; ".join(row.get("gaps") or []) or "-")))
     return out
@@ -391,6 +458,8 @@ def build_report(settings: Settings, day: Optional[date] = None, now: Optional[d
     linkedin = _linkedin(day)
     untried = _untried_company_sites()
 
+    long_shots = _long_shots(settings, sent)
+
     naukri = sum(1 for row in sent if row.get("status") == ApplyStatus.APPLIED)
     boards = sum(1 for row in sent if row.get("status") == ApplyStatus.APPLIED_PLATFORM)
     if linkedin["posted"]:
@@ -409,6 +478,7 @@ def build_report(settings: Settings, day: Optional[date] = None, now: Optional[d
         "",
         "- Applied: %d on Naukri, %d on other job boards, %d on company sites" % (
             naukri, boards, len(sent) - naukri - boards),
+        "- Long shots among them (more years asked, or a senior title): %d" % len(long_shots),
         "- Tried without applying: %d" % len(not_sent),
         "- Company-site applications waiting for you: %d" % len(sites),
         "- Questions waiting for your answer in answers.txt: %d" % len(questions),
@@ -421,23 +491,27 @@ def build_report(settings: Settings, day: Optional[date] = None, now: Optional[d
         "",
     ]
     if sent:
-        out += ["| Time | Company | Role | Where | Link |", "|---|---|---|---|---|"]
+        out += ["| Time | Company | Role | Where | Link | Odds |", "|---|---|---|---|---|---|"]
         for row in sent:
+            why = long_shots.get(str(row.get("job_id") or ""))
             out.append(
-                "| %s | %s | %s | %s | [job](%s) |"
+                "| %s | %s | %s | %s | [job](%s) | %s |"
                 % (
                     _local_clock(row.get("at", "")),
                     _cell(row.get("company") or "-", 60),
                     _cell(row.get("title") or "-", 80),
                     _where(row),
                     row.get("url") or "",
+                    "long shot: %s" % _cell(why, 120) if why else "in range",
                 )
             )
     else:
         out.append("Nothing was applied to today.")
 
     out += ["", "## Employer replies", ""]
-    out += employer_replies_text(_employer_replies(settings, day))
+    out += employer_replies_text(_employer_replies(settings, day), long_shots)
+    out += ["", "### Why a reply may not come", ""]
+    out += long_shots_text(sent, long_shots)
 
     out += ["", "## Tried but not applied", ""]
     if not_sent:

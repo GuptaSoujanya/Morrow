@@ -12,7 +12,7 @@ import string
 import threading
 from datetime import datetime, timedelta, timezone
 from types import TracebackType
-from typing import Any, Dict, List, Optional, Set, Type
+from typing import Any, Dict, Iterable, List, Optional, Set, Type
 
 from .models import (
     OPEN_APPLICATION_DAYS, Answer, AnswerSource, ApplyResult, ApplyStatus, JobPosting, Settings,
@@ -97,6 +97,7 @@ class Ledger:
             self._ensure_facts_column()
             self._ensure_gaps_column()
             self._ensure_description_column()
+            self._ensure_experience_column()
             self._ensure_answer_facts_column()
         except sqlite3.Error:
             logger.exception("failed to open ledger database at %s", db_path)
@@ -146,6 +147,15 @@ class Ledger:
             columns = {row[1] for row in self._connection.execute("PRAGMA table_info(jobs_seen)")}
             if "description" not in columns:
                 self._connection.execute("ALTER TABLE jobs_seen ADD COLUMN description TEXT NOT NULL DEFAULT ''")
+
+    def _ensure_experience_column(self) -> None:
+        # The card's experience label ("3-5 Yrs"). The report reads it back to say which
+        # applications asked for more years than the profile has.
+        with self._lock, self._connection:
+            self._connection.execute("BEGIN IMMEDIATE")
+            columns = {row[1] for row in self._connection.execute("PRAGMA table_info(jobs_seen)")}
+            if "experience" not in columns:
+                self._connection.execute("ALTER TABLE jobs_seen ADD COLUMN experience TEXT NOT NULL DEFAULT ''")
 
     def _ensure_answer_facts_column(self) -> None:
         # The facts an answer was learned under. profile_fingerprint holds the cache key,
@@ -301,21 +311,43 @@ class Ledger:
             with self._lock, self._connection:
                 self._connection.execute(
                     """INSERT INTO jobs_seen(
-                           job_id, url, title, company, source, first_seen, last_seen, score, gaps_json, description
-                       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                           job_id, url, title, company, source, first_seen, last_seen, score, gaps_json, description,
+                           experience
+                       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                        ON CONFLICT(job_id) DO UPDATE SET
                            last_seen = excluded.last_seen,
                            score = COALESCE(excluded.score, score),
                            gaps_json = COALESCE(excluded.gaps_json, gaps_json),
-                           description = CASE WHEN excluded.description != '' THEN excluded.description ELSE description END""",
+                           description = CASE WHEN excluded.description != '' THEN excluded.description ELSE description END,
+                           experience = CASE WHEN excluded.experience != '' THEN excluded.experience ELSE experience END""",
                     (
                         job.job_id, job.url, job.title, job.company, job.source,
                         seen_at, seen_at, score, gaps_json, (job.description or '')[:12000],
+                        (job.experience or '')[:200],
                     ),
                 )
         except sqlite3.Error:
             logger.exception("failed to record seen job %s", job.job_id)
             raise
+
+    def postings(self, job_ids: Iterable[str]) -> Dict[str, Dict[str, Any]]:
+        """What jobs_seen holds for each id: title, company, url, experience, description."""
+        wanted = [job_id for job_id in dict.fromkeys(str(job_id) for job_id in job_ids if job_id)]
+        found: Dict[str, Dict[str, Any]] = {}
+        try:
+            with self._lock:
+                for start in range(0, len(wanted), 500):
+                    chunk = wanted[start:start + 500]
+                    rows = self._connection.execute(
+                        "SELECT job_id, title, company, url, experience, description FROM jobs_seen "
+                        "WHERE job_id IN (%s)" % ",".join("?" * len(chunk)),
+                        chunk,
+                    ).fetchall()
+                    found.update({row["job_id"]: dict(row) for row in rows})
+        except sqlite3.Error:
+            logger.exception("failed to read %d seen jobs", len(wanted))
+            raise
+        return found
 
     def record_attempt(
         self, result: ApplyResult, title: str = "", company: str = "", facts: str = ""

@@ -265,6 +265,9 @@ def build_stages(args: argparse.Namespace, boards: List[str]) -> List[Stage]:
         stages.append(Stage("read:replies", lambda: _employer_replies(dry + common), True))
     # Read-only funnel audit; the lanes hold the browser profiles during a run, so pages are skipped here.
     stages.append(Stage("diagnose", lambda: _diagnose(common + ["--skip-browser"]), final=True))
+    # Applies the audit's settings and answer fixes and hands its code fixes to a local coding CLI
+    # (opencode, else claude, else kiro). AUTOFIX=false turns it into a report of what would change.
+    stages.append(Stage("autofix", lambda: _autofix(common), final=True))
     stages.append(Stage('research:companies', lambda: _company_research(args), final=True))
     return stages
 
@@ -273,6 +276,12 @@ def _diagnose(flags: List[str]) -> int:
     from diagnose import cli
 
     return cli.main(flags)
+
+
+def _autofix(flags: List[str]) -> int:
+    from diagnose import autofix
+
+    return autofix.main(flags)
 
 
 def selected(stages: List[Stage], only: List[str], skip: List[str]) -> List[Stage]:

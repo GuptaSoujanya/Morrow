@@ -511,6 +511,16 @@ class Settings:
     platform_limit: int = 10
     # Startup jobs (python3 -m sites_bot.startup_jobs): YC posts and HN "Who is hiring?".
     startup_jobs: bool = False
+    # python3 -m diagnose.autofix: apply the audit's settings and answer fixes and hand the code
+    # fixes to a local coding CLI. False keeps the stage as a report of what would change.
+    autofix: bool = True
+    # Leads (python3 -m leads): recruiter messages on the boards and hiring mail in Gmail.
+    # leads_auto_reply lets the bots answer them (board threads through the browser agent,
+    # mail through Gmail SMTP); False records every lead and writes drafts only. leads_days is how
+    # far back a run looks (yesterday and today by default); leads_limit caps answers per run per source.
+    leads_auto_reply: bool = True
+    leads_days: int = 2
+    leads_limit: int = 10
     # Cold emails (python3 -m sites_bot.cold_email): drafts only, never sent.
     # The sender address (empty: GOOGLE_EMAIL, then NAUKRI_EMAIL), its Gmail app
     # password for putting drafts in Gmail (empty: .eml files only), drafts per run.
