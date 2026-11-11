@@ -44,6 +44,39 @@ def test_other_failures_are_not_mistaken_for_a_spent_window(output):
     assert llm.out_of_quota() == ""
 
 
+def test_the_pipeline_cli_raises_a_quota_error_for_a_spent_window(monkeypatch):
+    from common import ai_cli
+
+    class Spent:
+        args = ["claude"]
+        returncode = 1
+        pid = 1
+
+        def __init__(self, *a, **k):
+            pass
+
+        def communicate(self, timeout=None):
+            return "", SESSION_LIMIT
+
+    monkeypatch.setattr(ai_cli.subprocess, "Popen", Spent)
+    monkeypatch.setattr(ai_cli, "chosen_cli", lambda wanted=None: "claude")
+    monkeypatch.setattr(ai_cli, "shutdown_event", None)
+    llm.allow_quota_again()
+    with pytest.raises(ai_cli.QuotaError):
+        ai_cli.ask("write the notes", cli="claude", timeout_s=5)
+    assert llm.out_of_quota(), "the spent window is remembered for every later caller"
+    llm.allow_quota_again()
+
+    class Broken(Spent):
+        def communicate(self, timeout=None):
+            return "", "Error: not signed in"
+
+    monkeypatch.setattr(ai_cli.subprocess, "Popen", Broken)
+    with pytest.raises(ai_cli.AIError) as caught:
+        ai_cli.ask("write the notes", cli="claude", timeout_s=5)
+    assert not isinstance(caught.value, ai_cli.QuotaError)
+
+
 def test_the_window_can_be_opened_again():
     llm.note_out_of_quota(SESSION_LIMIT)
     llm.allow_quota_again()

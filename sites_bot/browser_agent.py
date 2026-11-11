@@ -603,7 +603,11 @@ def to_result(driver: Any, run: AgentRun, previous: Any, dry_run: bool) -> Any:
     result = replace(previous, filled=filled, missing=missing)
     from .external import _current_url
     result.url = (_current_url(driver) if driver is not None else '') or previous.url
-    if run.report is None:
+    if run.report is None and str(run.problem or "").startswith("it ran past"):
+        result.status = ApplyStatus.EXTERNAL_MANUAL
+        result.detail = "needs you for: finishing this application by hand; the browser agent %s: %s" % (
+            run.problem, run.workdir)
+    elif run.report is None:
         result.status = ApplyStatus.ERROR
         result.detail = "the browser agent did not report (%s); check the site before trying again: %s" % (
             run.problem, run.workdir)

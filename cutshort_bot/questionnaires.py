@@ -89,8 +89,11 @@ def pending_rows(driver):
         return []
 
 
-def _journal(settings):
-    return Path(settings.data_dir) / "cutshort_questionnaires.json"
+JOURNAL_NAME = "cutshort_questionnaires.json"
+
+
+def _journal(settings, name=JOURNAL_NAME):
+    return Path(settings.data_dir) / name
 
 
 def _read(path):
@@ -110,8 +113,8 @@ def _read(path):
     return normalized
 
 
-def _claim(settings, identity, facts, url):
-    with locked_file(_journal(settings)) as path:
+def _claim(settings, identity, facts, url, journal=JOURNAL_NAME):
+    with locked_file(_journal(settings, journal)) as path:
         records = _read(path)
         prior = records.get(identity, {})
         if identity in records and prior.get('state') not in _STATES:
@@ -133,8 +136,8 @@ def _claim(settings, identity, facts, url):
     return True
 
 
-def _record(settings, identity, **values):
-    with locked_file(_journal(settings)) as path:
+def _record(settings, identity, journal=JOURNAL_NAME, **values):
+    with locked_file(_journal(settings, journal)) as path:
         records = _read(path)
         records[identity].update(values, at=datetime.now().isoformat())
         atomic_write_text(path, json.dumps(records, indent=2))

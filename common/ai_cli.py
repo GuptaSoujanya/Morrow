@@ -31,6 +31,10 @@ class AIError(RuntimeError):
     pass
 
 
+class QuotaError(AIError):
+    """The CLI stopped because the model's session or usage limit was hit; wait, do not retry per job."""
+
+
 def chosen_cli(wanted: Optional[str] = None) -> str:
     """The CLI to use: the one asked for, else claude, else kiro-cli."""
     wanted = (wanted or os.getenv("PIPELINE_AI_CLI") or "").strip().lower()
@@ -113,7 +117,12 @@ def ask(prompt: str, cli: Optional[str] = None, timeout_s: int = TIMEOUT_S, web:
         raise AIError("%s ran past %d seconds" % (chosen, timeout_s))
     out = _ANSI.sub("", stdout or "").strip()
     if proc.returncode != 0 or not out:
-        raise AIError("%s exited %d: %s" % (chosen, proc.returncode, (stderr or out or "no output")[-400:]))
+        from .llm import note_out_of_quota
+
+        tail = (stderr or out or "no output")[-400:]
+        if note_out_of_quota(stderr or out or ""):
+            raise QuotaError("%s is out of quota: %s" % (chosen, tail))
+        raise AIError("%s exited %d: %s" % (chosen, proc.returncode, tail))
     return out
 
 

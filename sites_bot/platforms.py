@@ -18,6 +18,7 @@ they share, and can still run several boards at once:
 """
 
 import argparse
+import importlib
 import logging
 import re
 import sys
@@ -542,7 +543,11 @@ def _verified(driver: Any, board: Board, job: JobPosting) -> bool:
     return _listed_as_application(driver, board, job)
 
 
-_APPLICATIONS_PAGE = {"wellfound": "https://wellfound.com/jobs/applications"}
+_APPLICATIONS_PAGE = {
+    "wellfound": "https://wellfound.com/jobs/applications",
+    # Cutshort opens a conversation thread for every application; the job card keeps showing Apply for a while.
+    "cutshort": "https://cutshort.io/profile/candidate-conversations?i=all",
+}
 
 
 def _listed_as_application(driver: Any, board: Board, job: JobPosting) -> bool:
@@ -587,6 +592,10 @@ def apply_to(
             return _result(job, ApplyStatus.ERROR, "could not open the job page")
         time.sleep(PAGE_WAIT_S)
         _names_from_page(driver, board, job)
+        from naukri_bot.ranking import excluded_title
+        word = excluded_title(job.title, settings)
+        if word:
+            return _result(job, ApplyStatus.ABSTAINED, "the title %r matches EXCLUDE_TITLES (%s)" % (job.title, word))
         if shows_applied(driver, board):
             return _result(job, ApplyStatus.ALREADY_APPLIED, "%s shows this job as applied" % board.label)
         if signed_out(driver, board):
@@ -689,6 +698,45 @@ def _company_site(
 # ---------------------------------------------------------------------------
 
 
+#: Boards whose inbox carries recruiter questionnaires for sent applications; the module's
+#: finish_pending(driver, profile, settings, limit) answers them before new applications.
+_QUESTIONNAIRES = {
+    "cutshort": "cutshort_bot.questionnaires",
+    "instahyre": "instahyre_bot.questionnaires",
+}
+
+
+def _llm_ranking_covered(ranked: Sequence[Any], settings: Settings, client: Any, dry_run: bool, board: Board) -> bool:
+    """False when too few jobs carry an LLM score for min_score to mean what the user chose (naukri_bot.cli does the same)."""
+    rated = sum(1 for scored in ranked if scored.llm_score is not None)
+    coverage = (rated / len(ranked)) if ranked else 0.0
+    logger.info("%s: LLM ranking covered %d of %d jobs (%.0f%%)", board.label, rated, len(ranked), coverage * 100)
+    if (client is None or dry_run or settings.min_llm_rank_coverage <= 0
+            or coverage >= settings.min_llm_rank_coverage):
+        return True
+    logger.error("%s: only %.0f%% of jobs carry an LLM score, below the required %.0f%%; ranking is effectively "
+                 "lexical, so MIN_SCORE means something different and no application will be sent. Re-run when the "
+                 "LLM backend is working, or set MIN_LLM_RANK_COVERAGE=0 to accept lexical-only ranking.",
+                 board.label, coverage * 100, settings.min_llm_rank_coverage * 100)
+    return False
+
+
+def _resume_for(settings: Settings, client: Any, job: JobPosting, resume_pdf: Optional[Path],
+                dry_run: bool) -> Optional[Path]:
+    """The PDF to attach for `job`: tailored to the posting when TAILOR_RESUME is on, else the base."""
+    from common import resume as resume_module
+
+    if settings.tailor_resume and not dry_run and client is not None and client.available():
+        try:
+            pdf, notes = resume_module.build_tailored_pdf(settings, client, job)
+            for note in notes:
+                logger.info("      resume: %s", note)
+            return pdf
+        except resume_module.ResumeError as exc:
+            logger.warning("      resume: %s; applying with the base resume", exc)
+    return resume_module.pdf_for_job(settings, job, resume_pdf)
+
+
 def run_board(
     driver: Any, board: Board, settings: Settings, profile: Profile, ledger: Any, engine: Any, client: Any,
     limit: int, dry_run: bool, resume_pdf: Optional[Path],
@@ -696,7 +744,7 @@ def run_board(
 ) -> RunSummary:
     """Collect, rank and apply on one board; `restart` opens a new browser when the old one closed."""
     from common import answers as answers_module
-    from common import ledger as ledger_module, resume as resume_module
+    from common import ledger as ledger_module
     from naukri_bot import ranking
     from naukri_bot.cli import _pause_between_applications, _summary_record, derive_keywords
 
@@ -712,8 +760,8 @@ def run_board(
                 "%s is signed out in the bot's browser. Sign in once with: scripts/google_login.sh %s",
                 board.label, board.home)
             return summary
-        if board.name == "cutshort" and not dry_run:
-            from cutshort_bot.questionnaires import finish_pending
+        if board.name in _QUESTIONNAIRES and not dry_run:
+            finish_pending = importlib.import_module(_QUESTIONNAIRES[board.name]).finish_pending
             try:
                 finish_pending(driver, profile, settings, limit=min(limit, 10))
             except BROWSER_GONE:
@@ -721,7 +769,7 @@ def run_board(
             except Exception:
                 # A corrupt journal, output error or malformed follow-up must not
                 # prevent independent new applications. Existing claims stay held.
-                logger.exception('Cutshort questionnaire pass stopped; continuing with new applications')
+                logger.exception('%s questionnaire pass stopped; continuing with new applications', board.label)
         jobs = collect(driver, board, derive_keywords(profile, settings), settings.max_candidates,
                        settings.pages_per_keyword, profile.preferred_locations)
         summary.collected = len(jobs)
@@ -731,8 +779,15 @@ def run_board(
         jobs, summary.too_old = ranking.drop_stale_candidates(jobs, settings, source=board.label)
         ranked = ranking.rank(profile, jobs, client, settings, source=board.label)
         summary.ranked = len(ranked)
+        summary.not_ranked = len(jobs) - len(ranked)
         for scored in ranked:
             ledger.record_seen(scored.job, scored.score, scored.gaps)
+            if ledger.has_applied(scored.job.job_id):
+                summary.already_applied += 1
+            elif scored.score < settings.min_score:
+                summary.below_score += 1
+        if not _llm_ranking_covered(ranked, settings, client, dry_run, board):
+            return summary
         selected = ranking.select_for_application(ranked, replace(settings, target_applications=limit),
                                                   ledger.has_applied, source=board.label)
         facts = answers_module.facts_fingerprint(profile, settings)
@@ -764,7 +819,7 @@ def run_board(
                         job.company or "-", scored.score)
             try:
                 result = apply_to(driver, board, job, profile, engine, settings,
-                                  resume_module.pdf_for_job(settings, job, resume_pdf), dry_run)
+                                  _resume_for(settings, client, job, resume_pdf, dry_run), dry_run)
             except TimeoutException:
                 # One posting whose page stops answering costs that posting, not the board.
                 if not browser_alive(driver):
@@ -797,6 +852,10 @@ def run_board(
                 _pause_between_applications(settings)
             if result.status == ApplyStatus.SESSION_EXPIRED:
                 logger.error("%s signed out mid-run; stopping.", board.label)
+                break
+            if llm.out_of_quota():
+                logger.error("%s: the model is out of quota (%s); pausing this lane instead of trying every job.",
+                             board.label, llm.out_of_quota())
                 break
             if result.status == ApplyStatus.ERROR and "submit was clicked" in result.detail.casefold():
                 unconfirmed += 1
@@ -1010,7 +1069,8 @@ def main(argv: Optional[List[str]] = None, only: Optional[Board] = None) -> int:
     from common import browser, config, ledger as ledger_module, llm, profile as profile_module, report
     from common import resume as resume_module
     from common.answers import AnswerEngine
-    from common.run import EXIT_CONFIG, EXIT_FAILED, EXIT_OK, configure_logging, keep_log, outside_run_window
+    from common.run import (EXIT_CONFIG, EXIT_FAILED, EXIT_OK, EXIT_QUOTA, configure_logging, keep_log,
+                            outside_run_window)
 
     args = parse_args(argv, only)
     configure_logging(args.verbose)
@@ -1101,6 +1161,10 @@ def main(argv: Optional[List[str]] = None, only: Optional[Board] = None) -> int:
     if boards_failed:
         logger.error("Boards not finished because the browser stopped answering: %s", ", ".join(boards_failed))
         return EXIT_FAILED
+    if llm.out_of_quota():
+        logger.error("Stopped early: the model is out of quota (%s). The lane resumes when the window resets.",
+                     llm.out_of_quota())
+        return EXIT_QUOTA
     return EXIT_OK
 
 

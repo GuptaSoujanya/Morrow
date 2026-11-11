@@ -439,8 +439,9 @@ def test_a_task_that_runs_too_long_is_stopped_with_its_mcp_server(claude, settin
     monkeypatch.setattr(agent.os, "killpg", lambda pid, sig: signals.append((pid, sig)))
     result = agent.take_over(_Driver(), job, profile, settings, None, False, _stuck())
     assert signals == [(4242, signal.SIGTERM)]
-    assert result.status == ApplyStatus.ERROR
-    assert "ran past 900 seconds" in result.detail
+    assert result.status == ApplyStatus.EXTERNAL_MANUAL, "a run that was cut off is finished by hand, not retried"
+    assert result.detail.startswith("needs you for:")
+    assert "ran past 600 seconds" in result.detail
 
 
 def test_without_a_devtools_address_claude_is_not_started(claude, settings, profile, job):

@@ -18,6 +18,8 @@ EXIT_CONFIG = 1
 EXIT_LOGIN = 2
 EXIT_FAILED = 3
 EXIT_BROWSER_LOCKED = 4
+#: The model's session or usage limit was hit; the pipeline pauses the lane instead of failing each job.
+EXIT_QUOTA = 5
 
 _WEEKDAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
 
