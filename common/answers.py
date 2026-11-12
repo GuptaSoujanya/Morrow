@@ -662,6 +662,8 @@ class AnswerEngine:
         walk-in?" means the employer's own location. Without this the model has
         nothing to resolve it against and abstains, which skips the job.
         """
+        from . import stance
+
         self.job = job
         self.form_answers = {}
         self.job_context = {
@@ -670,6 +672,7 @@ class AnswerEngine:
                 ("location", getattr(job, "location", "") or ""),
                 ("title", getattr(job, "title", "") or ""),
                 ("company", getattr(job, "company", "") or ""),
+                ("requirements", stance.requirements(getattr(job, "description", "") or "")),
             )
             if value
         }

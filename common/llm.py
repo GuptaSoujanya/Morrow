@@ -11,6 +11,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
+from .stance import EMPLOYER_STANCE
 from .models import (
     Answer,
     AnswerResolution,
@@ -747,7 +748,10 @@ def resolve_answer(
         "refers to when the question itself does not say -- for instance an "
         "interview or walk-in with no city named is at job_location. Never "
         "treat job_ facts as statements about the candidate, and never answer "
-        "a question about the candidate from them alone.\n"
+        "a question about the candidate from them alone. job_requirements, when "
+        "present, lists what this posting asks for: use it to choose which true "
+        "fact to lead with and which of the posting's words to use for it.\n"
+        + EMPLOYER_STANCE + "\n"
         "prior_answers, when present, are this form's earlier questions and "
         "the answers already typed: use them only to tell what a follow-up such "
         "as \"If yes, which city?\" refers to, and still ground the answer in a fact.\n"
@@ -859,6 +863,9 @@ _JUDGE_PROMPT = (
     "5. A question their facts already answer in other words (a city they list, a "
     "work mode or shift they accept or declined): give that answer and quote "
     "the fact.\n"
+    "When more than one inference is true, prefer the one that fits THE JOB below "
+    "best (its city among their preferred locations, the posting's own name for a "
+    "skill their resume shows), as the candidate would.\n"
     "Never answer about gender, religion, caste, race, disability, criminal "
     "history, visa, sponsorship, citizenship or the legal right to work in a "
     "country. Never write a motivation or essay answer. Never invent a number, "

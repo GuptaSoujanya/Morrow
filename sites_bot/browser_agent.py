@@ -29,6 +29,7 @@ from urllib.parse import urlparse
 
 from common.models import ApplyStatus, JobPosting, Profile, Settings
 from common import paths
+from common.stance import EMPLOYER_STANCE
 
 logger = logging.getLogger(__name__)
 
@@ -170,6 +171,7 @@ _RULES = """Rules, in order of importance:
    range holds it; for a notice period or joining time pick the shortest option
    that is not shorter than the fact (15 days -> "1 Month"), never "Immediately",
    and say which option you picked in "filled".
+   """ + EMPLOYER_STANCE.replace("\n", "\n   ") + """
 4. Voluntary questions about gender, race, ethnicity, disability or veteran
    status: choose the decline / prefer-not-to-say option when there is one.
 5. Some fields may already be filled by the bot. Check them against the facts and
