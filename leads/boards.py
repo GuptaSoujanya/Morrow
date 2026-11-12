@@ -73,6 +73,10 @@ LEAD_REPORT = (
 #: Questionnaire journal state (cutshort_bot / instahyre_bot questionnaires) -> lead state.
 CUTSHORT_STATES = {"done": "answered", "needs_you": "needs_you", "retry_later": "deferred",
                    "uncertain": "needs_you", "deferred": "deferred", "running": "needs_you"}
+#: Questionnaire states that prove nothing either way. A receipt from days ago renders as an ordinary
+#: chat message, which questionnaires._verified ignores on purpose, so re-reading a finished thread
+#: always lands here; it may ask the person to look but never erase an answer verified when it was sent.
+UNPROVEN_STATES = ("uncertain", "running")
 #: Boards whose pending questionnaires have their own verified finisher; it runs before the generic agent.
 QUESTIONNAIRE_BOTS = {"cutshort": "cutshort_bot.questionnaires", "instahyre": "instahyre_bot.questionnaires"}
 #: Roles no recruiter invitation is worth answering (mirrors diagnose.rootcause.JUNK_ROLE).
@@ -312,8 +316,9 @@ def _mirror(settings: Settings, site: str, results: List[Dict[str, Any]], facts:
         thread = str(item.get("thread") or "")
         if not thread:
             continue
-        state = CUTSHORT_STATES.get(str(item.get("state") or ""), "failed")
-        why = "%s questionnaire: %s (%s)." % (site.capitalize(), item.get("state"), QUESTIONNAIRE_BOTS.get(site, "questionnaires"))
+        reported = str(item.get("state") or "")
+        state = CUTSHORT_STATES.get(reported, "failed")
+        why = "%s questionnaire: %s (%s)." % (site.capitalize(), reported, QUESTIONNAIRE_BOTS.get(site, "questionnaires"))
         retry_after = (datetime.now() + timedelta(seconds=RETRY_COOLDOWN_S)).isoformat() if state == "deferred" else None
         company, title = _norm(item.get("company")), _norm(item.get("title"))
         matched = [lead for lead in known if company and _norm(lead.get("company")) == company
@@ -328,6 +333,11 @@ def _mirror(settings: Settings, site: str, results: List[Dict[str, Any]], facts:
             store.record(settings, [lead])
             matched = [lead]
         for lead in matched:
+            if lead.get("state") == "answered" and reported in UNPROVEN_STATES:
+                logger.info("%s questionnaire for %s is already answered and this pass could not read the "
+                            "receipt again (%s); leaving the answer as it is", site.capitalize(),
+                            item.get("company") or thread, reported)
+                continue
             store.update(settings, lead["id"], state, why, facts=facts, retry_after=retry_after,
                          finisher=QUESTIONNAIRE_BOTS.get(site, "questionnaires"))
         mirrored += 1

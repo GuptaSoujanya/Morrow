@@ -3,6 +3,8 @@ and company_sites.md, each job with what it still needs and its answer line when
 import datetime as dt
 import json
 import os
+import pathlib
+import re
 import sqlite3
 import sys
 
@@ -161,6 +163,49 @@ def test_every_source_is_merged_into_one_list(workspace):
     assert data["facts"] == [{"line": 2, "key": "pan"}]
 
 
+def _lead(identity, **fields):
+    lead = {"id": identity, "source": identity.split(":")[0], "platform": identity.split(":")[1],
+            "kind": "QUESTION", "company": "", "title": "", "who": "", "subject": "", "text": "",
+            "url": "", "state": "needs_you", "why": "", "first_seen": "2026-11-11T21:47:03"}
+    lead.update(fields)
+    return lead
+
+
+LEADS = {lead["id"]: lead for lead in [
+    _lead("mail:employer:aaa", kind="ASSESSMENT", company="Cyberforcehq", who="Metadesign Solutions",
+          subject="Frontend Developer Invitation to Complete Your Assessment", text="Take the test by Friday.",
+          why="An assessment or test link: only you can take it."),
+    _lead("board:cutshort:bbb", company="Techjays", title="Senior AI Engineer",
+          url="https://cutshort.io/profile/candidate-conversations", text="Pending questionnaire."),
+    _lead("board:cutshort:ccc", company="Incubyte", title="Software Craftsperson",
+          url="https://cutshort.io/profile/candidate-conversations", text="Pending questionnaire."),
+    _lead("mail:naukri:ddd", kind="SHORTLIST", company="Answered Co", state="answered"),
+    _lead("board:wellfound:eee", kind="REPLY", company="Skipped Co", state="skipped"),
+]}
+
+
+def test_recruiter_threads_waiting_on_a_person_are_listed_with_the_jobs(tmp_path, workspace):
+    (tmp_path / "leads.json").write_text(json.dumps(LEADS), encoding="utf-8")
+
+    data = waiting.waiting_json({"days": "0"}, **workspace)
+
+    leads = {item["id"]: item for item in data["items"] if item["source"] == "leads"}
+    assert set(leads) == {"lead:mail:employer:aaa", "lead:board:cutshort:bbb", "lead:board:cutshort:ccc"}
+    assessment = leads["lead:mail:employer:aaa"]
+    assert assessment["kind"] == "assessment" and assessment["board"] == "email"
+    assert assessment["needs"] == ["Take the assessment or test the employer sent."]
+    assert assessment["next_step"].endswith("Reply to Metadesign Solutions.")
+    assert assessment["title"] == "Frontend Developer Invitation to Complete Your Assessment"
+    assert assessment["links"] == {} and assessment["when"].startswith("2026-11-11T21:47:03")
+    thread = leads["lead:board:cutshort:bbb"]
+    assert thread["kind"] == "reply" and thread["board"] == "cutshort"
+    assert thread["links"] == {"job": "https://cutshort.io/profile/candidate-conversations"}
+    assert {k["key"]: k["count"] for k in data["kinds"]}["assessment"] == 1
+    assert {k["key"]: k["count"] for k in data["kinds"]}["reply"] == 2
+    assert {b["key"]: b["count"] for b in data["boards"]}["email"] == 1
+    assert data["total"] == len(data["items"]) == 12
+
+
 def test_filters_and_pages_apply_after_the_tallies(workspace):
     data = waiting.waiting_json({"days": "0", "kind": "review", "size": "2"}, **workspace)
     assert data["total"] == 9 and data["matched"] == 3 and data["pages"] == 2 and len(data["items"]) == 2
@@ -210,3 +255,16 @@ def test_needs_are_split_outside_brackets():
     assert waiting._split("A (options 1-3; 3-5); B; C") == ["A (options 1-3; 3-5)", "B", "C"]
     assert waiting._needs_from_detail("needs you for: Phone*; captcha (a check) (browser agent: it stopped; really)") == ["Phone*", "captcha (a check)"]
     assert waiting._needs_from_detail("the browser agent stopped (needs_you): hCaptcha after Next") == ["hCaptcha after Next"]
+
+
+def test_the_launchpad_panel_accounts_for_every_kind_the_page_reports():
+    views = pathlib.Path(__file__).resolve().parents[2] / "froned-dashbord" / "app" / "js" / "views"
+    if not (views / "overview.js").is_file():
+        pytest.skip("the dashboard submodule is not checked out")
+    hands = re.search(r"HANDS_ON = new Set\(\[([^\]]*)\]", (views / "waiting.js").read_text())
+    rows = re.search(r"const rows=w \?(.*?)\n", (views / "overview.js").read_text(), re.S)
+    shown = set(re.findall(r"'([a-z_]+)'", hands.group(1)))
+    shown |= set(re.findall(r"waitingHref\(d\.days,\s*'([a-z_]+)'\)", rows.group(1)))
+
+    missing = set(waiting.KIND_LABELS) - shown
+    assert not missing, "the Launchpad total would exceed the sum of its rows by %s" % sorted(missing)

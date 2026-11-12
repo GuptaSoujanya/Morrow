@@ -414,3 +414,13 @@ def test_a_thread_header_that_renders_after_the_click_is_waited_for(tmp_path, mo
     assert q.finish_pending(driver, Profile(email="jane@example.com"), config) == [
         {"thread": THREAD, "state": "done", "company": "Acme", "title": "AI Engineer"}]
     assert len(calls) == 1
+
+
+def test_a_form_option_label_is_never_a_submission_receipt(monkeypatch):
+    driver = Driver()
+    driver.current_url = URL
+    driver.proof = ["15 days", "Any of the above", "Questionnaire submitted!"]
+    monkeypatch.setattr(q.ext, "_page_text", lambda d: " ".join(driver.proof))
+    assert q._verified(driver, URL, {"confirmation": "Questionnaire submitted!"})
+    for label in ["15 days", "Any of the above", "Submit"]:
+        assert not q._verified(driver, URL, {"confirmation": label})

@@ -814,3 +814,22 @@ def test_a_link_still_wins_over_the_waiting_list():
 def test_without_a_link_or_the_waiting_list_it_asks_for_the_link():
     with pytest.raises(ValueError, match="paste the application page link"):
         state.external_command(url="")
+
+
+def test_the_audit_page_is_given_the_live_ledger_funnel_as_well_as_the_merged_one(tmp_path, monkeypatch):
+    """The page led with the merged funnel, which counts the pre-wipe backups too, so it said 1,889
+    where the Launchpad and the Applications page said 406 from the live ledger alone. Both numbers
+    are real; the page needs both so it can name the one it shows."""
+    monkeypatch.setattr(state, "REPORTS", tmp_path)
+    folder = tmp_path / "2026-11-12"
+    folder.mkdir()
+    (folder / "diagnostics.json").write_text(json.dumps({
+        "generated_at": "2026-11-12T09:00",
+        "local": {"funnel_all": {"submitted_total": 1890, "days_running": 16},
+                  "funnel_live": {"submitted_total": 406, "days_running": 8}},
+    }))
+
+    data = server.diagnostics_json("2026-11-12")
+
+    assert data["funnel"]["submitted_total"] == 1890
+    assert data["funnel_live"] == {"submitted_total": 406, "days_running": 8}

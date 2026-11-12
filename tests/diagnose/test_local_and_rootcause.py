@@ -235,3 +235,60 @@ def test_mail_the_leads_bot_answered_is_not_asked_for_again(settings):
     assert evidence[-1].startswith("The reply reader")
     answers = [line for line in report.action_plan(causes)["today"] if line.startswith("Answer: ")]
     assert answers == ['Answer: naukri shortlist from Naukri <info@naukri.com>: "You are shortlisted"']
+
+
+def test_a_positive_reply_is_positive_in_every_kind_the_mailbox_uses(tmp_path):
+    """local.replies() counted INTERVIEW, OFFER and QUESTION only, so the 'calls-exist' cause
+    compared that number against a mail scan which also counts ASSESSMENT, SHORTLIST, REPLY and
+    RECRUITER_OUTREACH: two vocabularies, one comparison."""
+    from diagnose import mail_rules
+
+    inputs = tmp_path / "inputs"
+    inputs.mkdir()
+    (inputs / "employer_replies.jsonl").write_text("".join(
+        json.dumps({"from": "hr@acme.com", "kind": kind}) + "\n"
+        for kind in mail_rules.POSITIVE + ("ACKNOWLEDGEMENT", "REJECTION", "OTHER")))
+
+    data = local.replies(Settings(data_dir=str(inputs)))
+
+    assert data["rows"] == len(mail_rules.POSITIVE) + 3
+    assert data["positive"] == len(mail_rules.POSITIVE)
+
+
+def test_the_audit_and_the_dashboard_name_the_same_board_for_the_same_application():
+    """The audit read the board off the status ("applied" meant Naukri), so a Naukri job finished on
+    the employer's own site was filed under "other" while the dashboard filed it under Naukri, and a
+    job id that is a link became a board called "https". Same rows, two different funnels."""
+    from web import state
+
+    rows = [
+        {"job_id": "081026506185", "source": "search:LLM Engineer", "status": "applied_external"},
+        {"job_id": "271026506110", "source": "recommended:profile", "status": "applied"},
+        {"job_id": "nvite:9f2c", "source": None, "status": "applied"},
+        {"job_id": "hirist:1677523", "source": "hirist:search:AI Engineer", "status": "applied_platform"},
+        {"job_id": "https://www.hirist.tech/j/ai-ml-engineer-1677493", "source": None, "status": "applied_external"},
+        {"job_id": "https://wellfound.com/jobs/4884517-senior-ai-developer", "source": None, "status": "applied_external"},
+        {"job_id": "https://speedinnovations.in/careers/job.html?id=ai-developer", "source": None, "status": "applied_external"},
+        {"job_id": "yc:abc", "source": "yc:jobs", "status": "applied_external"},
+    ]
+
+    audit = [local.channel(row) for row in rows]
+    dashboard = [state._board_of_job(row["job_id"]) for row in rows]
+
+    assert audit == ["naukri", "naukri", "naukri", "hirist", "hirist", "wellfound", "external", "yc"]
+    assert ["startups" if name in ("yc", "hn") else name for name in audit] == dashboard
+    assert "https" not in dashboard
+
+
+def test_the_audit_counts_an_application_on_the_day_the_dashboard_shows_it():
+    """The ledger stamps UTC. The audit cut the stamp at ten characters and the dashboard converted to
+    local time, so every application sent late in the evening was counted on a different day by each,
+    which moved the busiest day of the funnel."""
+    from web import state
+
+    stamps = ["2026-11-03T06:41:11.690396+00:00", "2026-11-03T18:29:59+00:00",
+              "2026-11-03T18:30:01+00:00", "2026-11-03T23:59:59+00:00"]
+
+    assert [local._day(stamp) for stamp in stamps] == [
+        state._moment(stamp).date().isoformat() for stamp in stamps]
+    assert local._day("") == "" and local._day("not a date") == "not a date"

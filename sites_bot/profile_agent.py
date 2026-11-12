@@ -44,6 +44,7 @@ import logging
 import re
 import time
 from dataclasses import asdict, dataclass, field, replace
+from datetime import date
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlsplit
@@ -63,6 +64,8 @@ _PAGE_CHARS = 40000
 _FACTS_CHARS = 24000
 EDIT_ACTIONS = ("update", "fill", "keep", "skip")
 CHANGED = ("updated", "filled")
+#: The one reported issue the bot may not settle: which of two live entries the user wants to keep.
+_USER_ISSUE = re.compile(r"Duplicate needs review\b", re.IGNORECASE)
 ALREADY_OK = "already_ok"
 #: A section the edit plan asked for that the agent's report never mentions: it ran out of budget or
 #: time before it got there. The repair pass finishes it.
@@ -99,6 +102,9 @@ _WINDOW_CHARS = 1200
 _WINDOWS = 4
 #: A job entry's window: Naukri lists "Top 5 key skills" after a job profile of up to 4,000 characters.
 _ENTRY_CHARS = 4500
+#: One listed entry's room on the page. A row naming six projects is 120 characters, while the
+#: page gives each its own description, so sizing the window from the value alone cut the list off.
+_LIST_ENTRY_SPAN = 320
 _SETTLE_S = 3
 
 _REPORT = ("When you finish or stop, reply with the ONE JSON object described under \"Your report\" in "
@@ -200,6 +206,24 @@ class ProfileCheck:
         if not self.page_read or self.issues or self.undone or self.unverified or not self.needs_input:
             return False
         return all(section in self.verified or section.action == NEEDS_INPUT for section in self.required)
+
+    @property
+    def waiting_on_you(self) -> bool:
+        """The profile is intact and what is left is the user's to give or to choose.
+
+        A missing fact, a value the board will not take and two entries only the user may choose
+        between are not failures the bot can work off: the next run with the same facts reports the
+        same thing. Anything else outstanding -- an unapplied edit, a changed section the page does
+        not show, a conflict or an ambiguous match -- still fails the run.
+        """
+        if not self.page_read or self.undone or self.unverified:
+            return False
+        if any(not _USER_ISSUE.match(issue) for issue in self.issues):
+            return False
+        outstanding = [section for section in self.required if section not in self.verified]
+        if not outstanding and not self.issues:
+            return False
+        return all(section.action in (NEEDS_INPUT, NEEDS_REVIEW) for section in outstanding)
 
     @property
     def needs_repair(self) -> List[Section]:
@@ -564,7 +588,14 @@ def _is_label(text: str, loose: bool = False) -> bool:
     aside = _ASIDE.match(text)
     if _ROW_FIELD.match(aside.group(1) if aside else text):
         return True  # "Feb 2021 - Apr 2021 (3 months)" is one item, however many words it takes
-    return 0 < len(words) <= _LIST_ITEM_WORDS and (len(text) <= _LIST_ITEM_CHARS or one_token)
+    # A bracketed note does not make a name prose: Hirist prints the employer as "Ethara AI
+    # (formerly Green Rider Technology)". The name itself still has to read like one, so a clause
+    # that merely ends in brackets stays prose and keeps being matched as phrases.
+    core = _BRACKETED.sub("", text).strip()
+    # A lone "-" or "&" is punctuation, not a word: Naukri's own industry and functional-area
+    # names ("Engineering - Software & QA") are labels that would otherwise read as prose.
+    named = [word for word in core.split() if any(character.isalnum() for character in word)]
+    return 0 < len(named) <= _LIST_ITEM_WORDS and (len(core) <= _LIST_ITEM_CHARS or one_token)
 
 
 def _items(text: str) -> List[str]:
@@ -577,11 +608,31 @@ def _items(text: str) -> List[str]:
     """
     text = str(text or "")
     loose = ";" in text
-    parts = [part.strip(" .;") for group in text.split(";") for part in group.split(",")]
+    parts = [part.strip(" .;") for part in _split(text)]
     parts = [part for part in parts if part]
     if not parts or not all(_is_label(part, loose) for part in parts):
         return []
     return parts
+
+
+def _split(text: str) -> List[str]:
+    """The value's parts, keeping a bracketed note whole.
+
+    Hirist's languages read "English Expert (Read, Write, Speak); Hindi Expert (Read, Write,
+    Speak)": splitting on every comma tore each note into parts no page has.
+    """
+    parts, part, depth = [], "", 0
+    for character in text:
+        if character in "([":
+            depth += 1
+        elif character in ")]" and depth:
+            depth -= 1
+        if character in ",;" and not depth:
+            parts.append(part)
+            part = ""
+            continue
+        part += character
+    return parts + [part]
 
 
 def _phrases(words: List[str], size: int) -> List[Tuple[str, ...]]:
@@ -610,8 +661,24 @@ _LAKHS = re.compile(r"^(?:₹|rs\.?|inr)?\s*(\d+(?:\.\d+)?)\s*(?:lpa|lakhs?(?:\s
 #: after a value is its own remark, not something the page shows beside the value.
 _ASIDE = re.compile(r"^(.*\S)\s*\((?:current|present|ongoing|till date|\d+\s*(?:years?|yrs?|months?|mos?)"
                     r"(?:\s+\d+\s*(?:months?|mos?))?)\)$", re.IGNORECASE)
+#: A bracketed note at the end of a value: "Ethara AI (formerly Green Rider Technology)".
+_BRACKETED = re.compile(r"\s*\([^()]*\)\s*$")
 #: "Full-Stack Developer Intern": Naukri shows the role from its own list and "Internship" as the type.
 _INTERN = re.compile(r"^(.+?)\s+intern$", re.IGNORECASE)
+#: An uploaded file: the stem and the extension boards keep when they re-store it under their own name.
+_FILENAME = re.compile(r"^([\w .()\-]+?)(\.(?:pdf|docx?|rtf|odt|txt|png|jpe?g))$", re.IGNORECASE)
+#: How many tokens of the board's own tag may sit between the sent stem and the extension.
+_FILE_TAG_TOKENS = 2
+#: How far after a section's heading, and after its "last updated" label, its date may sit.
+_UPLOAD_CHARS = 120
+#: A tick, toggle or switch state, which a page shows as a control rather than as text.
+_STATE = re.compile(r"(?:checked|unchecked|ticked|unticked|selected|enabled|disabled|on|off|set|unset|true|false)",
+                    re.IGNORECASE)
+#: The half word and ellipsis a report leaves where it cut a long text short.
+_CUT = re.compile(r"\s*\S*\.\.\.\s*$")
+#: Cities boards still call by their former name.
+_CITIES = (("gurugram", "gurgaon"), ("bengaluru", "bangalore"), ("mumbai", "bombay"),
+           ("kolkata", "calcutta"), ("chennai", "madras"), ("pune", "poona"))
 #: An already_ok row whose `after` names what the board had no room for ("CI/CD") instead of the
 #: field's value: the note explains the limit, and only the user can decide what to drop for it.
 _BOARD_LIMIT = re.compile(r"\b(?:is full|box full|did not fit|no room|maxlength|character limit|limit of \d+|"
@@ -671,7 +738,18 @@ def _forms(item: str) -> List[str]:
     match = _LABELLED.match(item)
     if match:
         return [item, match.group(1)]
-    return [item] + _unlabelled(item)
+    return [item] + _renamed(item) + _unlabelled(item)
+
+
+def _renamed(item: str) -> List[str]:
+    """The same place under the name the board uses: Instahyre says Gurgaon for Gurugram."""
+    forms = []
+    for names in _CITIES:
+        for name in names:
+            if re.search(r"\b%s\b" % name, item, re.IGNORECASE):
+                forms += [re.sub(r"\b%s\b" % name, other, item, flags=re.IGNORECASE)
+                          for other in names if other != name]
+    return forms
 
 
 def _unlabelled(item: str) -> List[str]:
@@ -759,13 +837,33 @@ def _found(item: str, have: List[str]) -> bool:
     match = _INTERN.match(item)
     if match and "internship" in have and _found(match.group(1), have):
         return True
-    return False
+    return _file_named(item, have)
+
+
+def _file_named(item: str, have: List[str]) -> bool:
+    """Whether an upload is on the page under the name the board gave it.
+
+    Cutshort stores "Soujanya_Gupta_Resume.pdf" as "Soujanya_Gupta_Resume_Xwcy.pdf", so the name it
+    shows keeps the sent stem and extension with its own tag between them. Without this, a resume
+    that uploaded correctly is reported missing from the page on every run.
+    """
+    match = _FILENAME.match(item)
+    if not match:
+        return False
+    stem, extension = _words(match.group(1)), _words(match.group(2))
+    if not stem or not extension:
+        return False
+    return any(extension[0] in have[start + len(stem):start + len(stem) + _FILE_TAG_TOKENS + 1]
+               for start in _starts(stem, have))
 
 
 def _compare(expected: str, page: str) -> Tuple[Optional[bool], List[str]]:
     have = _words(page)
     if not have:
         return None, []
+    # A report shortens a long value to 300 characters and marks the cut with an ellipsis, which
+    # leaves half a word ("Lite" of LiteLLM) that is on no page. Drop it, item list or prose alike.
+    expected = _CUT.sub("", expected) or expected
     rows = [row.strip() for row in re.split(r'[|;]', expected) if row.strip()]
     if len(rows) > 1 and all(re.fullmatch(r'.+?\s+(?:-\s*)?(?:20\d{2}\s+)?\d+(?:\.\d+)?\s+Years?\s+\d+\s+Months?', row, re.I)
                              for row in rows):
@@ -783,14 +881,22 @@ def _compare(expected: str, page: str) -> Tuple[Optional[bool], List[str]]:
     if items:
         missing = [item for item in items if not _found(item, have)]
         return not missing, missing
-    words = _words(expected)
-    if not words:
-        return None, []
-    size = min(_PHRASE, len(words))
-    wanted = _phrases(words, size)
-    found = set(_phrases(have, size))
-    share = sum(1 for phrase in wanted if phrase in found) / len(wanted)
-    return share >= WORD_MATCH, []
+    # A single value carries the agent's own framing too: Cutshort's choice reads "Work remotely:
+    # Within 3-4 hrs of my timezone", where the page prints only what follows the label.
+    for form in [expected] + (_forms(expected)[1:] if len(_items(expected)) <= 1 else []):
+        words = _words(form)
+        if not words:
+            continue
+        size = min(_PHRASE, len(words))
+        wanted = _phrases(words, size)
+        found = set(_phrases(have, size))
+        if sum(1 for phrase in wanted if phrase in found) / len(wanted) >= WORD_MATCH:
+            return True, []
+    return (False, []) if _words(expected) else (None, [])
+
+
+#: An "Add"/"Edit" affordance directly before a heading, so the heading labels the entries above it.
+_ACTION = re.compile(r"\b(?:add|edit|update|manage)\s+$", re.IGNORECASE)
 
 
 def _windows(heading: str, page: str, lead: int = 0, size: int = _WINDOW_CHARS) -> List[str]:
@@ -805,7 +911,12 @@ def _windows(heading: str, page: str, lead: int = 0, size: int = _WINDOW_CHARS) 
     if not words or not page:
         return []
     pattern = r"\b" + r"\W+".join(re.escape(word.rstrip("s") or word) + "s?" for word in words) + r"\b"
-    return [page[max(0, match.start() - lead):match.start() + size]
+    # Hirist names a section only by the "Add Education Details" button printed under its entries, so
+    # a window starting at that heading begins past them. Look behind for an action affordance alone:
+    # a plain heading preceded by a value (AWS Bedrock in the headline, above "Key skills") must not
+    # reach back and confirm a section that never got it.
+    return [page[max(0, match.start() - (_LIST_ENTRY_SPAN if _ACTION.search(page[:match.start()]) else lead)):
+                 match.start() + size]
             for match in re.finditer(pattern, page, re.IGNORECASE)][:_WINDOWS]
 
 
@@ -867,8 +978,10 @@ def verify(expected: str, page: str, heading: str = "", lead: int = 0) -> Tuple[
     # character window could never verify 70% of a complete long section. A job or project is
     # headed by its own name (a lead-in marks a job); its skills and dates follow a description
     # that can run to 4,000 characters, so the window of such an entry reaches past that.
+    listed = len(_items(expected))
     window_size = max(_WINDOW_CHARS, min(10000, len(expected) * 2 + len(heading) + lead),
-                      _ENTRY_CHARS if lead else 0)
+                      _ENTRY_CHARS if lead else 0,
+                      min(_ENTRY_CHARS, listed * _LIST_ENTRY_SPAN) if listed > 1 else 0)
     for window in _windows(heading, page, lead, window_size):
         outcome = _compare(expected, window)
         if outcome[0] is True and not outcome[1]:
@@ -933,10 +1046,30 @@ def confirm(section: "Section", page: str) -> Tuple[Optional[bool], List[str]]:
     return best if best is not None else (None, [])
 
 
+def _uploaded_today(heading: str, page: str) -> bool:
+    """Whether the board says this section was updated today, where it shows no file name at all.
+
+    Instahyre prints "Resume Last updated: Nov 12, 2026" and never the name that was sent, so the
+    only evidence a board can give is its own date. Yesterday's date is no evidence for this run.
+    """
+    today = date.today()
+    stamps = [today.strftime(form).replace(" 0", " ") for form in ("%b %d, %Y", "%d %b %Y", "%b %d %Y", "%Y-%m-%d")]
+    for window in _windows(heading, page, size=_UPLOAD_CHARS) or [page]:
+        for marker in re.finditer(r"\b(?:last )?(?:updated|uploaded|modified)\b[^A-Za-z0-9]{0,4}", window, re.I):
+            tail = window[marker.end():marker.end() + _UPLOAD_CHARS]
+            if any(tail.lower().startswith(stamp.lower()) for stamp in stamps):
+                return True
+    return False
+
+
 def _confirm_saved(section: "Section", page: str, board: Board,
                    workdir: Path) -> Tuple[Optional[bool], List[str]]:
     """Check the page, with upload evidence when Hirist renames the supplied resume."""
     outcome = confirm(section, page)
+    if outcome != (True, []) and _FILENAME.match(section.wanted.strip()) and _uploaded_today(section.name, page):
+        section.note = (section.note + ' ' if section.note else '') + (
+            'The board shows no file name, only that it was updated today.')
+        return True, []
     if (board.name != 'hirist' or outcome == (True, [])
             or not re.fullmatch(r'(?:attach |uploaded )?resume(?: attached)?', section.name, re.I)):
         return outcome
@@ -1064,6 +1197,13 @@ def add_planned(result: ProfileCheck, edits: Optional[List[Dict[str, str]]], pag
         reported = [section for section in result.sections if _section_key(edit['name']) == _section_key(section.name)]
         if not reported:
             reported = [section for section in result.sections if _same_section(edit["name"], section.name)]
+        if len(reported) > 1 and ':' in edit["name"]:
+            # A planned name is "parent: child" ("Personal details: Languages"), so it loosely matches
+            # the parent section as well. The child names the field the edit is about.
+            child = [section for section in reported
+                     if _same_section(edit["name"].rsplit(':', 1)[1], section.name)]
+            if len(child) == 1:
+                reported = child
         if len(reported) > 1:
             # Never apply one job/project target to multiple existing entries. A skipped edit has
             # nothing to apply: "Resume" beside the agent's "Resume headline" is no conflict.
@@ -1258,6 +1398,16 @@ def check(driver: Any, board: Board, settings: Settings, report: Dict[str, Any],
         # the page, and a repair pass that finds a section "already_ok" must leave page evidence too.
         if page and section.wanted and section.action in (*CHANGED, ALREADY_OK, 'checked', PENDING):
             section.on_page, section.missing = _confirm_saved(section, page, board, workdir)
+            if (section.on_page is not True and _STATE.fullmatch(section.wanted.strip())
+                    and not _windows(section.name, page)):
+                # A ticked box is not text. Where the board prints neither the state nor this
+                # field's own name, the page holds no evidence either way and the agent's
+                # confirmation in the form is all there can be.
+                section.action = EXCLUDED
+                section.note = (section.note + ' ' if section.note else '') + (
+                    'The board does not print this field or its state; the agent confirmed it in the form.')
+                section.on_page, section.missing = None, []
+                continue
             if section.action == PENDING and section.on_page is True and not section.missing:
                 section.action = ALREADY_OK
     if page and plan is not None and plan.headline and not unsupported_section(board, 'Headline') and not any("headline" in s.name.casefold()
@@ -1719,8 +1869,9 @@ def run(driver: Any, board: Board, settings: Settings, profile: Optional[Profile
         logger.warning("%s: could not verify all requested fields for %s after reload (wanted: %s%s)", board.label, section.name,
                        section.wanted[:120],
                        "; missing: %s" % ", ".join(section.missing) if section.missing else "")
-    if not result.saved and not reason and result.waiting_on_facts:
-        # Every section the bot can settle is on the page; the rest wait for profile.yaml. Retrying
+    if not result.saved and not reason and result.waiting_on_you:
+        # Every section the bot can settle is on the page; the rest wait for profile.yaml, for a
+        # value the board refuses, or for the user to choose between two live entries. Retrying
         # tomorrow with the same facts would ask the same, so the run counts as done.
         logger.warning("%s profile is intact and confirmed except for %s; it is not a failure. See %s",
                        board.label, result.why, path)

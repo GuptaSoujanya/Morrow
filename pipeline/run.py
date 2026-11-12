@@ -93,7 +93,9 @@ def _company_research(args):
     from common import company_research, config
     result = company_research.run(config.load_settings(args.env).db_path,
                                   cli=args.cli, dry_run=args.dry_run)
-    return EXIT_FAILED if result['failed'] else EXIT_OK
+    # A company whose evidence could not be reached is already stored as failed and retried on the
+    # next run, so one of twenty must not fail the stage; only a round that researched nothing did.
+    return EXIT_FAILED if result['failed'] and not result['completed'] else EXIT_OK
 
 
 def _companies_left(args):

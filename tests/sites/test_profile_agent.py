@@ -1414,3 +1414,104 @@ def test_a_still_blocked_edit_does_not_wrap_last_runs_reason_once_more():
     assert again == first
     third = profile_agent._blocked_why([again, 'the box is full'])
     assert third == first + '; the box is full'
+
+
+def test_a_boards_own_name_with_a_dash_and_ampersand_is_a_list_item_not_prose():
+    value = ('IT Services & Consulting, Engineering - Software & QA, Software Development, '
+             'Full Stack Developer, Gurgaon/Gurugram, Delhi / NCR')
+    assert profile_agent._items(value) == ['IT Services & Consulting', 'Engineering - Software & QA',
+                                           'Software Development', 'Full Stack Developer',
+                                           'Gurgaon/Gurugram', 'Delhi / NCR']
+    page = ('Career profile IT Services & Consulting Engineering - Software & QA Software Development '
+            'Full Stack Developer Gurgaon/Gurugram Delhi / NCR')
+    assert profile_agent.verify(value, page, 'Career profile') == (True, [])
+    assert profile_agent._items('I build evaluation harnesses, with a focus on retrieval quality') == []
+
+
+def test_a_list_of_entries_each_described_on_the_page_is_not_cut_off_by_the_window():
+    names = ['llm-eval-harness', 'Morrow', 'agentic-rag-benchmark', 'inference-latency-profiler',
+             'Cohart Study Guide', 'RideMate']
+    page = 'Quick links Employment Projects Personal details ' + 'x' * 3000 + ' Projects '
+    page += ' '.join('%s Self (Offsite) Sep 2026 to Sep 2026 %s' % (name, 'd' * 220) for name in names)
+    assert profile_agent.verify(', '.join(names), page, 'Projects') == (True, [])
+
+
+def test_a_planned_edit_named_parent_and_child_belongs_to_the_child_section():
+    result = profile_agent.ProfileCheck(saved=False, why="", sections=[
+        profile_agent.Section(name='Personal details', action=profile_agent.NEEDS_INPUT),
+        profile_agent.Section(name='Languages', action=profile_agent.ALREADY_OK, on_page=True,
+                              target='English Expert, Hindi Expert', after='English Expert, Hindi Expert'),
+    ])
+    edits = [{'name': 'Personal details: Languages', 'action': 'keep',
+              'target': 'English Expert, Hindi Expert', 'current': 'Languages English Expert'}]
+    profile_agent.add_planned(result, edits, 'Languages Proficiency English Expert Hindi Expert')
+    assert result.issues == []
+    assert [s.name for s in result.sections] == ['Personal details', 'Languages']
+
+
+def test_a_section_named_only_by_the_add_button_under_its_entries_is_still_checked():
+    page = ('B Tech / BE (Full Time) Medi-Caps University, Indore 2020 - 2024 Add Education Details '
+            'Certification Details')
+    assert profile_agent.verify('B Tech / BE, Full Time, Medi-Caps University, Indore, 2020 - 2024',
+                                page, 'Education') == (True, [])
+
+
+def test_a_bracketed_note_beside_a_name_is_part_of_the_item_not_prose():
+    value = 'Software Engineer, Ethara AI (formerly Green Rider Technology), Mar 2024 - Present'
+    assert profile_agent._items(value) == ['Software Engineer', 'Ethara AI (formerly Green Rider Technology)',
+                                           'Mar 2024 - Present']
+    page = ('Experience Software Engineer Ethara AI (formerly Green Rider Technology) Mar 2024 to Present '
+            'Full-stack Developer Intern Robotronix Engineering Tech Feb 2021 to Apr 2021')
+    assert profile_agent.verify(value, page, 'Experience', profile_agent._LEAD_CHARS) == (True, [])
+    assert profile_agent._items('I build evaluation harnesses for retrieval systems (with a focus on recall)') == []
+
+
+def test_duplicate_entries_and_values_a_board_refuses_wait_for_the_user_instead_of_failing_daily():
+    """LinkedIn lists a certificate twice and Hirist will not take a 15-day notice period or 0%
+    variable pay. Only the user can settle either, so the stage failed every run for them."""
+    ProfileCheck = profile_agent.ProfileCheck
+    waiting = ProfileCheck(False, '', sections=[
+        Section('Skills', 'already_ok', after='Python, Go', on_page=True),
+        Section('Notice period', 'needs_review', after='15 days', note='the board offers 1 month'),
+        Section('Twitter', 'needs_input'),
+    ], issues=['Duplicate needs review: AWS Academy Cloud Foundations'])
+    assert waiting.waiting_on_you
+    for blocked in (
+        ProfileCheck(False, '', sections=[Section('Notice period', 'needs_review')],
+                     issues=['Ambiguous section match: Employment']),
+        ProfileCheck(False, '', sections=[Section('Notice period', 'needs_review')],
+                     issues=['Factual conflict reported; compare the live profile with profile.yaml']),
+        ProfileCheck(False, '', sections=[Section('Skills', 'updated', after='Go', on_page=False),
+                                          Section('Twitter', 'needs_input')]),
+        ProfileCheck(False, '', sections=[Section('Skills', 'pending', after='Go'),
+                                          Section('Twitter', 'needs_input')]),
+    ):
+        assert not blocked.waiting_on_you
+    done = ProfileCheck(False, '', sections=[Section('Skills', 'already_ok', after='Go', on_page=True)])
+    assert not done.waiting_on_you
+
+
+def test_an_upload_the_board_re_stores_under_its_own_name_is_found_on_the_page():
+    page = 'Resume Soujanya_Gupta_Resume_Xwcy.pdf Change Headline Software Engineer'
+    assert profile_agent.verify('Soujanya_Gupta_Resume.pdf', page, 'Resume') == (True, [])
+    assert profile_agent.verify('Cover_Letter.pdf', page, 'Resume')[0] is not True
+
+
+def test_a_board_that_shows_only_an_update_date_proves_todays_upload_but_not_an_older_one():
+    from datetime import date
+    today = date.today().strftime('%b %d, %Y').replace(' 0', ' ')
+    assert profile_agent._uploaded_today('Resume', 'Resume Last updated: %s Links' % today)
+    assert not profile_agent._uploaded_today('Resume', 'Resume Last updated: Jan 2, 2001 Links')
+    assert not profile_agent._uploaded_today('Resume', 'Resume Links Last updated: nothing here')
+
+
+def test_a_city_a_board_still_calls_by_its_former_name_counts():
+    page = 'Job Preferences Currently located in Gurgaon Only willing to work in Delhi / NCR, Gurgaon, Indore'
+    assert profile_agent.verify('Gurugram, Delhi (NCR), Indore', page, 'Job Preferences') == (True, [])
+    assert profile_agent.verify('Chandigarh', page, 'Job Preferences')[0] is not True
+
+
+def test_a_value_the_report_cut_short_is_matched_without_its_half_word():
+    page = 'Skills Software engineering Python FastAPI LiteLLM Docker pytest'
+    assert profile_agent.verify('Software engineering, Python, FastAPI, LiteLLM, Lite...', page, 'Skills') == (True, [])
+    assert profile_agent.verify('Software engineering, Kubernetes, Lite...', page, 'Skills') == (False, ['Kubernetes'])

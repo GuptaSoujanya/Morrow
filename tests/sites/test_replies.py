@@ -303,3 +303,20 @@ def test_the_pipeline_reads_replies_when_only_a_reply_inbox_has_a_password(monke
     assert run._replies_on(None)
     monkeypatch.setattr(config, "load_settings", lambda env=None: Settings(reply_inboxes=["resume@example.org"]))
     assert not run._replies_on(None)
+
+
+def test_the_hiring_kinds_are_the_leads_journal_s_own():
+    """One vocabulary across the three stores, or a kind is lost in whichever store lacks it.
+
+    Until 2026-11-12 this lane had no ASSESSMENT and no SHORTLIST, so the 8 assessment invites
+    and 2 shortlists the audit found in the mailbox were written to employer_replies.jsonl as
+    ACKNOWLEDGEMENT or OTHER while leads.json held them as what they are.
+    """
+    from diagnose import mail_rules
+    from leads import store
+
+    assert set(store.KINDS) == set(mail_rules.POSITIVE)
+    assert set(store.KINDS) <= set(rp.KINDS)
+    assert set(rp.KINDS) - set(store.KINDS) == {"REJECTION", "ACKNOWLEDGEMENT", "OTHER"}
+    assert "SHORTLIST" in rp.ANSWERED_KINDS and rp.PERSON_KINDS == ("ASSESSMENT",)
+    assert not set(rp.PERSON_KINDS) & set(rp.ANSWERED_KINDS)

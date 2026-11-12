@@ -8,6 +8,7 @@ postings displaced fresher ones from the pool as well as wasting LLM calls.
 
 import os
 import sys
+from dataclasses import replace
 
 import pytest
 
@@ -95,7 +96,7 @@ def test_selection_orders_by_score_even_if_given_unsorted_input():
     rank() happens to return score-sorted candidates, so without this the sort
     in select_for_application is never exercised and could be removed unnoticed.
     """
-    settings = _settings(4)
+    settings = replace(_settings(4), min_score=0.0)
     scores = [55.0, 80.0, 61.0, 72.0, 58.0]
     scored = [
         ranking.ScoredJob(

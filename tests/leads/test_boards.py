@@ -54,6 +54,31 @@ def test_mirror_cutshort_turns_questionnaire_results_into_leads(tmp_path):
     assert by_url["ghi"]["state"] == "needs_you" and by_url["ghi"]["facts"] == "f1"
 
 
+def test_a_rereading_pass_that_proves_nothing_keeps_an_answer_it_cannot_see_again(tmp_path):
+    settings = _settings(tmp_path)
+    submitted = [{"thread": "abc", "state": "done", "company": "Techjays", "title": "Senior AI Engineer"}]
+    assert boards._mirror_cutshort(settings, submitted, "f1") == 1
+    answered = next(iter(store.load(settings).values()))
+    assert answered["state"] == "answered"
+
+    for unproven in ("uncertain", "running"):
+        again = [dict(submitted[0], state=unproven)]
+        assert boards._mirror_cutshort(settings, again, "f1") == 1
+        lead = store.load(settings)[answered["id"]]
+        assert lead["state"] == "answered", "%s erased a verified answer" % unproven
+        assert lead["answered_at"] == answered["answered_at"]
+
+    reopened = [dict(submitted[0], state="needs_you")]
+    assert boards._mirror_cutshort(settings, reopened, "f1") == 1
+    assert store.load(settings)[answered["id"]]["state"] == "needs_you"
+
+
+def test_a_pass_that_proves_nothing_still_asks_about_a_thread_nobody_answered(tmp_path):
+    settings = _settings(tmp_path)
+    assert boards._mirror_cutshort(settings, [{"thread": "abc", "state": "uncertain"}], "f1") == 1
+    assert next(iter(store.load(settings).values()))["state"] == "needs_you"
+
+
 def _wire(monkeypatch, read=READ, answer=("answered", "Answered on the board.", {"written": "Done"})):
     from common import answers
     from sites_bot import browser_agent

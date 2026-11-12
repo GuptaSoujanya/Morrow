@@ -89,13 +89,13 @@ def _site_causes(sites: Dict[str, Any], local: Dict[str, Any]) -> List[Cause]:
     if waiting:
         causes.append(Cause(
             "unanswered-messages", "critical", "Recruiters did reply on the boards and nobody answered them",
-            waiting[:12] + ["The bots never read board inboxes (nothing in sites_bot reads Naukri NVites, Hirist chats, Instahyre inbox or Wellfound messages), "
-                           "so a questionnaire or assessment request waits until someone logs in by hand."],
+            waiting[:12] + ["The inbox stage (leads.boards) reads each board's own inbox and records every thread in the leads "
+                           "journal, and the questionnaire finishers answer what they can; these are the ones left for a person."],
             "code", ["Today: open each board inbox above and complete the questionnaire/assessment; these are the only live leads.",
-                     "Code: add an 'inbox' stage per board that lists new threads into user/worklists/ and marks the job needs_you "
-                     "(read-only, like diagnose/platforms.py); extend cutshort_bot/questionnaires.py's pattern to Instahyre.",
+                     "They are all on the dashboard's \"Waiting on you\" page, filter \"Assessment to take\" or "
+                     "\"Recruiter message to answer\", with the link to each thread.",
                      "Wellfound: record the 15-minute AI interview once — Wellfound lists candidates with one first."],
-            0.95, ["sites_bot/", "cutshort_bot/questionnaires.py", "pipeline/run.py"]))
+            0.95, ["leads/boards.py", "cutshort_bot/questionnaires.py", "instahyre_bot/questionnaires.py", "web/waiting.py"]))
     if rejections:
         causes.append(Cause(
             "recruiter-said-why", "high", "A recruiter wrote down the reason", rejections[:4], "profile",
@@ -259,13 +259,15 @@ def rank(local: Dict[str, Any], mail: Optional[Dict[str, Any]], sites: Optional[
                     mail_positive, len(groups), mail["days"], ", ".join("%s %d" % kv for kv in mail["positive_by_kind"].items()))]
                 + listed
                 + since
-                + ["The reply reader (sites_bot/replies.py) only matches mail to one applied job and drops anything "
-                   "from a job-board domain, so employer_replies.jsonl shows %d positives." % local_positive],
+                + ["The reply reader (sites_bot/replies.py) reads Inbox, Spam and All Mail, keeps board mail and "
+                   "files anything about no known application as a lead; employer_replies.jsonl shows %d positives "
+                   "and the leads journal %d threads, %d of them needing you." % (
+                       local_positive, leads.get("total") or 0, leads.get("needs_you") or 0)],
                 "code", ["Today: answer every item above; a shortlist, an assessment invite or a reply to a cold mail dies in 48 hours.",
-                         "sites_bot/replies.py: stop dropping mail from board domains in link(); classify unmatched "
-                         "hiring mail as a lead instead of discarding it.",
-                         "Read Spam and All Mail too; the reader only scans INBOX."],
-                0.9, ["sites_bot/replies.py", "user/inputs/employer_replies.jsonl"]))
+                         "Every one is on the dashboard's \"Waiting on you\" page (web/waiting.py reads the leads journal); "
+                         "answer them there or in the thread itself.",
+                         "A thread the bots could not finish stays needs_you until it is answered, so none of them age out silently."],
+                0.9, ["sites_bot/replies.py", "user/inputs/employer_replies.jsonl", "user/inputs/leads.json"]))
         else:
             causes.append(Cause(
                 "silence-confirmed", "info", "The silence is real: no interview, shortlist or recruiter mail anywhere",

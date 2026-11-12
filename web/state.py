@@ -18,6 +18,7 @@ from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Set, Tuple, TypeVar
+from urllib.parse import urlsplit
 
 from common.models import ApplyStatus, Settings
 from common.report import OUTCOMES, course_modules as plan_order
@@ -427,6 +428,9 @@ def diagnostics_data(day: dt.date) -> Dict[str, Any]:
         "review": payload.get("review") or {},
         "trail": payload.get("trail") or [],
         "funnel": local.get("funnel_all") or {},
+        # The page leads with this one so it reads the same number as the Launchpad and the
+        # Applications page, which all count the live ledger; "funnel" adds the pre-wipe backups.
+        "funnel_live": local.get("funnel_live") or {},
         "fit": {k: v for k, v in (local.get("fit") or {}).items() if k in ("score_bands", "median_score", "below_min_score", "min_score", "mismatched_titles")},
         "mail": {k: mail.get(k) for k in ("account", "days", "scanned", "positive_total", "positive_by_kind", "positive_by_platform",
                                           "error", "via", "model", "queries", "verification")} if mail else {},
@@ -751,9 +755,19 @@ def board_name(key: str) -> str:
     return {"naukri": "Naukri", "startups": "Startups"}.get(key, key.capitalize())
 
 
+#: A job id is the posting's own link whenever the board gave none of its own. Splitting such an id on
+#: ":" the way a prefixed id is split would invent a board called "https", so the host names it instead.
+_BOARD_HOSTS = {"naukri.com": "naukri", "hirist.tech": "hirist", "instahyre.com": "instahyre",
+                "cutshort.io": "cutshort", "wellfound.com": "wellfound", "ycombinator.com": "startups"}
+
+
 def _board_of_job(job_id: Any) -> str:
     """Job boards prefix their ids ("hirist:1677523"); Naukri's are bare numbers or "nvite:…"; yc:/hn: are startups."""
     text = str(job_id or "")
+    if text.startswith(("http://", "https://")):
+        host = (urlsplit(text).hostname or "").lower()
+        return next((board for domain, board in _BOARD_HOSTS.items()
+                     if host == domain or host.endswith("." + domain)), "external")
     board = text.split(":", 1)[0] if ":" in text else "naukri"
     if board in _STARTUP_SOURCES:
         return "startups"

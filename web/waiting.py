@@ -49,9 +49,11 @@ _ASKED_WHILE = re.compile(r"while applying to (.+?) at (.+?)(?: \||$)")
 
 BOARD_LABELS = {
     "naukri": "Naukri", "hirist": "Hirist", "instahyre": "Instahyre", "cutshort": "Cutshort",
-    "wellfound": "Wellfound", "startups": "Startups", "external": "Company site",
+    "wellfound": "Wellfound", "startups": "Startups", "external": "Company site", "email": "Email",
 }
 KIND_LABELS = {
+    "assessment": "Assessment to take",
+    "reply": "Recruiter message to answer",
     "question": "Screener question",
     "review": "Check whether it was sent",
     "access": "Login, CAPTCHA or account",
@@ -61,7 +63,8 @@ KIND_LABELS = {
     "form": "Form details",
     "ready": "Answered, retried on the next run",
 }
-_KIND_ORDER = ["question", "review", "access", "video", "eligibility", "decision", "form", "ready"]
+_KIND_ORDER = ["assessment", "reply", "question", "review", "access", "video", "eligibility",
+               "decision", "form", "ready"]
 _KIND_WORDS = (
     ("video", re.compile(r"\b(?:video|loom|facecam|screen[- ]share|record(?:ing)?)\b", re.I)),
     ("access", re.compile(r"\b(?:captcha|hcaptcha|recaptcha|log ?in|sign[- ]?in|sign up|otp|one[- ]time (?:code|password)|"
@@ -105,9 +108,15 @@ def _utc_stamp(value: Any) -> Optional[dt.datetime]:
 
 
 def _local_stamp(value: Any) -> Optional[dt.datetime]:
-    """company_sites.md headings carry the local wall clock ("2026-10-28 18:47")."""
+    """A stamp written in local time: company_sites.md headings ("2026-10-28 18:47") and the
+    leads journal's ISO ``first_seen``. A stamp with no zone means local here, never UTC."""
+    text = str(value or "").strip()
     try:
-        return dt.datetime.strptime(str(value or "").strip(), "%Y-%m-%d %H:%M").astimezone()
+        return dt.datetime.strptime(text, "%Y-%m-%d %H:%M").astimezone()
+    except ValueError:
+        pass
+    try:
+        return dt.datetime.fromisoformat(text.replace(" ", "T", 1)).astimezone()
     except ValueError:
         return None
 
@@ -413,8 +422,69 @@ def _site_items(path: Path) -> List[Dict[str, Any]]:
     return items
 
 
+# --- the leads journal ---------------------------------------------------------------
+
+#: What each kind of recruiter thread needs from the person, and the kind this page files it under.
+#: The keys are leads.store.KINDS, which mirrors diagnose.mail_rules.POSITIVE.
+_LEAD_STEPS = {
+    "ASSESSMENT": ("assessment", "Take the assessment or test the employer sent."),
+    "OFFER": ("reply", "Answer the offer."),
+    "INTERVIEW": ("reply", "Confirm the interview time."),
+    "SHORTLIST": ("reply", "Answer the shortlist and say when you are free."),
+    "QUESTION": ("reply", "Answer the recruiter's question."),
+    "REPLY": ("reply", "Answer the recruiter's reply."),
+    "RECRUITER_OUTREACH": ("reply", "Answer the recruiter who wrote first."),
+}
+#: leads.store.PERSON_STATES: the lead waits for a person, which is what this page lists.
+_LEAD_PERSON_STATES = ("needs_you",)
+
+
+def _lead_items(path: Path) -> List[Dict[str, Any]]:
+    """Recruiter threads the bots could not finish, from the leads journal.
+
+    The journal (leads.store) and this page were built apart, so a questionnaire, an
+    assessment invite or a shortlist mail sat in user/inputs/leads.json while the one screen
+    that means "waiting on you" read only the ledger, the browser agent and the company-site
+    worklist. The 2026-11-12 audit counted 7 such threads -- the only live leads in the whole
+    funnel -- invisible here. Read-only: answering still happens in the leads bot.
+    """
+    try:
+        journal = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):  # no journal yet, or half-written
+        return []
+    if not isinstance(journal, dict):
+        return []
+    items: List[Dict[str, Any]] = []
+    for identity, lead in journal.items():
+        if not isinstance(lead, dict) or lead.get("state") not in _LEAD_PERSON_STATES:
+            continue
+        kind, step = _LEAD_STEPS.get(str(lead.get("kind") or "").upper(), ("reply", "Answer the recruiter."))
+        platform = _key(lead.get("platform"))
+        thread = _safe_url(lead.get("url"))
+        who = _clean(lead.get("who"))
+        items.append(_item(
+            id="lead:" + _clean(identity),
+            title=_clean(lead.get("title")) or _clean(lead.get("subject")),
+            company=_clean(lead.get("company")),
+            board=platform if platform in BOARD_LABELS else "email",
+            kind=kind,
+            needs=[step],
+            next_step=step if not who else "%s %s" % (step, "Reply to %s." % who),
+            why=_clean(lead.get("why")) or _clean(lead.get("subject")),
+            detail=_clean(lead.get("text")),
+            links={"job": thread} if thread else {},
+            when=_iso(_local_stamp(lead.get("first_seen"))),
+            source="leads",
+        ))
+    return items
+
+
 def _aliases(item: Dict[str, Any]) -> List[str]:
-    """Keys under which the same application can appear in two of the three sources."""
+    """Keys under which the same application can appear in more than one source."""
+    if item["source"] == "leads":
+        # Two threads from one board share its inbox address, and a recruiter writes about a job
+        # the ledger already holds. Neither is the same piece of work, so a lead never merges.
+        return []
     keys = []
     if item["job_id"]:
         keys.append("job:" + item["job_id"])
@@ -470,6 +540,7 @@ def waiting_json(
     answers: Path = state.ANSWERS,
     sites: Path = state.COMPANY_SITES,
     profile: Path = state.PROFILE,
+    leads: Optional[Path] = None,
     now: Optional[dt.datetime] = None,
 ) -> Dict[str, Any]:
     """Every job waiting on a person, newest first, with what each one needs.
@@ -487,6 +558,7 @@ def waiting_json(
     now = now or dt.datetime.now(dt.timezone.utc)
     db = db or state.database()
     agent_db = agent_db or (answers.parent / "application-agent.sqlite")
+    leads = leads or (answers.parent / state.LEADS.name)
     blanks = blank_answers(answers)
     book = _answer_book(answers)
 
@@ -512,6 +584,8 @@ def waiting_json(
     for item in _naukri_items(db, _answer_lines(blanks), book):
         add(item)
     for item in _site_items(sites):
+        add(item)
+    for item in _lead_items(leads):
         add(item)
 
     start = (now.astimezone() - dt.timedelta(days=days - 1)).date() if days else None

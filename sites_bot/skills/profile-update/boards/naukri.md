@@ -13,6 +13,16 @@ the way a senior recruiter would want it: complete, keyword-rich and identical i
 
 ## Sections, in the order to work through them
 
+The bot checks every `after` by looking it up on the reloaded profile page, so write `after` in the
+page's own words and order, copying what the page shows rather than describing it: no field labels the
+page does not print ("Gender Male" when it prints only "male"), no brackets of your own ("English
+(Expert, read/write/speak)" when the page prints a table row "English Expert"), and nothing the profile
+page never displays. Put anything you set but the page does not show in the note instead.
+
+Never put a placeholder or a reference to the plan in `after`: "planned description", "as planned" and
+"the planned text" are looked up on the page literally and are not there. Copy the text the page shows;
+for a long description the first ten words of it are proof enough.
+
 1. **Resume headline** (max 250 characters): the planned headline. Another step may have just saved it
    with or without a trailing dot; treat a trailing dot as no difference.
 2. **Key skills**: chips. Add every planned skill she lacks by typing it and picking Naukri's exact
@@ -40,7 +50,9 @@ the way a senior recruiter would want it: complete, keyword-rich and identical i
    not `failed`, so no repair pass is spent on it. In `after` for any employment entry, write the
    designation as Naukri's Role field shows it, the employment type (Full-time, Internship) as its own
    item, the company, and the dates with "to", for example "Full Stack Developer, Internship, Robotronix
-   Engineering Tech, Feb 2021 to Apr 2021"; no asides in brackets such as "(current)".
+   Engineering Tech, Feb 2021 to Apr 2021"; no asides in brackets such as "(current)". Salary breakdown
+   belongs in the note, never in `after`: Naukri asks for it in the drawer but the profile page never
+   shows it, so the bot cannot find it there.
 4. **Education**: highest qualification, course, specialisation, institute, passing year, from the facts.
 5. **IT skills**: Naukri holds 10 entries. Add the planned IT skills in their order until the table is
    full: name as Naukri suggests it, version only if stated, experience in years (and months when the

@@ -52,6 +52,65 @@ def test_pace_flags_speech_a_first_time_listener_cannot_follow(voice):
     assert voice.word_budget(30) == 66
 
 
+def test_a_rushed_voice_is_said_again_more_slowly(voice, tmp_path, monkeypatch):
+    monkeypatch.setattr(voice, "edge_available", lambda: True)
+    asked = []
+
+    def fake_edge(text, chosen, rate, out_wav):
+        asked.append(rate)
+        percent = int(rate.rstrip("%"))
+        _tone(out_wav, 1.0 * 100 / (100 + percent))
+        return [{"w": w, "start": 0.0, "end": 0.1} for w in text.split()]
+    monkeypatch.setattr(voice, "synth_edge", fake_edge)
+
+    record = voice.make(tmp_path, ["one two three", "four five six"], "English")
+    assert asked == ["+0%", "+0%", "-30%", "-30%"]
+    assert record["rate"] == "-30%" and record["slowed_from_wpm"] == 180
+    assert record["pace"]["ok"] and record["pace"]["wps"] <= voice.MAX_WPS
+    assert json.loads((tmp_path / "words.json").read_text())["rate"] == "-30%"
+
+
+def test_an_engine_that_overshoots_the_first_slow_down_is_corrected_again(voice, tmp_path, monkeypatch):
+    monkeypatch.setattr(voice, "edge_available", lambda: True)
+    asked = []
+
+    def stubborn_edge(text, chosen, rate, out_wav):
+        asked.append(rate)
+        percent = int(rate.rstrip("%"))
+        _tone(out_wav, 1.0 * 100 / (100 + percent * 0.5))
+        return [{"w": w, "start": 0.0, "end": 0.1} for w in text.split()]
+    monkeypatch.setattr(voice, "synth_edge", stubborn_edge)
+
+    record = voice.make(tmp_path, ["one two three", "four five six"], "English")
+    assert len(set(asked)) == 3, f"expected two corrections, got rates {asked}"
+    assert record["slowed_from_wpm"] == 180
+    assert record["rate"] == asked[-1]
+
+
+def test_speech_already_slow_enough_is_left_alone(voice, tmp_path, monkeypatch):
+    monkeypatch.setattr(voice, "edge_available", lambda: True)
+    asked = []
+
+    def fake_edge(text, chosen, rate, out_wav):
+        asked.append(rate)
+        _tone(out_wav, 4.0)
+        return [{"w": w, "start": 0.0, "end": 0.1} for w in text.split()]
+    monkeypatch.setattr(voice, "synth_edge", fake_edge)
+
+    record = voice.make(tmp_path, ["one two three", "four five six"], "English")
+    assert asked == ["+0%", "+0%"] and "slowed_from_wpm" not in record
+    assert voice.slower_rate(record["pace"]["wps"], "+0%") is None
+
+
+def test_the_slow_down_aims_under_the_ceiling_and_stops_at_the_floor(voice):
+    assert voice.slower_rate(3.0, "+0%") == "-30%"
+    assert 3.0 * (100 + int(voice.slower_rate(3.0, "+0%").rstrip("%"))) / 100 < voice.MAX_WPS
+    assert voice.slower_rate(2.88, f"{voice.SLOWEST_RATE_PCT}%") is None
+    assert voice.slower_rate(2.0, "+0%") is None
+    assert voice.slower_speed(4.0, 1.0) == voice.SLOWEST_SPEED
+    assert voice.slower_speed(2.0, 1.0) is None
+
+
 def test_default_voice_follows_language_engine_and_wish(voice):
     assert voice.default_voice("English", "edge") == "en-US-AndrewMultilingualNeural"
     assert voice.default_voice("Hindi", "edge").startswith("hi-IN-")
@@ -76,7 +135,8 @@ def test_make_joins_the_lines_with_pauses_and_writes_timings(voice, tmp_path, mo
         return [{"w": w, "start": round(i * step, 3), "end": round((i + 1) * step, 3)} for i, w in enumerate(words)]
     monkeypatch.setattr(voice, "synth_edge", fake_edge)
 
-    record = voice.make(tmp_path, ["  Stop  doing this ", "Do this instead", ""], "English", rate="+5%")
+    record = voice.make(tmp_path, ["  Stop  doing this ", "Do this instead", ""], "English", rate="+5%",
+                        fit_pace=False)
     assert [s[0] for s in spoken] == ["Stop doing this", "Do this instead"]
     assert spoken[0][1] == "en-US-AndrewMultilingualNeural" and spoken[0][2] == "+5%"
     assert (tmp_path / "voice.wav").is_file()
@@ -109,7 +169,7 @@ def test_a_dropped_edge_line_is_tried_again_before_any_fallback(voice, tmp_path,
     monkeypatch.setattr(voice, "synth_edge", flaky_edge)
     monkeypatch.setattr(voice, "synth_kokoro", lambda *a, **k: pytest.fail("kokoro must not be used while edge can recover"))
 
-    record = voice.make(tmp_path, ["One line only"], "English")
+    record = voice.make(tmp_path, ["One line only"], "English", fit_pace=False)
     assert record["engine"] == "edge" and len(attempts) == 3
 
 

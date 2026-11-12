@@ -23,7 +23,7 @@ def social(tmp_path, monkeypatch):
         monkeypatch.setattr(module, name, value)
     monkeypatch.setattr(module.planner, "PLANS", tmp_path / "plans")
     monkeypatch.setattr(module.planner, "OUT", tmp_path / "out")
-    monkeypatch.setattr(module, "profile_root", lambda account: tmp_path / "lanes" / account)
+    monkeypatch.setattr(module, "profile_root", lambda account: tmp_path / "browser" / "main")
     module.save_config({"niche": "Python tips", "accounts": ["instagram", "youtube"]})
     return module
 
@@ -95,7 +95,9 @@ def test_post_records_a_row_per_platform_and_ticks_the_day(social, monkeypatch):
     (folder / "reel.mp4").write_bytes(b"x")
     monkeypatch.setattr(social, "verify", lambda video, planned: [])
     state = social.load_state()
-    state["accounts"] = {"instagram": {"logged_in": True, "account": "dev"}, "youtube": {"logged_in": False}}
+    state["accounts"] = {"instagram": {"logged_in": True, "account": "dev",
+                                        "browser_profile": str(social.profile_root("instagram"))},
+                         "youtube": {"logged_in": False}}
     social.save_state(state)
     seen = {}
 
@@ -118,7 +120,8 @@ def test_post_records_a_row_per_platform_and_ticks_the_day(social, monkeypatch):
 def test_measure_stores_numbers_only_for_posts_that_are_due(social, monkeypatch):
     plan = _plan_with_prompts(social, days=1)
     state = social.load_state()
-    state["accounts"] = {"instagram": {"logged_in": True}}
+    state["accounts"] = {"instagram": {"logged_in": True,
+                                        "browser_profile": str(social.profile_root("instagram"))}}
     social.save_state(state)
     with social.db() as conn:
         conn.execute("INSERT INTO posts (plan_id, day, title, platform, url, posted_at, status) VALUES (?,?,?,?,?,?,?)",

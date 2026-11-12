@@ -37,8 +37,15 @@ logger = logging.getLogger(__name__)
 LOG_NAME = "employer_replies.jsonl"
 NEWEST_MESSAGES = 200
 EMAIL_CHARS = 8000
-KINDS = ("REJECTION", "INTERVIEW", "QUESTION", "OFFER", "ACKNOWLEDGEMENT", "OTHER")
-ANSWERED_KINDS = ("INTERVIEW", "QUESTION", "OFFER")
+#: The hiring kinds are leads.store.KINDS (itself diagnose.mail_rules.POSITIVE), plus the three
+#: outcomes a thread about a known application can also have. Keep them in step: while this lane
+#: had no ASSESSMENT or SHORTLIST, the mailbox's 8 assessment invites and 2 shortlists were filed
+#: here as ACKNOWLEDGEMENT or OTHER and employer_replies.jsonl showed none of either.
+KINDS = ("OFFER", "INTERVIEW", "ASSESSMENT", "SHORTLIST", "QUESTION", "REPLY", "RECRUITER_OUTREACH",
+         "REJECTION", "ACKNOWLEDGEMENT", "OTHER")
+ANSWERED_KINDS = ("INTERVIEW", "QUESTION", "OFFER", "SHORTLIST")
+#: Only the candidate can sit an assessment, so it is recorded and left for them (leads.mail does the same).
+PERSON_KINDS = ("ASSESSMENT",)
 GAP = "[…]"
 _SENT = (ApplyStatus.APPLIED, ApplyStatus.APPLIED_EXTERNAL, ApplyStatus.APPLIED_PLATFORM)
 
@@ -247,8 +254,13 @@ _CLASSIFY_PROMPT = (
     "You read an email a job candidate received about one of their applications and "
     "say what it is. kind is REJECTION (they will not go ahead), INTERVIEW (they invite "
     "the candidate to a call, interview or meeting, or propose or confirm a time for "
-    "one), QUESTION (they ask the candidate something without inviting them yet), OFFER "
-    "(a job offer), ACKNOWLEDGEMENT (an automatic or generic 'we received your "
+    "one), ASSESSMENT (a test, assignment, coding round or questionnaire for the candidate "
+    "to sit, usually with a link and a deadline), SHORTLIST (their profile is shortlisted, "
+    "selected or moved to the next stage, without a time yet), QUESTION (they ask the "
+    "candidate something without inviting them yet), OFFER (a job offer), "
+    "RECRUITER_OUTREACH (a recruiter writing first about a role the candidate did not "
+    "apply to), REPLY (a human answer that asks nothing and decides nothing), "
+    "ACKNOWLEDGEMENT (an automatic or generic 'we received your "
     "application') or OTHER. summary is one short sentence in English. questions lists "
     "each thing the email asks the candidate to answer or provide, as a short question; "
     "proposing a call counts only when they ask for times; empty when there are none. "
@@ -451,7 +463,7 @@ def process(settings: Settings, profile: Profile, client: Any, mails: List[Mail]
     """Link, classify and draft each new mail; counts of what happened. Never sends."""
     now = now or datetime.now()
     seen = {row.get("message_id") for row in read_log(settings)}
-    counts = {"read": 0, "linked": 0, "leads": 0, "drafted": 0, "already read": 0}
+    counts = {"read": 0, "linked": 0, "leads": 0, "drafted": 0, "need you": 0, "already read": 0}
     own = {(profile.email or "").casefold(), (account or "").casefold()} - {""}
     for mail in mails:
         counts["read"] += 1
@@ -474,6 +486,9 @@ def process(settings: Settings, profile: Profile, client: Any, mails: List[Mail]
             continue
         reply = Reply(mail=mail, application=application, kind=found["kind"], summary=found["summary"],
                       questions=found["questions"], confirmed_time=found["confirmed_time"])
+        if reply.kind in PERSON_KINDS:
+            counts["need you"] += 1
+            logger.info("Only you can do this one: %s (%s)", mail.subject, reply.kind)
         if reply.kind in ANSWERED_KINDS:
             drafted = draft_reply(client, profile, mail, about, found)
             if drafted is not None:

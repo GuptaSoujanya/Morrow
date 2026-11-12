@@ -216,11 +216,17 @@ def _selected_thread_matches(driver, row):
 
 
 _PROOF_SCRIPT = _PANEL_SCRIPT + r"""
-// A sidebar preview or ordinary chat message is never questionnaire proof.
-return [...panel.querySelectorAll('[role="status"], [role="alert"]')]
+// A sidebar preview or ordinary chat message is never questionnaire proof. Cutshort states the
+// receipt as a plain div inside the questionnaire form, so take short leaf lines from the form
+// too: a leaf cannot carry the whole thread's text, which would make any quote "found".
+const limit = 200;  // a receipt is one short line; a longer block is the form or the chat
+return [...panel.querySelectorAll('[role="status"], [role="alert"], form div, form p, form span')]
   .filter(el => {
     const r = el.getBoundingClientRect();
-    return r.width && r.height && !el.closest('header, nav, footer, [role="tabpanel"], [role="tablist"], [role="log"], [data-message-id]');
+    const own = (el.innerText || '').replace(/\s+/g, ' ').trim();
+    return r.width && r.height && own && own.length <= limit
+      && ![...el.children].some(child => (child.innerText || '').replace(/\s+/g, ' ').trim() === own)
+      && !el.closest('header, nav, footer, [role="tabpanel"], [role="tablist"], [role="log"], [data-message-id]');
   }).map(el => (el.innerText || '').replace(/\s+/g, ' ').trim()).filter(Boolean);
 """
 

@@ -199,3 +199,49 @@ def test_videos_and_detail_list_rendered_days_only(studio):
     assert info["log_tail"] == "fake log" and len(info["attempts"]) == 1 and info["bridges"][0]["id"] == "claude"
     with pytest.raises(studio.StudioError):
         studio.detail(plan["id"], 7)
+
+
+def test_the_style_and_the_mascot_are_written_into_the_brief(studio, tmp_path):
+    item = {"day": 1, "title": "T", "hook": "H", "style": "paper", "skill": "paper-cutout", "duration_s": 20,
+            "beats": ["one"], "on_screen_text": ["x"]}
+    text = studio.spec(item, tmp_path)
+    assert "THE LOOK is paper cut-out" in text and "Layered paper" in text
+    files = studio.planner.mascot_files()
+    assert set(files) == {"sheet", "cutout", "sprite", "source"}, f"the mascot assets are missing: {files}"
+    assert "THE MASCOT is the one explaining" in text and "MASCOT.md" in text
+    assert "sprite-1080.png" in text
+    assert "red zip hoodie" in studio.mascot_check()
+    assert "paper-cutout" in studio.motion_rules("paper-cutout")
+
+
+def test_start_fresh_archives_the_previous_mascot_reversibly():
+    path = ROOT / "studio" / "reels" / "archive.py"
+    spec = importlib.util.spec_from_file_location("studio_reels_archive_test", path)
+    archive = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(archive)
+    assert "mascot" in archive.WORK_PATHS, "start fresh must archive the previous channel identity with its manifest"
+
+
+def test_every_style_names_an_installed_skill(studio):
+    for name in studio.planner.STYLES:
+        look = studio.planner.style(name)
+        assert look["label"] and look["look"] and look["motion"]
+        assert look["skill"], f"{name} has no installed skill: {look['missing']}"
+    with pytest.raises(ValueError):
+        studio.planner.style("watercolour-dreams")
+
+
+def test_a_direct_reel_takes_the_looks_skill_unless_one_is_named(studio):
+    plan = studio.direct("Clay one", "Explain the thing " + " ".join(["w"] * 25), 20, style_name="clay")
+    assert plan["style"] == "clay" and plan["items"][0]["style"] == "clay"
+    assert plan["items"][0]["skill"] == studio.planner.style("clay")["skill"]
+    named = studio.direct("Mine", "Explain the thing " + " ".join(["w"] * 25), 20, skill="hyperframes", style_name="pencil")
+    assert named["items"][0]["skill"] == "hyperframes" and named["items"][0]["style"] == "pencil"
+    with pytest.raises(ValueError):
+        studio.direct("Bad", "Explain the thing " + " ".join(["w"] * 25), 20, style_name="nope")
+
+
+def test_the_render_record_keeps_the_look(studio):
+    plan = studio.direct("Clay two", "Explain the thing " + " ".join(["w"] * 25), 20, style_name="sticker")
+    studio.make(plan["id"], 1)
+    assert studio.detail(plan["id"], 1)["record"]["style"] == "sticker"

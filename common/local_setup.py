@@ -42,16 +42,17 @@ REQUIRED = {'full_name': 'full name', 'email': 'email', 'phone': 'phone number',
             'total_experience_years': 'years of experience'}
 ENV_KEYS = {'PROFILE_PATH', 'RESUME_PATH', 'DATA_DIR', 'FIRSTNAME', 'LASTNAME', 'KEYWORDS',
             'LOCATION', 'LLM_BACKEND', 'PIPELINE_AI_CLI', 'SEARCH_EXPERIENCE_YEARS'}
-# Written once at setup when absent, never overwritten: a newcomer's first day
-# should send a full day of applications, and an edited value is theirs to keep.
-# Every bot goes for 100 applications per run: Naukri through TARGET_APPLICATIONS
-# (DAILY_QUOTA=0 removes the rolling 24h ledger ceiling, so a second run the same
-# day still gets a full 100; Naukri's own server cap ends a run early on its own)
-# and each other board through PLATFORM_LIMIT.
-# The candidate pool is sized so 100 relevant postings are actually there.
-VOLUME_DEFAULTS = {'TARGET_APPLICATIONS': '100', 'DAILY_QUOTA': '0', 'PLATFORM_LIMIT': '100', 'MIN_SCORE': '40',
-                   'MAX_DAYS_OLD': '21', 'MAX_CANDIDATES': '1200', 'LLM_RANK_TOP_N': '400', 'PAGES_PER_KEYWORD': '8',
-                   'SKILL_YEARS_FROM_TOTAL': 'true', 'BROWSER_AGENT': 'true', 'BROWSER_AGENT_LIMIT': '12',
+# Written once at setup when absent, never overwritten: an edited value is theirs to keep.
+# These were a full day of volume -- 100 applications a board, no 24h ceiling, MIN_SCORE 40 --
+# until the 2026-11-12 audit: 1768 of 1889 applications under the bot's own bar, median score
+# 45.6, 745 in one day, not one call. A first day is now the size that audit settled on, so a
+# fresh .env cannot re-create the funnel it diagnosed. MIN_SCORE and SKILL_YEARS_FROM_TOTAL come
+# from Settings: the gate the bots apply and the one setup writes have to be the same number.
+VOLUME_DEFAULTS = {'TARGET_APPLICATIONS': '20', 'DAILY_QUOTA': '25', 'PLATFORM_LIMIT': '20',
+                   'MIN_SCORE': format(Settings.min_score, 'g'),
+                   'MAX_DAYS_OLD': '21', 'MAX_CANDIDATES': '300', 'LLM_RANK_TOP_N': '400', 'PAGES_PER_KEYWORD': '8',
+                   'SKILL_YEARS_FROM_TOTAL': str(Settings.skill_years_from_total).lower(),
+                   'BROWSER_AGENT': 'true', 'BROWSER_AGENT_LIMIT': '12',
                    'BROWSER_AGENT_TIMEOUT_S': '600', 'BROWSER_AGENT_BUDGET_USD': '1.5'}
 FACT_QUESTIONS = {
     'full_name': 'What is your full name?', 'email': 'What is your email address?',

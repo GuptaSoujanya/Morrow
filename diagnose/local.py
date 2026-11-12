@@ -13,9 +13,12 @@ from collections import Counter, defaultdict
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
+from urllib.parse import urlsplit
 
 from common import paths
 from common.models import Settings
+
+from . import mail_rules
 
 logger = logging.getLogger(__name__)
 
@@ -72,7 +75,17 @@ def ledger_paths(settings: Settings) -> List[Path]:
 
 
 def _day(stamp: str) -> str:
-    return (stamp or "")[:10]
+    """The day an application belongs to in the reader's own calendar.
+
+    The ledger stamps every row in UTC. India is 5.5 hours ahead, so a run that is still going at
+    18:30 UTC already counts as tomorrow on the reader's wall clock; cutting the stamp at ten
+    characters would file that evening under yesterday and disagree with the dashboard, which
+    converts. Both now name the same day for the same row.
+    """
+    try:
+        return datetime.fromisoformat(str(stamp)).astimezone().date().isoformat()
+    except (TypeError, ValueError):
+        return (stamp or "")[:10]
 
 
 def read_applications(paths_: Iterable[Path]) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
@@ -119,6 +132,33 @@ def read_applications(paths_: Iterable[Path]) -> Tuple[List[Dict[str, Any]], Dic
     return merged, sources
 
 
+#: Naukri's own job sources carry no board prefix ("search:AI Engineer", "recommended:profile"), and an
+#: NVite whose link holds no Naukri id is recorded as "nvite:<hash>". None of them is a board of its own.
+_NAUKRI_SOURCES = ("search", "recommended", "nvite")
+#: A job id is the posting's own link whenever the board gave none of its own, so the host names the
+#: board; anything else was applied to on the employer's own site.
+_BOARD_HOSTS = ("naukri.com", "hirist.tech", "instahyre.com", "cutshort.io", "wellfound.com")
+
+
+def channel(record: Dict[str, Any]) -> str:
+    """The board an application came through, read off the job's source or, failing that, its id.
+
+    How it was sent says nothing about where it came from: a Naukri job finished on the employer's own
+    site is still a Naukri application. web.state._board_of_job must answer the same for the dashboard,
+    bar showing yc and hn as one "startups"; tests/diagnose holds the two to it.
+    """
+    prefix = (record.get("source") or "").split(":")[0]
+    if prefix and prefix not in _NAUKRI_SOURCES:
+        return prefix
+    job = str(record.get("job_id") or "")
+    if job.startswith(("http://", "https://")):
+        host = (urlsplit(job).hostname or "").lower()
+        return next((domain.split(".")[0] for domain in _BOARD_HOSTS
+                     if host == domain or host.endswith("." + domain)), "external")
+    head = job.split(":", 1)[0] if ":" in job else "naukri"
+    return "naukri" if head in _NAUKRI_SOURCES else (head or "external")
+
+
 def funnel(applications: List[Dict[str, Any]]) -> Dict[str, Any]:
     status = Counter(record.get("status") or "?" for record in applications)
     submitted = [record for record in applications if record.get("status") in SUBMITTED]
@@ -127,11 +167,7 @@ def funnel(applications: List[Dict[str, Any]]) -> Dict[str, Any]:
         per_day[_day(record.get("at") or "")][record.get("status")] += 1
     channels = Counter()
     for record in submitted:
-        source = (record.get("source") or "").split(":")[0]
-        if record.get("status") == "applied":
-            source = "naukri"
-        elif source in ("search", "recommended", ""):
-            source = "other"
+        source = channel(record)
         channels[source] += 1
     first = applications[0]["at"] if applications else ""
     last = applications[-1]["at"] if applications else ""
@@ -277,7 +313,7 @@ def replies(settings: Settings) -> Dict[str, Any]:
         sources[domain.split(".")[-2] if domain.count(".") >= 1 else domain] += 1
     contacts = _jsonl(folder / "job_contacts.jsonl")
     cold = _jsonl(folder / "cold_emails.jsonl")
-    positive = sum(kinds.get(kind, 0) for kind in ("INTERVIEW", "OFFER", "QUESTION"))
+    positive = sum(kinds.get(kind, 0) for kind in mail_rules.POSITIVE)
     return {
         "rows": len(mails),
         "kinds": dict(kinds.most_common()),

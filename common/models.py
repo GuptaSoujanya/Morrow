@@ -328,7 +328,11 @@ class Settings:
     target_applications: int = 50
     max_candidates: int = 400
     llm_rank_top_n: int = 150
-    min_score: float = 55.0
+    # The one score gate. Setup writes it into a fresh .env (local_setup.VOLUME_DEFAULTS) and the
+    # dashboard counts applications against it (web.state), so all three read it from here. It was
+    # 55 while setup wrote 40 and the dashboard assumed 70; the 2026-11-12 audit found 1768 of 1889
+    # applications sent under the bar, and three different bars to be under.
+    min_score: float = 65.0
     max_days_old: int = 7
     # A posting whose stated experience minimum (card label, else "N+ years of
     # experience" in the description) exceeds the candidate's years by more than
