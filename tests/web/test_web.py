@@ -285,7 +285,7 @@ def make_ledger(path):
     connection.executemany(
         "INSERT INTO jobs_seen(job_id, source, first_seen, score) VALUES (?, ?, ?, ?)",
         [
-            ("1", "search:AI Engineer", at(12, 10), 50.0),
+            ("111", "search:AI Engineer", at(12, 10), 50.0),
             ("2", "hirist:search:AI Engineer", at(12, 10), 30.0),
             ("3", "recommended:similar_jobs", at(13, 8), None),
             ("4", "cutshort:feed", at(13, 8), 95.0),
@@ -336,10 +336,31 @@ def test_startup_jobs_are_their_own_series_not_company_sites(tmp_path, monkeypat
     connection.close()
     data = state.overview(7, today=dt.date(2026, 10, 13), now=dt.datetime(2026, 10, 13, 12).astimezone(), db=db)
     day = {d["day"]: d for d in data["daily"]}["2026-10-13"]
-    assert day["startups"] == 2 and day["company"] == 1
-    assert data["sent"]["startups"] == 2 and data["sent"]["company"] == 1
+    # ext-1 has no board prefix, so it is a Naukri job finished on the company's site, like "555" sent on Naukri.
+    assert (day["startups"], day["naukri"], day["company"]) == (2, 2, 3)
+    assert data["sent"] == {"total": 6, "naukri": 3, "boards": 1, "company": 3, "startups": 2, "before": None}
     boards = {b["key"]: b for b in data["boards"]}
     assert boards["startups"]["name"] == "Startups" and boards["startups"]["sent"] == 2
+    assert boards["naukri"]["sent"] == 3 and sum(b["sent"] for b in data["boards"]) == data["sent"]["total"]
+
+
+def test_an_nvite_is_a_naukri_job_on_every_panel(tmp_path, monkeypatch):
+    for key in ("MIN_SCORE", "DAILY_QUOTA", "DB_PATH"):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setattr(state, "APPLY", tmp_path)
+    db = make_ledger(tmp_path / "ledger.db")
+    connection = sqlite3.connect(db)
+    connection.execute(
+        "INSERT INTO applications(job_id, url, title, company, status, detail, quota_consumed, at) "
+        "VALUES ('nvite:4dd4ab7bf1105235', '', 'Engineer', 'Co', 'applied', '', 0, ?)",
+        (dt.datetime(2026, 10, 13, 9).astimezone().isoformat(),))
+    connection.commit()
+    connection.close()
+    assert state._board_of_job("nvite:4dd4ab7bf1105235") == "naukri"
+    data = state.overview(7, today=dt.date(2026, 10, 13), now=dt.datetime(2026, 10, 13, 12).astimezone(), db=db)
+    boards = {b["key"]: b for b in data["boards"]}
+    assert "nvite" not in boards
+    assert data["sent"]["naukri"] == boards["naukri"]["sent"] == data["funnel"]["naukri"]["steps"][-1]["count"] == 3
 
 
 def test_overview_counts_what_the_ledger_holds(tmp_path, monkeypatch):
@@ -373,12 +394,24 @@ def test_overview_counts_what_the_ledger_holds(tmp_path, monkeypatch):
     assert data["searches"][0] == {"search": "AI Engineer", "boards": ["Hirist", "Naukri"], "found": 2, "over": 1,
                                    "average": 40.0}
 
+    # The funnel counts distinct jobs from the ledger, so Found and Sent agree with the figures above.
     funnel = data["funnel"]["naukri"]
     assert funnel["runs"] == 1 and data["funnel"]["boards"]["runs"] == 0
-    assert [s["count"] for s in funnel["steps"]] == [10, 8, 3, 2, 1]
-    assert funnel["dropped"] == [{"label": "Too old", "count": 2}, {"label": "Under the minimum score", "count": 5}]
-    assert funnel["unsent"] == [{"label": "Left for you on a company site", "count": 1}]
-    assert data["funnel"]["all"]["steps"] == funnel["steps"]
+    assert [s["label"] for s in funnel["steps"]] == ["Found", "Scored", "Tried", "Sent"]
+    assert [s["count"] for s in funnel["steps"]] == [2, 1, 5, 2]
+    assert funnel["dropped"] == [{"label": "Not scored", "count": 1}]
+    assert funnel["unsent"] == [{"label": "Company site, needs you", "count": 1},
+                                {"label": "Skipped, a question had no answer", "count": 1},
+                                {"label": "Naukri refused the click (its limit for the day)", "count": 1}]
+    boards_funnel = data["funnel"]["boards"]
+    assert [s["count"] for s in boards_funnel["steps"]] == [2, 2, 1, 1]
+    assert boards_funnel["dropped"] == [{"label": "Under the minimum score", "count": 1},
+                                        {"label": "Over the score, not reached", "count": 1}]
+    assert boards_funnel["unsent"] == []
+    everything = data["funnel"]["all"]
+    assert [s["count"] for s in everything["steps"]] == [4, 3, 6, 3]
+    assert everything["steps"][0]["count"] == data["found"]["total"]
+    assert everything["steps"][-1]["count"] == data["sent"]["total"] == sum(b["sent"] for b in data["boards"])
     assert data["funnel"]["left_out"] == {"practice": 1, "older": 0, "unfinished": 1}
 
     runs = data["runs"]

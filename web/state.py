@@ -17,7 +17,7 @@ import threading
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Set, Tuple, TypeVar
+from typing import Any, Callable, Dict, Iterable, List, Optional, Set, Tuple, TypeVar
 
 from common.models import ApplyStatus, Settings
 from common.report import OUTCOMES, course_modules as plan_order
@@ -30,6 +30,7 @@ USER = APPLY / paths.user_dir()
 ANSWERS = USER / "inputs" / "answers.txt"
 PROFILE = USER / "inputs" / "profile.yaml"
 COMPANY_SITES = USER / "inputs" / "company_sites.md"
+LEADS = USER / "inputs" / "leads.json"
 RESUMES = USER / "resume"
 REPORTS = USER / "reports"
 LOGS = USER / "logs"
@@ -703,18 +704,11 @@ _KINDS = {
     ApplyStatus.EXTERNAL_SKIPPED: "skipped",
     ApplyStatus.NO_APPLY_BUTTON: "skipped",
 }
-_CHANNELS = {
-    ApplyStatus.APPLIED: "naukri",
-    ApplyStatus.APPLIED_PLATFORM: "boards",
-    ApplyStatus.APPLIED_EXTERNAL: "company",
-}
 #: Naukri's own job sources carry no board prefix ("search:AI Engineer", "recommended:profile").
 _NAUKRI_SOURCES = {"search", "recommended"}
-_RUN_FIELDS = (
-    "collected", "too_old", "not_ranked", "ranked", "below_score", "already_applied", "held_back",
-    "own_company", "eligible", "attempted", "applied", "applied_external", "external_manual",
-    "skipped_abstained", "errors",
-)
+#: Naukri job ids that do carry a prefix: an NVite (recruiter invitation) whose link holds no Naukri id is
+#: recorded as "nvite:<hash>" by leads/boards.py. It is still a Naukri job, not a board of its own.
+_NAUKRI_PREFIXES = {"nvite"}
 
 
 def database() -> Path:
@@ -758,17 +752,28 @@ def board_name(key: str) -> str:
 
 
 def _board_of_job(job_id: Any) -> str:
-    """Job boards prefix their ids ("hirist:1677523"); Naukri's ids are bare numbers; yc:/hn: are startups."""
+    """Job boards prefix their ids ("hirist:1677523"); Naukri's are bare numbers or "nvite:…"; yc:/hn: are startups."""
     text = str(job_id or "")
     board = text.split(":", 1)[0] if ":" in text else "naukri"
-    return "startups" if board in _STARTUP_SOURCES else board
-
-
-def _channel(row: Dict[str, Any], kind: str) -> str:
-    """The series a ledger row is drawn in: a startup job is its own, however it was sent."""
-    if _board_of_job(row["job_id"]) == "startups":
+    if board in _STARTUP_SOURCES:
         return "startups"
-    return _CHANNELS.get(row["status"], kind)
+    return "naukri" if board in _NAUKRI_PREFIXES else board
+
+
+def _channel(job_id: Any) -> str:
+    """The series a sent application is drawn in: the board the job came from, however it was sent.
+
+    Every panel (the daily chart, the channel text, the Job boards table, the Applications page and the
+    funnel) counts a job under the same board this way. How many of them were finished on the employer's
+    own site (applied_external) is reported alongside as "company", not as a series of its own.
+    """
+    board = _board_of_job(job_id)
+    return board if board in ("naukri", "startups") else "boards"
+
+
+def _funnel_group(board: str) -> str:
+    """The funnel has two tabs: Naukri, and every other board (startups included)."""
+    return "naukri" if board == "naukri" else "boards"
 
 
 def source_parts(source: str) -> Tuple[str, str]:
@@ -785,33 +790,32 @@ def source_parts(source: str) -> Tuple[str, str]:
     return board, f"{board_name(board)} {kind.replace('_', ' ')}".strip()
 
 
-def _funnel(totals: Counter, runs: int) -> Dict[str, Any]:
-    """One group of real runs: how many jobs each step kept, and why the rest dropped out."""
-    def counts(pairs: Tuple[Tuple[str, int], ...]) -> List[Dict[str, Any]]:
+def _funnel(totals: Counter, unsent: Counter, runs: int) -> Dict[str, Any]:
+    """One group of boards, read from the ledger: how many distinct jobs each step kept, and why the rest fell out.
+
+    Each job is counted once, so Found agrees with the jobs the Overview says were found and Sent with the
+    applications it says were sent. (Run summaries re-collect the same jobs every run, so they are not summed.)
+    """
+    def counts(pairs: Iterable[Tuple[str, int]]) -> List[Dict[str, Any]]:
         return [{"label": label, "count": count} for label, count in pairs if count]
 
     return {
         "runs": runs,
         "steps": [
-            {"key": "found", "label": "Found", "count": totals["collected"]},
-            {"key": "scored", "label": "Scored", "count": totals["ranked"]},
-            {"key": "eligible", "label": "Eligible", "count": totals["eligible"]},
-            {"key": "tried", "label": "Tried", "count": totals["attempted"]},
-            {"key": "sent", "label": "Sent", "count": totals["applied"] + totals["applied_external"]},
+            {"key": "found", "label": "Found", "count": totals["found"]},
+            {"key": "scored", "label": "Scored", "count": totals["scored"]},
+            {"key": "tried", "label": "Tried", "count": totals["tried"]},
+            {"key": "sent", "label": "Sent", "count": totals["sent"]},
         ],
         "dropped": counts((
-            ("Too old", totals["too_old"]),
-            ("Not scored", totals["not_ranked"]),
+            ("Not scored", totals["not_scored"]),
             ("Under the minimum score", totals["below_score"]),
-            ("Applied before", totals["already_applied"]),
-            ("Held for your answers", totals["held_back"]),
-            ("Your current employer", totals["own_company"]),
+            ("Over the score, not reached", totals["not_reached"]),
         )),
-        "unsent": counts((
-            ("Left for you on a company site", totals["external_manual"]),
-            ("A question had no answer", totals["skipped_abstained"]),
-            ("Errors", totals["errors"]),
-        )),
+        "unsent": counts(
+            (OUTCOMES.get(status, status.replace("_", " ").capitalize()), count)
+            for status, count in unsent.most_common()
+        ),
     }
 
 
@@ -830,7 +834,7 @@ def overview(
     min_score = _setting_number("MIN_SCORE", Settings.min_score)
 
     applications = _query(db, "SELECT job_id, status, quota_consumed, at FROM applications ORDER BY at, id")
-    seen = _query(db, "SELECT source, first_seen, score FROM jobs_seen")
+    seen = _query(db, "SELECT job_id, source, first_seen, score FROM jobs_seen")
     runs = _query(db, "SELECT id, started_at, finished_at, summary_json FROM runs ORDER BY started_at, id")
     for rows, column in ((applications, "at"), (seen, "first_seen"), (runs, "started_at")):
         for row in rows:
@@ -855,20 +859,31 @@ def overview(
         for n in range((today - start).days + 1)
     }
     outcomes, sent_by_board, sent = Counter(), Counter(), Counter()
+    tried: Dict[str, Dict[str, Any]] = {}
+    ever_tried = {row["job_id"] for row in applications}
     for row in applications:
         kind = _KINDS.get(row["status"], "failed")
         if within(row["day"]):
-            daily[row["day"]][_channel(row, kind) if kind == "sent" else kind] += 1
+            board = _board_of_job(row["job_id"])
+            daily[row["day"]][_channel(row["job_id"]) if kind == "sent" else kind] += 1
             outcomes[row["status"]] += 1
             if kind == "sent":
-                sent[_channel(row, kind)] += 1
-                sent_by_board[_board_of_job(row["job_id"])] += 1
+                sent[_channel(row["job_id"])] += 1
+                sent_by_board[board] += 1
+            if row["status"] == ApplyStatus.APPLIED_EXTERNAL:
+                sent["company"] += 1
+                daily[row["day"]]["company"] += 1
+            job = tried.setdefault(row["job_id"], {"group": _funnel_group(board), "sent": False})
+            job["sent"] = job["sent"] or kind == "sent"
+            job["status"] = row["status"]
         elif earlier(row["day"]) and kind == "sent":
             sent["before"] += 1
 
     bins, found = [0] * 20, Counter()
     boards: Dict[str, Counter] = {}
     searches: Dict[str, Dict[str, Any]] = {}
+    funnels = {"naukri": Counter(), "boards": Counter()}
+    unsent = {"naukri": Counter(), "boards": Counter()}
     for row in seen:
         if earlier(row["day"]):
             found["before"] += 1
@@ -888,6 +903,17 @@ def overview(
             found["unscored"] += 1
         else:
             bins[min(19, max(0, int(score // 5)))] += 1
+        funnel = funnels[_funnel_group(board)]
+        funnel["found"] += 1
+        funnel["scored"] += score is not None
+        if row["job_id"] not in ever_tried:
+            funnel["not_scored" if score is None else "below_score" if score < min_score else "not_reached"] += 1
+    for job in tried.values():
+        funnels[job["group"]]["tried"] += 1
+        if job["sent"]:
+            funnels[job["group"]]["sent"] += 1
+        else:
+            unsent[job["group"]][job["status"]] += 1
 
     def averaged(tally: Counter) -> Dict[str, Any]:
         return {
@@ -896,7 +922,6 @@ def overview(
             "average": round(tally["points"] / tally["scored"], 1) if tally["scored"] else None,
         }
 
-    funnels = {"naukri": Counter(), "boards": Counter()}
     counted_runs = Counter()
     left_out = Counter()
     recent = []
@@ -928,9 +953,7 @@ def overview(
         elif "eligible" not in summary:
             left_out["older"] += 1
         else:
-            group = "boards" if summary.get("board") else "naukri"
-            counted_runs[group] += 1
-            funnels[group].update({key: int(summary.get(key) or 0) for key in _RUN_FIELDS})
+            counted_runs["boards" if summary.get("board") else "naukri"] += 1
 
     cutoff = now - dt.timedelta(hours=24)
     leads = leads_data(today, days or 14, limit=0)
@@ -942,7 +965,7 @@ def overview(
         "min_score": min_score,
         "daily": list(daily.values()),
         "sent": {
-            "total": sent["naukri"] + sent["boards"] + sent["company"] + sent["startups"],
+            "total": sent["naukri"] + sent["boards"] + sent["startups"],
             "naukri": sent["naukri"],
             "boards": sent["boards"],
             "company": sent["company"],
@@ -978,9 +1001,10 @@ def overview(
             key=lambda s: (-s["over"], -s["found"], s["search"]),
         ),
         "funnel": {
-            "naukri": _funnel(funnels["naukri"], counted_runs["naukri"]),
-            "boards": _funnel(funnels["boards"], counted_runs["boards"]),
-            "all": _funnel(funnels["naukri"] + funnels["boards"], counted_runs["naukri"] + counted_runs["boards"]),
+            "naukri": _funnel(funnels["naukri"], unsent["naukri"], counted_runs["naukri"]),
+            "boards": _funnel(funnels["boards"], unsent["boards"], counted_runs["boards"]),
+            "all": _funnel(funnels["naukri"] + funnels["boards"], unsent["naukri"] + unsent["boards"],
+                           counted_runs["naukri"] + counted_runs["boards"]),
             "left_out": {"practice": left_out["practice"], "older": left_out["older"], "unfinished": left_out["unfinished"]},
         },
         "runs": recent[::-1][:12],
