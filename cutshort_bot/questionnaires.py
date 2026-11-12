@@ -184,11 +184,18 @@ _CONTEXT_SCRIPT = _PANEL_SCRIPT + r"""
 const jobLinks = [...panel.querySelectorAll('a[href]')].filter(visible).filter(a => {
   const u = new URL(a.href); return ['cutshort.io', 'www.cutshort.io'].includes(u.hostname) && u.pathname.startsWith('/job/');
 });
-const companies = [...panel.querySelectorAll('a[href*="/company/jobs-at-"]')].filter(visible).map(a => (a.innerText || '').trim());
-const titles = [...panel.querySelectorAll('*')].filter(visible)
-  .filter(el => !el.closest('[role="log"], [data-message-id]'))
-  .map(el => (el.innerText || '').trim()).filter(t => /^For job\s+[^\n]+$/.test(t))
-  .map(t => t.replace(/^For job\s+/, ''));
+// The employer is plain text in the thread header: the line above "For job <role>" and the
+// job card's "at <employer>" line. The only /company/ link there may be the hiring agency.
+const headerText = [...panel.querySelectorAll('*')].filter(visible)
+  .filter(el => !el.closest('[role="log"], [data-message-id]'));
+const own = el => (el.innerText || '').trim();
+const titleEls = headerText.filter(el => /^For job\s+[^\n]+$/.test(own(el)));
+const companies = [
+  ...[...panel.querySelectorAll('a[href*="/company/jobs-at-"]')].filter(visible).map(own),
+  ...titleEls.map(el => el.previousElementSibling).filter(Boolean).map(own).filter(t => t && !t.includes('\n')),
+  ...headerText.map(own).filter(t => /^at\s+\S[^\n]*$/.test(t)).map(t => t.replace(/^at\s+/, '')),
+];
+const titles = titleEls.map(el => own(el).replace(/^For job\s+/, ''));
 return {companies: [...new Set(companies)], titles: [...new Set(titles)], jobs: [...new Set(jobLinks.map(a => a.href))]};
 """
 
@@ -200,8 +207,10 @@ def _selected_thread_matches(driver, row):
     except (AttributeError, WebDriverException):
         return False
     norm = lambda value: ' '.join(str(value or '').split()).casefold()
+    # The single job link and the one "For job <role>" heading identify the thread; an agency
+    # job names the agency as well as the employer, so the row's company only has to be there.
     return bool(isinstance(context, dict) and len(context.get('jobs', [])) == 1
-                and [norm(x) for x in context.get('companies', [])] == [norm(row.get('company'))]
+                and norm(row.get('company')) in [norm(x) for x in context.get('companies', [])]
                 and [norm(x) for x in context.get('titles', [])] == [norm(row.get('title'))]
                 and norm(row.get('company')) and norm(row.get('title')))
 
@@ -236,6 +245,32 @@ def _verified(driver, url, report):
                                                for text in proof if isinstance(text, str)))
 
 
+#: The conversations list renders well after the page loads; a fixed two-second sleep used to
+#: read zero rows and end the whole pass as if no questionnaire were waiting. Polls, not a
+#: deadline, so a test that stubs the sleep away does not spin for the whole wait.
+_POLL_S = 0.5
+_RENDER_POLLS = 40
+_OPEN_POLLS = 20
+
+
+def _settle(check, polls):
+    value = check()
+    for _ in range(polls):
+        if value:
+            break
+        time.sleep(_POLL_S)
+        value = check()
+    return value
+
+
+def _rows_once_rendered(driver, seen):
+    return _settle(lambda: [row for row in pending_rows(driver) if row.get("key") not in seen], _RENDER_POLLS)
+
+
+def _thread_once_open(driver):
+    return _settle(lambda: thread_id(ext._current_url(driver)), _OPEN_POLLS)
+
+
 def finish_pending(driver, profile, settings, limit=10):
     """Bounded pass over explicit Pending questionnaire rows; no ordinary messages."""
     if not settings.browser_agent or limit <= 0 or browser_agent.tasks_left(settings) <= 0:
@@ -248,17 +283,15 @@ def finish_pending(driver, profile, settings, limit=10):
             break
         if not safe_get(driver, PENDING_URL):
             break
-        time.sleep(2)
-        rows = [row for row in pending_rows(driver) if row.get("key") not in seen]
+        rows = _rows_once_rendered(driver, seen)
         if not rows:
             break
         row = rows[0]
         seen.add(row.get("key"))
         ext._click(driver, row["element"])
-        time.sleep(1)
+        identity = _thread_once_open(driver)
         url = ext._current_url(driver)
-        identity = thread_id(url)
-        if not identity or not _selected_thread_matches(driver, row):
+        if not identity or not _settle(lambda: _selected_thread_matches(driver, row), _OPEN_POLLS):
             logger.warning("Cutshort: selected questionnaire thread does not match its company and role; leaving it alone")
             continue
         try:

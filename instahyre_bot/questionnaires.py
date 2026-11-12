@@ -111,8 +111,8 @@ def finish_pending(driver, profile, settings, limit=10):
             break
         if not safe_get(driver, PENDING_URL):
             break
-        time.sleep(2)
-        rows = [row for row in pending_rows(driver) if row.get("key") not in seen]
+        rows = shared._settle(lambda: [row for row in pending_rows(driver) if row.get("key") not in seen],
+                              shared._RENDER_POLLS)
         if not rows:
             break
         row = rows[0]

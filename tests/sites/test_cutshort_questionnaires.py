@@ -338,3 +338,79 @@ def test_questionnaire_storage_error_does_not_abort_new_applications(tmp_path, m
         summary = pf.run_board(Driver(), pf.BOARDS['cutshort'], config, Profile(), ledger, None, None, 100, False, None)
     assert collected == [True]
     assert summary.applied == 0
+
+
+def test_an_agency_job_whose_header_names_both_agency_and_employer_still_matches():
+    driver = Driver()
+    row = {'company': 'Experiential Learning & Technology Company', 'title': 'Fullstack Developer'}
+    context = {'companies': ['Cutshort Lightning', 'Experiential Learning & Technology Company'],
+               'titles': ['Fullstack Developer'],
+               'jobs': ['https://cutshort.io/job/Fullstack-Developer-Bengaluru-Bangalore-l23gPYj3']}
+    driver.execute_script = lambda script: context
+    assert q._selected_thread_matches(driver, row)
+    driver.execute_script = lambda script: {**context, 'companies': ['Cutshort Lightning', 'Other employer']}
+    assert not q._selected_thread_matches(driver, row)
+
+
+def test_a_conversation_list_that_renders_late_is_waited_for_not_given_up_on(tmp_path, monkeypatch):
+    from sites_bot import application_brain
+    browser_agent.reset()
+    config = settings(tmp_path)
+    driver = Driver()
+    driver.proof = ["Questionnaire answers submitted"]
+    row = {"key": "Acme|AI Engineer", "element": "row", "company": "Acme", "title": "AI Engineer"}
+    reads, calls = [], []
+    def rows(d):
+        reads.append(1)
+        return [row] if len(reads) > 6 else []
+    monkeypatch.setattr(q, "safe_get", lambda d, url: True)
+    monkeypatch.setattr(q.time, "sleep", lambda seconds: None)
+    monkeypatch.setattr(q, "facts_fingerprint", lambda *a: "facts")
+    monkeypatch.setattr(q, "pending_rows", rows)
+    monkeypatch.setattr(q, "_selected_thread_matches", lambda *a: True)
+    monkeypatch.setattr(q.ext, "_click", lambda d, el: setattr(d, "current_url", URL))
+    monkeypatch.setattr(browser_agent, "facts_text", lambda *a: "saved facts")
+    monkeypatch.setattr(application_brain, "submission_click_recorded", lambda *a: True)
+    monkeypatch.setattr(browser_agent, "run_agent", lambda *a: calls.append(1) or SimpleNamespace(
+        report={"status": "done", "confirmation": "Questionnaire answers submitted"}, problem=""))
+    assert q.finish_pending(driver, Profile(email="jane@example.com"), config) == [
+        {"thread": THREAD, "state": "done", "company": "Acme", "title": "AI Engineer"}]
+    assert len(calls) == 1
+
+
+def test_a_click_whose_thread_opens_late_is_still_the_right_conversation(monkeypatch):
+    driver = Driver()
+    driver.current_url = "https://cutshort.io/profile/candidate-conversations?i=all&stage=awaiting"
+    looks = []
+    def later(d):
+        looks.append(1)
+        return URL if len(looks) > 4 else d.current_url
+    monkeypatch.setattr(q.time, "sleep", lambda seconds: None)
+    monkeypatch.setattr(q.ext, "_current_url", later)
+    assert q._thread_once_open(driver) == THREAD
+
+
+def test_a_thread_header_that_renders_after_the_click_is_waited_for(tmp_path, monkeypatch):
+    from sites_bot import application_brain
+    browser_agent.reset()
+    config = settings(tmp_path)
+    driver = Driver()
+    driver.proof = ["Questionnaire answers submitted"]
+    row = {"key": "Acme|AI Engineer", "element": "row", "company": "Acme", "title": "AI Engineer"}
+    looks, calls = [], []
+    def matches(d, candidate):
+        looks.append(1)
+        return len(looks) > 5
+    monkeypatch.setattr(q, "safe_get", lambda d, url: True)
+    monkeypatch.setattr(q.time, "sleep", lambda seconds: None)
+    monkeypatch.setattr(q, "facts_fingerprint", lambda *a: "facts")
+    monkeypatch.setattr(q, "pending_rows", lambda d: [row])
+    monkeypatch.setattr(q, "_selected_thread_matches", matches)
+    monkeypatch.setattr(q.ext, "_click", lambda d, el: setattr(d, "current_url", URL))
+    monkeypatch.setattr(browser_agent, "facts_text", lambda *a: "saved facts")
+    monkeypatch.setattr(application_brain, "submission_click_recorded", lambda *a: True)
+    monkeypatch.setattr(browser_agent, "run_agent", lambda *a: calls.append(1) or SimpleNamespace(
+        report={"status": "done", "confirmation": "Questionnaire answers submitted"}, problem=""))
+    assert q.finish_pending(driver, Profile(email="jane@example.com"), config) == [
+        {"thread": THREAD, "state": "done", "company": "Acme", "title": "AI Engineer"}]
+    assert len(calls) == 1
