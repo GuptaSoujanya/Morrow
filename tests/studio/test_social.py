@@ -6,14 +6,14 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
-SOCIAL = ROOT / "admin" / "reels" / "social.py"
+SOCIAL = ROOT / "studio" / "reels" / "social.py"
 
-pytestmark = pytest.mark.skipif(not SOCIAL.exists(), reason="the private admin folder is not checked out")
+pytestmark = pytest.mark.skipif(not SOCIAL.exists(), reason="the private studio folder is not checked out")
 
 
 @pytest.fixture
 def social(tmp_path, monkeypatch):
-    spec = importlib.util.spec_from_file_location("admin_reels_social_test", SOCIAL)
+    spec = importlib.util.spec_from_file_location("studio_reels_social_test", SOCIAL)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     home = tmp_path / "social"

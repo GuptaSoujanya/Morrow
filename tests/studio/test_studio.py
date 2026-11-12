@@ -6,14 +6,14 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
-STUDIO = ROOT / "admin" / "reels" / "studio.py"
+STUDIO = ROOT / "studio" / "reels" / "studio.py"
 
-pytestmark = pytest.mark.skipif(not STUDIO.exists(), reason="the private admin folder is not checked out")
+pytestmark = pytest.mark.skipif(not STUDIO.exists(), reason="the private studio folder is not checked out")
 
 
 @pytest.fixture
 def studio(tmp_path, monkeypatch):
-    spec = importlib.util.spec_from_file_location("admin_reels_studio_test", STUDIO)
+    spec = importlib.util.spec_from_file_location("studio_reels_studio_test", STUDIO)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     monkeypatch.setattr(module.planner, "PLANS", tmp_path / "plans")

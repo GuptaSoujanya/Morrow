@@ -8,10 +8,10 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
-VOICE = ROOT / "admin" / "reels" / "voice.py"
-MIX = ROOT / "admin" / "reels" / "mix.py"
+VOICE = ROOT / "studio" / "reels" / "voice.py"
+MIX = ROOT / "studio" / "reels" / "mix.py"
 
-pytestmark = pytest.mark.skipif(not (VOICE.exists() and MIX.exists()), reason="the private admin folder is not checked out")
+pytestmark = pytest.mark.skipif(not (VOICE.exists() and MIX.exists()), reason="the private studio folder is not checked out")
 needs_ffmpeg = pytest.mark.skipif(not (shutil.which("ffmpeg") and shutil.which("ffprobe")), reason="ffmpeg is not installed")
 
 
@@ -24,12 +24,12 @@ def _load(name, path):
 
 @pytest.fixture
 def voice():
-    return _load("admin_reels_voice_test", VOICE)
+    return _load("studio_reels_voice_test", VOICE)
 
 
 @pytest.fixture
 def mix(tmp_path, monkeypatch):
-    module = _load("admin_reels_mix_test", MIX)
+    module = _load("studio_reels_mix_test", MIX)
     monkeypatch.setattr(module, "ASSETS", tmp_path / "assets")
     monkeypatch.setattr(module, "BUNDLED_SFX", tmp_path / "no-bundled-sfx")
     return module

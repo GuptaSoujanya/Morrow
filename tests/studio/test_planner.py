@@ -6,14 +6,14 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
-PLANNER = ROOT / "admin" / "reels" / "planner.py"
+PLANNER = ROOT / "studio" / "reels" / "planner.py"
 
-pytestmark = pytest.mark.skipif(not PLANNER.exists(), reason="the private admin folder is not checked out")
+pytestmark = pytest.mark.skipif(not PLANNER.exists(), reason="the private studio folder is not checked out")
 
 
 @pytest.fixture
 def planner(tmp_path, monkeypatch):
-    spec = importlib.util.spec_from_file_location("admin_reels_planner_test", PLANNER)
+    spec = importlib.util.spec_from_file_location("studio_reels_planner_test", PLANNER)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     monkeypatch.setattr(module, "PLANS", tmp_path / "plans")
@@ -124,6 +124,65 @@ def test_markdown_lists_every_day_and_prompt(planner):
     assert "| 2 | Title 2 | bang-motion | 27s | Hook 2 |" in text
     assert text.count("## Day ") == 2 and text.count("Claude Code prompt:") == 2
     assert "#python #coding" in text
+
+
+def _skill(home, name, description):
+    folder = home / name
+    folder.mkdir(parents=True)
+    (folder / "SKILL.md").write_text(f"---\nname: {name}\ndescription: {description}\n---\n\nBody.\n", encoding="utf-8")
+    return folder / "SKILL.md"
+
+
+@pytest.fixture
+def homes(planner, tmp_path, monkeypatch):
+    claude, other = tmp_path / "claude-skills", tmp_path / "other-skills"
+    claude.mkdir()
+    other.mkdir()
+    monkeypatch.setattr(planner, "SKILL_HOME", claude)
+    monkeypatch.setattr(planner, "SKILL_HOMES", (claude, other))
+    return claude, other
+
+
+def test_installed_video_skills_join_the_menu_and_code_skills_stay_out(planner, homes):
+    claude, other = homes
+    _skill(claude, "motion-sparkle", "Make a looping motion graphics video with animated keyframes.")
+    _skill(other, "poster-art", "Create a poster: visual composition, illustration, canvas drawing for print.")
+    _skill(claude, "django-expert", "Use when building Django web applications or REST APIs. Renders templates.")
+    _skill(claude, "notes", "Plain notes, no front matter here at all.")
+
+    found = {entry["name"]: entry for entry in planner.discover_skills()}
+    assert set(found) == {"motion-sparkle", "poster-art"}
+    assert found["motion-sparkle"]["installed"] and found["motion-sparkle"]["repo"] == "installed here"
+    assert "keyframes" in found["motion-sparkle"]["summary"]
+    assert found["poster-art"]["path"].endswith("other-skills/poster-art/SKILL.md")
+
+
+def test_a_skill_the_manifest_already_lists_is_not_offered_twice(planner, homes):
+    claude, _ = homes
+    _skill(claude, "motion-sparkle", "Animated video motion graphics.")
+    assert planner.discover_skills({"motion-sparkle"}) == []
+
+
+def test_one_video_word_is_not_enough(planner):
+    assert not planner.looks_like_video("react-expert", "Build React components that render fast.")
+    assert planner.looks_like_video("vox-explainer", "Explainer video from one topic.")
+
+
+def test_the_read_list_adds_the_family_helpers_and_paths_outside_claudes_home(planner, homes):
+    claude, other = homes
+    for name in ("hyperframes", "hyperframes-animation", "hyperframes-keyframes", "motion-doctrine"):
+        _skill(claude, name, "Animated video motion graphics.")
+    _skill(other, "canvas-design", "Poster illustration drawing canvas.")
+
+    reads = planner.read_list("hyperframes")
+    assert reads[0] == "hyperframes"
+    assert "hyperframes-animation" in reads and "hyperframes-keyframes" in reads and "motion-doctrine" in reads
+    assert "cut-the-curve" not in reads
+    assert "hyperframes" not in planner.companions("hyperframes")
+
+    outside = planner.read_list("canvas-design")
+    assert outside[0].endswith("other-skills/canvas-design/SKILL.md")
+    assert "motion-doctrine" in outside
 
 
 def test_plan_id_must_be_a_slug(planner):
