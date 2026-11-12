@@ -1205,3 +1205,212 @@ def test_successful_empty_dom_read_does_not_restore_hidden_values_from_body_text
         def execute_script(self, script):
             return ''
     assert profile_agent.page_text(HiddenPage('Hidden old summary and salary 16 LPA')) == ''
+
+
+def test_naukri_it_skill_rows_as_the_agent_describes_them():
+    """The agent reported "Python, 3 years 0 months, last used 2026"; Naukri shows the row as
+    "Python - 2026 3 Years 0 Month", so every kept IT skill came back as not on the page."""
+    page = ('IT skills Skills Version Last used Experience Agent Benchmarking - 2026 2 Years 6 Months editOneTheme '
+            'Langchain - 2026 2 Years 8 Months editOneTheme Python - 2026 3 Years 0 Month editOneTheme Projects')
+    assert profile_agent.verify('Python, 3 years 0 months, last used 2026', page, 'IT skills') == (True, [])
+    assert profile_agent.verify('LangChain, 2 years 8 months, last used 2026', page, 'IT skills') == (True, [])
+    assert profile_agent.verify('Agent Benchmarking, last used 2026, 2 Years 6 Months', page, 'IT skills') == (True, [])
+    assert profile_agent.verify('Python, 2 years 0 months, last used 2026', page, 'IT skills') == (False, ['2 years 0 months'])
+    assert profile_agent.verify('Docker, 2 years 8 months, last used 2026', page, 'IT skills') == (False, ['Docker'])
+
+
+def test_a_semicolon_list_is_checked_item_by_item_across_the_page():
+    """Basic details have no heading of their own on Naukri and the phone number sits between the
+    salary and the notice period, so the one-phrase comparison never found them."""
+    page = ('Gurugram, INDIA 2 Years 11 Months ₹ 16,00,000 9999999999 verifiedOneTheme a@b.c '
+            '15 Days or less notice period Quick links')
+    assert profile_agent.verify('Gurugram, INDIA; 2 Years 11 Months; ₹ 16,00,000; 15 Days or less notice period',
+                                page, 'Basic details: current location, total experience') == (True, [])
+    assert profile_agent.verify('Gurugram, INDIA; 2 Years 11 Months; 30 Days notice period', page,
+                                'Basic details')[1] == ['30 Days notice period']
+
+
+def test_an_entry_name_followed_by_its_dates_matches_across_the_boards_own_labels():
+    page = ('Projects Add project llm-eval-harness editOneTheme Self (Offsite) Sep 2026 to Sep 2026 ( Full Time ) '
+            'Built a CLI prototype. Morrow editOneTheme Self (Offsite) Aug 2026 to Oct 2026 ( Full Time ) Built a workspace.')
+    assert profile_agent.verify('llm-eval-harness Sep 2026 to Sep 2026; Morrow Aug 2026 to Oct 2026', page,
+                                'Projects (6) and project dates') == (True, [])
+    assert profile_agent.verify('llm-eval-harness Sep 2026 to Sep 2026; Morrow Aug 2026 to Nov 2026', page,
+                                'Projects (6) and project dates') == (False, ['Morrow Aug 2026 to Nov 2026'])
+
+
+def test_a_jobs_skills_count_after_a_long_job_profile_and_under_the_boards_own_label():
+    """The agent wrote "Skills used: Python" while Naukri lists them as "Top 5 key skills: Python" some
+    1,800 characters after the company name, past the old 1,200-character window."""
+    page = ('Employment Add employment Software Engineer editOneTheme Ethara AI Full-time Mar 2024 to Present '
+            '(2 years 9 months) ' + 'word ' * 400
+            + 'Top 5 key skills: Python,LLM Evaluation,LangChain Full Stack Developer editOneTheme Robotronix')
+    heading, lead = profile_agent._locate('Employment: Software Engineer, Ethara AI')
+    assert (heading, lead) == ('Software Engineer, Ethara AI', profile_agent._LEAD_CHARS)
+    assert profile_agent.verify('Software Engineer, Ethara AI, Full-time, Mar 2024 to Present; '
+                                'Skills used: Python,LLM Evaluation,LangChain', page, 'Ethara AI', lead) == (True, [])
+    assert profile_agent.verify('Software Engineer, Ethara AI, Full-time, Mar 2024 to Present; Skills used: Python,Go',
+                                page, 'Ethara AI', lead) == (False, ['Go'])
+
+
+def test_a_skipped_edit_that_resembles_two_reported_sections_is_no_conflict():
+    """The plan skipped "Resume" (no file was given); the agent reported "Resume headline" and a merged
+    "Resume / Diversity / Class X-XII" row. The name matched both and the whole run was sent back
+    as "needs review: Ambiguous section match: Resume" although nothing was in conflict."""
+    sections = [Section('Resume headline', 'already_ok', after='Software Engineer | LangChain'),
+                Section('Resume / Diversity / Class X-XII', 'needs_input', note='No resume file was given')]
+    result = profile_agent.ProfileCheck(False, '', sections=list(sections))
+    profile_agent.add_planned(result, [{'name': 'Resume', 'action': 'skip', 'current': 'a.pdf', 'target': '',
+                                        'why': 'No resume file was given'}], 'Resume headline Software Engineer')
+    assert result.issues == [] and [s.name for s in result.sections] == [s.name for s in sections]
+    update = profile_agent.ProfileCheck(False, '', sections=list(sections))
+    profile_agent.add_planned(update, [{'name': 'Resume', 'action': 'update', 'current': '', 'target': 'new.pdf',
+                                        'why': ''}], 'Resume headline Software Engineer')
+    assert update.issues == ['Ambiguous section match: Resume']
+
+
+def test_a_profile_confirmed_except_for_facts_only_the_user_can_give_is_not_a_failure():
+    """Naukri asks for a reservation category and two IT skills that do not fit its table; the facts
+    file has none of that. The stage failed every day for it, although every other section was on the page."""
+    ProfileCheck = profile_agent.ProfileCheck
+    waiting = ProfileCheck(False, '', sections=[
+        Section('Key skills', 'already_ok', after='Python, Go', on_page=True),
+        Section('Personal details', 'needs_input', note='The facts do not give a category'),
+        Section('Expected salary', 'unsupported', note='No editor exists'),
+    ])
+    assert waiting.waiting_on_facts
+    assert profile_agent._verdict(waiting)[1].startswith('needs your input')
+    unconfirmed = ProfileCheck(False, '', sections=[
+        Section('Key skills', 'already_ok', after='Python, Go', on_page=False, missing=['Go']),
+        Section('Personal details', 'needs_input', note='The facts do not give a category'),
+    ])
+    assert not unconfirmed.waiting_on_facts
+    failed = ProfileCheck(False, '', sections=[
+        Section('Key skills', 'failed', after='Python, Go', note='the box is full'),
+        Section('Personal details', 'needs_input'),
+    ])
+    assert not failed.waiting_on_facts
+    nothing_asked = ProfileCheck(False, '', sections=[Section('Key skills', 'already_ok', after='Python', on_page=True)])
+    assert not nothing_asked.waiting_on_facts
+    unread = ProfileCheck(False, '', page_read=False, sections=[Section('Personal details', 'needs_input')])
+    assert not unread.waiting_on_facts
+
+
+def test_a_board_aside_in_brackets_and_a_salary_in_lakhs_match_the_boards_own_rendering():
+    page = ("Software Engineer editOneTheme Ethara AI Full-time Mar 2024 to Present (2 years 9 months) "
+            "Gurugram, INDIA 2 Years 11 Months ₹ 16,00,000 9993350887 15 Days or less notice period")
+    assert profile_agent._compare("Software Engineer, Ethara AI, Mar 2024 - Present (current)", page) == (True, [])
+    assert profile_agent._compare("Gurugram; 2.9 years; 16 LPA; 15 days", page) == (True, [])
+    assert profile_agent._compare("Gurugram; 2.9 years; 18 LPA; 15 days", page) == (False, ["18 LPA"])
+    assert profile_agent._indian(1650000) == "16,50,000"
+
+
+def test_an_internship_the_agent_names_as_intern_matches_the_boards_role_and_type():
+    page = ("Full Stack Developer editOneTheme Robotronix Engineering Tech Internship Feb 2021 to Apr 2021 (3 months) "
+            "Education Add education")
+    assert profile_agent._compare("Full-Stack Developer Intern, Robotronix Engineering Tech, Feb 2021 - Apr 2021", page) == (True, [])
+    assert profile_agent._compare("Backend Developer Intern, Robotronix Engineering Tech, Feb 2021 - Apr 2021", page) == (
+        False, ["Backend Developer Intern"])
+
+
+def test_a_skill_the_board_had_no_room_for_waits_for_the_user_instead_of_failing_the_run(monkeypatch, tmp_path):
+    """The agent wrote the skill that did not fit ("CI/CD") where the field's value belongs, with the
+    note explaining the full box; the verifier looked CI/CD up on the page and failed the run for it."""
+    monkeypatch.setattr(common_browser, "safe_get", lambda d, url: True)
+    monkeypatch.setattr(profile_agent, "_SETTLE_S", 0)
+    monkeypatch.setattr(profile_agent.time, "sleep", lambda s: None)
+    page = "Resume headline AI Engineer | LLM Evaluation Key skills Python LangChain FastAPI AWS Bedrock"
+    report = {"status": "needs_input", "sections": [
+        {"name": "Resume headline", "action": "already_ok", "after": "AI Engineer | LLM Evaluation"},
+        {"name": "Key skills", "action": "already_ok", "after": "CI/CD",
+         "note": "Planned skill CI/CD did not fit: the box is full (the input's maxlength dropped to 2 characters)."},
+        {"name": "Personal details", "action": "needs_input", "note": "The facts do not give a category."},
+    ]}
+    result = profile_agent.check(FakeDriver(page), BOARD, Settings(), report, None, tmp_path)
+    skills = next(s for s in result.sections if s.name == "Key skills")
+    assert skills.action == profile_agent.NEEDS_INPUT
+    assert not result.unverified and result.waiting_on_facts
+    # The same words as the field's real value are still looked up on the page.
+    report["sections"][1] = {"name": "Key skills", "action": "already_ok", "after": "Python, CI/CD",
+                             "note": "Both chips are on the page."}
+    result = profile_agent.check(FakeDriver(page), BOARD, Settings(), report, None, tmp_path)
+    skills = next(s for s in result.sections if s.name == "Key skills")
+    assert skills.action == profile_agent.ALREADY_OK and skills.missing == ["CI/CD"]
+
+
+def test_a_partial_report_with_nothing_failed_is_judged_by_the_reloaded_page(monkeypatch, tmp_path):
+    """The skill tells the agent to report `partial` whenever a field is outstanding; the run treated
+    that word as a stop and failed a profile the page confirmed, with only user facts outstanding."""
+    page = "Resume headline AI Engineer | LLM Evaluation | LangChain | Python Personal details Add Category"
+    report = {"status": "partial", "why": "The category is not in the facts.", "sections": [
+        {"name": "Resume headline", "action": "already_ok", "after": "AI Engineer | LLM Evaluation | LangChain | Python"},
+        {"name": "Personal details", "action": "needs_input", "note": "The facts do not give a category."},
+    ]}
+    saved, notes = _run(monkeypatch, tmp_path, page, report)
+    assert saved
+    saved, notes = _run(monkeypatch, tmp_path, page.replace("| LangChain | Python", ""), report)
+    assert not saved
+    report["status"] = "failed"
+    saved, notes = _run(monkeypatch, tmp_path, page, report)
+    assert not saved
+
+
+def test_a_keep_edits_planner_paraphrase_does_not_override_what_the_agent_read_back(tmp_path):
+    """The planner wrote "DOB 05 Apr 2003" and "Languages English Expert R/W/S"; the agent read
+    "Date of birth 05 Apr 2003" and "English Expert" off the page. The planner's words were looked up."""
+    page = ("Personal details editOneTheme Personal male, Single / unmarried, Date of birth 05 Apr 2003 Category Add Category "
+            "Work permit India Address Aravali Prishar, Indore Languages Proficiency Read Write Speak English Expert Hindi Expert")
+    result = profile_agent.ProfileCheck(False, "", sections=[
+        Section("Personal details", "already_ok", after="male, Single / unmarried; 05 Apr 2003; India; English Expert; Hindi Expert")])
+    edits = [{"name": "Personal details", "action": "keep", "target": "",
+              "current": "Male, Single / unmarried, DOB 05 Apr 2003, Work permit India; Languages English Expert R/W/S, Hindi Expert R/W/S"}]
+    profile_agent.add_planned(result, edits, page)
+    section = result.sections[0]
+    assert section.target == ""
+    assert profile_agent.confirm(section, page) == (True, [])
+    # Without the agent's own reading, a told-apart field name still matches the board's label.
+    assert profile_agent._compare("DOB 05 Apr 2003; Hindi Expert R/W/S", page) == (True, [])
+    assert profile_agent._unlabelled("Preferred roles Machine Learning Engineer") == ["Machine Learning Engineer"]
+    assert profile_agent._unlabelled("Senior Software Engineer") == []
+    assert "Software Engineer" not in profile_agent._forms("Senior Software Engineer")
+
+
+def test_an_update_the_board_had_no_room_for_waits_for_the_user_even_when_after_lists_the_chips(tmp_path):
+    """The agent now reports the full chip list in `after`, as asked; the planned "CI/CD" target
+    replaced it and was looked up on the page, so the full box failed the run again."""
+    page = "Key skills Python LangChain FastAPI AWS Bedrock Education Add education"
+    result = profile_agent.ProfileCheck(False, "", sections=[
+        Section("Key skills", "already_ok", after="Python, LangChain, FastAPI, AWS Bedrock",
+                note="CI/CD did not fit: the box is full and every chip is a planned skill.")])
+    profile_agent.add_planned(result, [{"name": "Key skills", "action": "update", "target": "CI/CD", "current": "Python"}], page)
+    section = result.sections[0]
+    assert section.action == profile_agent.NEEDS_INPUT and section.target == "CI/CD"
+    assert result.waiting_on_facts
+    result = profile_agent.ProfileCheck(False, "", sections=[
+        Section("Key skills", "already_ok", after="Python, LangChain, FastAPI, AWS Bedrock", note="Added it.")])
+    profile_agent.add_planned(result, [{"name": "Key skills", "action": "update", "target": "CI/CD", "current": "Python"}], page)
+    assert result.sections[0].action == profile_agent.ALREADY_OK and result.sections[0].target == "CI/CD"
+
+
+def test_a_planned_skip_that_leaves_a_field_alone_asks_nothing_of_the_user(tmp_path):
+    """No resume file was supplied, so the plan skipped the upload; the skip counted as a fact the user
+    owed and kept every run on "needs your input: Resume"."""
+    result = profile_agent.ProfileCheck(False, "", sections=[
+        Section("Resume", "skipped", after="Soujanya_Gupta_Resume.pdf", note="No resume file was given.")])
+    profile_agent.add_planned(result, [
+        {"name": "Resume", "action": "skip", "target": "", "current": "Soujanya_Gupta_Resume.pdf",
+         "why": "No resume file was given, so the upload must not be touched"},
+        {"name": "Current salary", "action": "skip", "target": "", "current": "",
+         "why": "needs input: profile.yaml has no current_ctc_lpa"},
+    ], "Resume Soujanya_Gupta_Resume.pdf")
+    assert [s.action for s in result.sections] == [profile_agent.EXCLUDED, profile_agent.NEEDS_INPUT]
+    assert result.required[0].name == "Current salary"
+
+
+def test_a_still_blocked_edit_does_not_wrap_last_runs_reason_once_more():
+    first = profile_agent._blocked_why(['the table is full at 10 entries'])
+    assert first == 'needs input (facts unchanged; do not reopen this form): the table is full at 10 entries'
+    again = profile_agent._blocked_why([first, first])
+    assert again == first
+    third = profile_agent._blocked_why([again, 'the box is full'])
+    assert third == first + '; the box is full'

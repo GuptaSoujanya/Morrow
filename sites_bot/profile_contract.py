@@ -37,7 +37,7 @@ def protected(name: str) -> bool:
     if re.match(r'^(?:project|employment|experience|education|certification|skills?)\s*:', name, re.I):
         return False
     return bool(re.search(r"\b(?:photo|picture|password|privacy|pronouns|gender|diversity|marital|"
-                          r"date of birth|email|phone|contact info|open to work|visibility|"
+                          r"date of birth|email|phone|mobile(?: number)?|contact info|open to work|visibility|"
                           r"public profile|featured|services|profile language|job[- ]search status|"
                           r"show current salary and minimum expected salary to employers|declaration checkbox)\b", name, re.I))
 
@@ -106,7 +106,7 @@ _LABELS = {
     'current_location': r'(?:(?:your\s+)?current\s+(?:location|city)|currently\s+located\s+in|where are you based\??|\blocationOt\b)',
     'total_experience_years': r'(?:(?:total|overall)\s+(?:(?:work|professional)\s+)?experience(?:\s+of)?|\bexperienceOneTheme\b)',
     'current_ctc_lpa': r'(?:(?:annual\s+)?current\s+(?:or\s+last\s+drawn\s+)?(?:annual\s+)?(?:salary|ctc|compensation)|\bwalletOneTheme\b)',
-    'expected_ctc_lpa': r'(?:annual\s+)?expected\s+(?:annual\s+)?(?:salary|ctc|compensation)',
+    'expected_ctc_lpa': r'(?:(?:annual\s+)?expected\s+(?:annual\s+)?(?:salary|ctc|compensation)|preferred\s+annual\s+salary)',
     'notice_period_days': r'(?:notice\s+period|can\s+start\s+working)',
     'full_time_experience_years': r'full[ -]time experience(?: only,? excluding internships)?',
     'internship_experience_months': r'internship experience',
@@ -119,6 +119,19 @@ def fact_key(name: str) -> str:
         return ''
     matches = [field for field, pattern in _LABELS.items() if re.search(pattern, name, re.I)]
     return matches[0] if len(matches) == 1 else ''
+
+
+#: Naukri's profile card shows location, experience and salary side by side with no label on any:
+#: "Gurugram, INDIA 2 Years 11 Months ₹ 16,00,000 9993350887 ... 15 Days or less notice period".
+_HEADER_CARD = re.compile(r',\s*India\s+(?P<experience>\d+\s+Years?\s+\d+\s+Months?)\s+(?P<salary>₹\s*\d[\d,]*)', re.I)
+_HEADER_FIELDS = {'total_experience_years': 'experience', 'current_ctc_lpa': 'salary'}
+
+
+def _header_card(field: str, page: str) -> List[str]:
+    """The field's value from a board's unlabelled profile card, or [] when the page has none."""
+    group = _HEADER_FIELDS.get(field)
+    match = _HEADER_CARD.search(page) if group else None
+    return [match.group(group)] if match else []
 
 
 def verify_fact(field: str, target: str, page: str):
@@ -137,6 +150,8 @@ def verify_fact(field: str, target: str, page: str):
         # satisfy current salary/location when cards are flattened to text.
         value = re.split('|'.join(_LABELS.values()), value, maxsplit=1, flags=re.I)[0]
         values.append(value)
+    if not values:
+        values = _header_card(field, page)
     if field == 'current_location':
         city = key(target.split(',')[0])
         aliases = {'gurugram', 'gurgaon'} if city in {'gurugram', 'gurgaon'} else {city}
@@ -146,6 +161,9 @@ def verify_fact(field: str, target: str, page: str):
             for alias in aliases:
                 if re.search(r'\b' + re.escape(alias) + r',\s*[^,·\n]{1,60},\s*India\s*·\s*'
                              r'https://(?:www\.)?linkedin\.com/in/[^/\s]+/overlay/contact-info/', page, re.I):
+                    return True, []
+                # Naukri's card: the city, then the country, experience and salary with no labels.
+                if re.search(r'\b' + re.escape(alias) + r'\b(?:,\s*[A-Za-z .]{1,40}?)?' + _HEADER_CARD.pattern, page, re.I):
                     return True, []
             return None, []
         found = any(re.match(r'^(?:edit\s+)?' + re.escape(alias) + r'\b', key(v))
@@ -388,8 +406,13 @@ def report_issues(report: Dict[str, Any]) -> List[str]:
     if isinstance(conflicts, list):
         issues.extend('Factual conflict: ' + str(r)[:240] for r in conflicts if r)
     reason = ' '.join(str(report.get(k, '')) for k in ('why', 'notes'))
-    if re.search(r'(?:differs from|contradicts|conflicts with|does not match).{0,80}\b(?:facts|profile.yaml)\b', reason, re.I):
-        issues.append('Factual conflict reported; compare the live profile with profile.yaml')
+    for match in re.finditer(r'(?:differs from|contradicts|conflicts with|does not match).{0,80}\b(?:facts|profile.yaml)\b', reason, re.I):
+        # A protected field (phone, email) the rules forbid touching is the user's to settle in
+        # profile.yaml or on the board; it is reported, not held against the run every day.
+        sentence = reason[reason.rfind('.', 0, match.start()) + 1:match.end()]
+        if not protected(sentence):
+            issues.append('Factual conflict reported; compare the live profile with profile.yaml')
+            break
     for section in report.get('sections', []) or []:
         if not isinstance(section, dict):
             continue

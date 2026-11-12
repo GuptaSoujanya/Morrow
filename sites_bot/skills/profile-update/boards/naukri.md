@@ -18,18 +18,29 @@ the way a senior recruiter would want it: complete, keyword-rich and identical i
 2. **Key skills**: chips. Add every planned skill she lacks by typing it and picking Naukri's exact
    suggestion. The box holds about 250 characters of chips in all: add the planned skills in their
    order, and when it is full remove her chips that are not in the plan (lowest on the page first);
-   never remove one of the first ten planned skills.
+   never remove one of the first ten planned skills. When the box is full and every chip on it is a
+   planned skill, there is nothing to remove: cancel the editor, report Key skills `already_ok` with a
+   note naming the planned skills that did not fit, not `failed`. The box has no room; that is not a
+   repair pass's job. `after` is then the full list of chips the box holds, as Naukri shows them; the
+   skills that did not fit go in the note only, never in `after` (the bot looks `after` up on the page).
 3. **Employment**: current employment's designation, company and dates must match the facts. Enter the
    planned job profile for that role as the description (max 4000 characters) when the field is empty or
    thinner than the plan. Naukri makes **Skills used** and **Salary breakdown** mandatory for the current
-   job: Skills used is the planned "Skills used" list; Salary breakdown (Fixed / Fixed + Variable / ...)
+   job: Skills used is the planned "Skills used" list, cut to Naukri's limit of 100 characters in all
+   (it refuses the save with "Keyskills length should not be more than 100 characters"): take the planned
+   skills in their order and stop before the one that would cross 100 characters; when the field already
+   holds a planned set that fills the limit, report it `already_ok` with the left-out skills in the note,
+   not `failed`. Salary breakdown (Fixed / Fixed + Variable / ...)
    only from the facts (a "salary breakdown" fact). When the facts do not give it, do not pick one: close
    the drawer without saving, report Employment with action "failed" and the note "needs salary
    breakdown", and move on. Never answer "No" to "Is this your current employment" or give an end date
    for the job the facts call current, not even to get the drawer to save: that tells recruiters she
    has left. An internship entry has no Job profile field on Naukri: when its title, company and dates
    match the facts, report it `already_ok` with a note that the planned description has no field,
-   not `failed`, so no repair pass is spent on it.
+   not `failed`, so no repair pass is spent on it. In `after` for any employment entry, write the
+   designation as Naukri's Role field shows it, the employment type (Full-time, Internship) as its own
+   item, the company, and the dates with "to", for example "Full Stack Developer, Internship, Robotronix
+   Engineering Tech, Feb 2021 to Apr 2021"; no asides in brackets such as "(current)".
 4. **Education**: highest qualification, course, specialisation, institute, passing year, from the facts.
 5. **IT skills**: Naukri holds 10 entries. Add the planned IT skills in their order until the table is
    full: name as Naukri suggests it, version only if stated, experience in years (and months when the

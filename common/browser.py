@@ -38,6 +38,29 @@ class BrowserError(Exception):
 # access. The same code path from a terminal was never affected.
 CHROMEDRIVER_WRAPPER = Path(__file__).resolve().parents[1] / "scripts" / "chromedriver.sh"
 
+# selenium-manager rewrites ~/.cache/selenium/se-metadata.json on every lookup. Five site
+# lanes starting together each find a half-written file, discard it and go online for the
+# driver again, which has cost 15 minutes per lane; one lookup at a time keeps the file whole.
+SELENIUM_CACHE = Path(os.environ.get("SE_CACHE_PATH") or Path.home() / ".cache" / "selenium")
+DRIVER_LOOKUP_LOCK = "morrow-driver-lookup.lock"
+
+
+def find_chromedriver(options: webdriver.ChromeOptions) -> str:
+    try:
+        import fcntl
+
+        SELENIUM_CACHE.mkdir(parents=True, exist_ok=True)
+        handle = open(SELENIUM_CACHE / DRIVER_LOOKUP_LOCK, "a")
+    except (ImportError, OSError) as exc:
+        logger.debug("No lock for the chromedriver lookup (%s); looking it up unlocked.", exc)
+        return DriverFinder(ChromeService(), options).get_driver_path()
+    with handle:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        try:
+            return DriverFinder(ChromeService(), options).get_driver_path()
+        finally:
+            fcntl.flock(handle, fcntl.LOCK_UN)
+
 
 def chromedriver_service(
     options: webdriver.ChromeOptions, executable_path: Optional[str] = None
@@ -48,7 +71,7 @@ def chromedriver_service(
     if sys.platform != "darwin" or os.environ.get("MORROW_CHROMEDRIVER_DIRECT"):
         return ChromeService(path or None, log_output=log_output)
     if not path:
-        path = DriverFinder(ChromeService(), options).get_driver_path()
+        path = find_chromedriver(options)
     wrapper = CHROMEDRIVER_WRAPPER
     if not os.access(wrapper, os.X_OK):
         try:

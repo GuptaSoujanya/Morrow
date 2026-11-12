@@ -12,11 +12,11 @@ if launchctl print "gui/$(id -u)/$LABEL" >/dev/null 2>&1; then
     | grep -E "^[[:space:]]+(state|runs|last exit code) =" | sed 's/^[[:space:]]*/  /'
   ERR_LOG="$HOME/Library/Logs/morrow/launchd-profile-update.err"
   [ -f "$ERR_LOG" ] || ERR_LOG="user/logs/launchd-profile-update.err"
-  if grep -qiE "can't open input file|Operation not permitted|permission denied" "$ERR_LOG" 2>/dev/null; then
+  if grep -qiE "can't open input file|Operation not permitted|permission denied|PermissionError" "$ERR_LOG" 2>/dev/null; then
     echo "  BLOCKED: macOS would not let the background job read $(pwd)"
-    echo "  (see $ERR_LOG). Grant /bin/zsh and python access to the folder under"
+    echo "  (see $ERR_LOG). Grant the Python behind venv/bin/python access to the folder under"
     echo "  System Settings > Privacy & Security > Files and Folders, or move the checkout out of"
-    echo "  Desktop/Documents/Downloads and rerun ./scripts/install_profile_updater.sh."
+    echo "  Desktop/Documents/Downloads, then rerun ./scripts/install_profile_updater.sh."
   fi
   if launchctl print "gui/$(id -u)/$LABEL" 2>/dev/null | grep -q "last exit code = 78"; then
     echo "  launchd could not start the job at all (exit 78): its log files or the script are"
@@ -44,5 +44,8 @@ else
   echo "  none yet"
 fi
 
-echo "== Last 8 log lines (user/logs/profile_update.log)"
-tail -8 user/logs/profile_update.log 2>/dev/null | cut -c1-150 | sed 's/^/  /' || true
+RUN_LOG="user/logs/profile_update.log"
+LAUNCHD_LOG="$HOME/Library/Logs/morrow/profile-update.log"
+if [ -f "$LAUNCHD_LOG" ] && [ ! "$RUN_LOG" -nt "$LAUNCHD_LOG" ]; then RUN_LOG="$LAUNCHD_LOG"; fi
+echo "== Last 8 log lines ($RUN_LOG)"
+tail -8 "$RUN_LOG" 2>/dev/null | cut -c1-150 | sed 's/^/  /' || true

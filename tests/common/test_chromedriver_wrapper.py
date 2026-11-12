@@ -32,10 +32,43 @@ def test_the_chromedriver_env_names_the_driver_behind_the_wrapper(mac, monkeypat
     assert service.env["MORROW_CHROMEDRIVER"] == str(tmp_path / "driver")
 
 
-def test_without_a_known_path_selenium_finds_the_driver_first(mac, monkeypatch):
+def test_without_a_known_path_selenium_finds_the_driver_first(mac, monkeypatch, tmp_path):
+    monkeypatch.setattr(browser, "SELENIUM_CACHE", tmp_path / "selenium")
     monkeypatch.setattr(browser.DriverFinder, "get_driver_path", lambda self: "/found/chromedriver")
     service = browser.chromedriver_service(webdriver.ChromeOptions())
     assert service.env["MORROW_CHROMEDRIVER"] == "/found/chromedriver"
+    assert (tmp_path / "selenium" / browser.DRIVER_LOOKUP_LOCK).exists()
+
+
+def test_driver_lookups_wait_for_each_other(mac, monkeypatch, tmp_path):
+    import fcntl
+
+    monkeypatch.setattr(browser, "SELENIUM_CACHE", tmp_path / "selenium")
+    seen = {}
+
+    def locked_lookup(self):
+        probe = open(tmp_path / "selenium" / browser.DRIVER_LOOKUP_LOCK, "a")
+        try:
+            fcntl.flock(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            seen["held"] = True
+        else:
+            seen["held"] = False
+            fcntl.flock(probe, fcntl.LOCK_UN)
+        probe.close()
+        return "/found/chromedriver"
+
+    monkeypatch.setattr(browser.DriverFinder, "get_driver_path", locked_lookup)
+    assert browser.find_chromedriver(webdriver.ChromeOptions()) == "/found/chromedriver"
+    assert seen["held"] is True
+
+
+def test_a_failed_lock_still_finds_the_driver(mac, monkeypatch, tmp_path):
+    blocked = tmp_path / "not-a-dir"
+    blocked.write_text("")
+    monkeypatch.setattr(browser, "SELENIUM_CACHE", blocked / "selenium")
+    monkeypatch.setattr(browser.DriverFinder, "get_driver_path", lambda self: "/found/chromedriver")
+    assert browser.find_chromedriver(webdriver.ChromeOptions()) == "/found/chromedriver"
 
 
 def test_elsewhere_chromedriver_is_started_directly(monkeypatch):

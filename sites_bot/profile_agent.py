@@ -85,10 +85,20 @@ _TOKEN = re.compile(r"[a-z0-9][a-z0-9+#]*")
 #: short enough that a clause of a sentence is not mistaken for one and checked word for word.
 _LIST_ITEM_CHARS = 40
 _LIST_ITEM_WORDS = 4
+#: A value the agent wrote with semicolons is a list by its own say-so; its parts may be longer
+#: ("15 Days or less notice period", "inference-latency-profiler Jun 2026 to Sep 2026").
+_SEMICOLON_ITEM_CHARS = 64
+#: How many tokens after an entry's name still belong to its own row: Naukri writes a skill as
+#: "Python - 2026 3 Years 0 Month" and a project as "Morrow Self (Offsite) Aug 2026 to Oct 2026".
+_ROW_TOKENS = 12
+#: Words a field name the agent writes before a value may take ("Date of birth 05 Apr 2003").
+_LABEL_WORDS = 3
 #: How much of the page after a section's heading counts as that section, and how many
 #: repeats of the heading to try (boards list a heading in their navigation as well).
 _WINDOW_CHARS = 1200
 _WINDOWS = 4
+#: A job entry's window: Naukri lists "Top 5 key skills" after a job profile of up to 4,000 characters.
+_ENTRY_CHARS = 4500
 _SETTLE_S = 3
 
 _REPORT = ("When you finish or stop, reply with the ONE JSON object described under \"Your report\" in "
@@ -183,6 +193,13 @@ class ProfileCheck:
     @property
     def needs_input(self) -> List[Section]:
         return [section for section in self.sections if section.action == NEEDS_INPUT]
+
+    @property
+    def waiting_on_facts(self) -> bool:
+        """The profile is intact and confirmed except for sections whose facts only the user can give."""
+        if not self.page_read or self.issues or self.undone or self.unverified or not self.needs_input:
+            return False
+        return all(section in self.verified or section.action == NEEDS_INPUT for section in self.required)
 
     @property
     def needs_repair(self) -> List[Section]:
@@ -539,9 +556,14 @@ def _words(text: str) -> List[str]:
     return [token for token in _TOKEN.findall(text.casefold()) if token]
 
 
-def _is_label(text: str) -> bool:
+def _is_label(text: str, loose: bool = False) -> bool:
     words = text.split()
     one_token = len(words) == 1  # a URL is one item however long it is
+    if loose and 0 < len(words) and len(text) <= _SEMICOLON_ITEM_CHARS:
+        return True
+    aside = _ASIDE.match(text)
+    if _ROW_FIELD.match(aside.group(1) if aside else text):
+        return True  # "Feb 2021 - Apr 2021 (3 months)" is one item, however many words it takes
     return 0 < len(words) <= _LIST_ITEM_WORDS and (len(text) <= _LIST_ITEM_CHARS or one_token)
 
 
@@ -550,11 +572,14 @@ def _items(text: str) -> List[str]:
 
     Every part has to read like a label, so "Python, Go." is still the two skills it is while
     "...systems on aws, with a focus on retrieval." is prose and gets matched as phrases instead
-    of demanding each clause word for word.
+    of demanding each clause word for word. Semicolons separate items too -- the agent writes
+    "Gurugram, INDIA; 2 Years 11 Months; ₹ 16,00,000" -- and those parts may be a little longer.
     """
-    parts = [part.strip(" .;") for part in str(text or "").split(",")]
+    text = str(text or "")
+    loose = ";" in text
+    parts = [part.strip(" .;") for group in text.split(";") for part in group.split(",")]
     parts = [part for part in parts if part]
-    if not parts or not all(_is_label(part) for part in parts):
+    if not parts or not all(_is_label(part, loose) for part in parts):
         return []
     return parts
 
@@ -566,16 +591,107 @@ def _phrases(words: List[str], size: int) -> List[Tuple[str, ...]]:
 
 
 _YEARS = re.compile(r"^(\d+)(?:\.(\d))?\s*(?:years?|yrs?)$", re.IGNORECASE)
+_YEARS_MONTHS = re.compile(r"^(\d+)\s*(?:years?|yrs?)\s+(\d+)\s*(?:months?|mos?)$", re.IGNORECASE)
+_LAST_USED = re.compile(r"^last used\s*:?\s*((?:19|20)\d{2})$", re.IGNORECASE)
+_MONTH = r"(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\s+(?:19|20)\d{2}"
+_DATES = re.compile(r"^(%s)\s*(?:to|-|–|—)\s*((?:%s)|present|till date|current)$" % (_MONTH, _MONTH), re.IGNORECASE)
+#: "Skills used: Python" -- a field name the agent put in front of the value; the page shows the
+#: value under the board's own label ("Top 5 key skills: Python").
+_LABELLED = re.compile(r"^[A-Za-z][A-Za-z0-9 /&()-]{1,30}:\s*([^/\s].*)$")
+#: An entry's name followed by its dates, as the agent lists projects and jobs: the board puts its
+#: own words between them ("llm-eval-harness editOneTheme Self (Offsite) Sep 2026 to Sep 2026").
+_NAME_DATES = re.compile(r"^(.+?)[\s,]+(%s\s*(?:to|-|–|—)\s*(?:%s|present|till date|current))$" % (_MONTH, _MONTH), re.IGNORECASE)
+#: A row field next to an entry's name: its years, the year it was last used, or its dates.
+_ROW_FIELD = re.compile(r"^(?:last used\s*:?\s*)?(?:19|20)\d{2}$|^\d+(?:\.\d)?\s*(?:years?|yrs?)(?:\s+\d+\s*(?:months?|mos?))?$"
+                        r"|^%s\s*(?:to|-|–|—)\s*(?:%s|present|till date|current)$" % (_MONTH, _MONTH), re.IGNORECASE)
+#: "16 LPA", "16 lakhs", "₹16L": Naukri shows the salary as "₹ 16,00,000".
+_LAKHS = re.compile(r"^(?:₹|rs\.?|inr)?\s*(\d+(?:\.\d+)?)\s*(?:lpa|lakhs?(?:\s*(?:per\s*annum|p\.?a\.?))?|l)$", re.IGNORECASE)
+#: "Mar 2024 - Present (current)", "Feb 2021 - Apr 2021 (3 months)": the agent's aside in brackets
+#: after a value is its own remark, not something the page shows beside the value.
+_ASIDE = re.compile(r"^(.*\S)\s*\((?:current|present|ongoing|till date|\d+\s*(?:years?|yrs?|months?|mos?)"
+                    r"(?:\s+\d+\s*(?:months?|mos?))?)\)$", re.IGNORECASE)
+#: "Full-Stack Developer Intern": Naukri shows the role from its own list and "Internship" as the type.
+_INTERN = re.compile(r"^(.+?)\s+intern$", re.IGNORECASE)
+#: An already_ok row whose `after` names what the board had no room for ("CI/CD") instead of the
+#: field's value: the note explains the limit, and only the user can decide what to drop for it.
+_BOARD_LIMIT = re.compile(r"\b(?:is full|box full|did not fit|no room|maxlength|character limit|limit of \d+|"
+                          r"capped at|table (?:is )?full|full at \d+|left out|no deletions?)\b", re.IGNORECASE)
+#: A planned skip that leaves a field as it is ("No resume file was given, so the upload must not be
+#: touched") asks nothing of the user, unlike a skip for a fact the facts file lacks.
+_LEFT_ALONE = re.compile(r"\b(?:no (?:\w+ )?file was given|must not be touched|left (?:as is|alone|unchanged)|"
+                         r"nothing to upload)\b", re.IGNORECASE)
+
+
+def _indian(amount: int) -> str:
+    """1600000 the way Naukri writes it: 16,00,000."""
+    text = str(amount)
+    if len(text) <= 3:
+        return text
+    head, tail = text[:-3], text[-3:]
+    groups: List[str] = []
+    while head:
+        groups.insert(0, head[-2:])
+        head = head[:-2]
+    return ",".join(groups + [tail])
 
 
 def _forms(item: str) -> List[str]:
-    """The item and the ways a board renders it: "2.5 years" is shown as "2 Years 6 Months"."""
-    match = _YEARS.match(item.strip())
-    if not match:
-        return [item]
-    years, tenth = match.group(1), match.group(2)
-    months = round(int(tenth) * 1.2) if tenth else 0
-    return [item, "%s years %d months" % (years, months), "%s years" % years if not months else item]
+    """The item and the ways a board renders it: "2.5 years" is shown as "2 Years 6 Months".
+
+    Naukri writes "3 Years 0 Month" and "1 Year 0 Month" in the singular, lists the year a skill was
+    last used in its own column with no "last used" beside it, and separates dates with "to".
+    """
+    item = item.strip()
+    match = _ASIDE.match(item)
+    if match:
+        return _forms(match.group(1)) + [item]
+    match = _LAKHS.match(item)
+    if match:
+        rupees = int(round(float(match.group(1)) * 100000))
+        return [item, _indian(rupees), str(rupees)]
+    match = _YEARS.match(item)
+    if match:
+        years, tenth = match.group(1), match.group(2)
+        months = round(int(tenth) * 1.2) if tenth else 0
+        forms = [item, "%s years %d months" % (years, months), "%s years" % years if not months else item]
+        if months in (0, 1):
+            forms.append("%s years %d month" % (years, months))
+        return forms
+    match = _YEARS_MONTHS.match(item)
+    if match:
+        years, months = match.group(1), match.group(2)
+        return [item] + ["%s %s %s %s" % (years, year_word, months, month_word)
+                         for year_word in ("years", "year") for month_word in ("months", "month")]
+    match = _LAST_USED.match(item)
+    if match:
+        return [item, match.group(1)]
+    match = _DATES.match(item)
+    if match:
+        return [item, "%s to %s" % (match.group(1), match.group(2)), "%s - %s" % (match.group(1), match.group(2))]
+    match = _LABELLED.match(item)
+    if match:
+        return [item, match.group(1)]
+    return [item] + _unlabelled(item)
+
+
+def _unlabelled(item: str) -> List[str]:
+    """The value without a field name the agent put in front of it, when the name is told apart.
+
+    "DOB 05 Apr 2003" is the date under Naukri's "Date of birth"; "Preferred roles Machine Learning
+    Engineer" is the role under "Preferred job role". A label is an all-capitals word ("DOB") or a
+    capitalised word followed by lower-case ones ("Preferred roles", "Date of birth"); the value
+    starts with a capital or a digit and keeps at least two words, so "Senior Software Engineer"
+    never shrinks to "Software Engineer". A read/write/speak tally ("R/W/S") is no value either.
+    """
+    words = [word for word in item.split() if not re.fullmatch(r"[A-Z](?:/[A-Z])+", word)]
+    forms = [" ".join(words)] if len(words) < len(item.split()) else []
+    for count in range(1, min(_LABEL_WORDS, len(words) - 2) + 1):
+        label, value = words[:count], words[count:]
+        if not (value[0][0].isupper() or value[0][0].isdigit()):
+            continue
+        if (count == 1 and len(label[0]) > 1 and label[0].isupper()) or (count > 1 and all(w.islower() for w in label[1:])):
+            forms.append(" ".join(value))
+    return forms
 
 
 def _plain(token: str) -> str:
@@ -589,17 +705,60 @@ def _run_of(words: List[str], haystack: List[str]) -> bool:
     Spacing and a trailing "js" are the board's choice, not a difference: "Fast API" is FastAPI,
     "Nextjs" is Next.js and "React.js" is React, so a chip the board renamed on saving still counts.
     """
+    return bool(_starts(words, haystack))
+
+
+def _starts(words: List[str], haystack: List[str]) -> List[int]:
+    """Where in the haystack the words appear consecutively (see _run_of); [] when they do not."""
     wanted = _plain("".join(words))
     if not wanted:
-        return False
+        return []
+    starts = []
     for start in range(len(haystack)):
         joined = ""
         for token in haystack[start:start + len(words) + 2]:
             joined += token
             if _plain(joined) == wanted:
-                return True
+                starts.append(start)
+                break
             if len(_plain(joined)) >= len(wanted):
                 break
+    return starts
+
+
+def _in_row(name: str, fields: List[str], have: List[str]) -> Tuple[bool, List[str]]:
+    """Whether an entry's name is on the page with its fields in its own row: (name found, fields not in the row).
+
+    "Python, 3 years 0 months, last used 2026" is one IT-skills row, which Naukri shows as
+    "Python - 2026 3 Years 0 Month": the fields come in the board's order and words, so each is
+    looked for in any form just after the name, never in another skill's row.
+    """
+    name_words = _words(name)
+    starts = _starts(name_words, have)
+    if not starts:
+        return False, list(fields)
+    best: Optional[List[str]] = None
+    for start in starts:
+        row = have[start + len(name_words):start + len(name_words) + _ROW_TOKENS]
+        missing = [field for field in fields if not any(_run_of(_words(form), row) for form in _forms(field))]
+        if not missing:
+            return True, []
+        if best is None or len(missing) < len(best):
+            best = missing
+    return True, best or []
+
+
+def _found(item: str, have: List[str]) -> bool:
+    """Whether a list item is on the page in some form, or as an entry name followed by its dates."""
+    if any(_run_of(_words(form), have) for form in _forms(item)):
+        return True
+    match = _NAME_DATES.match(item)
+    if match and _words(match.group(1)):
+        found, missing = _in_row(match.group(1), [match.group(2)], have)
+        return found and not missing
+    match = _INTERN.match(item)
+    if match and "internship" in have and _found(match.group(1), have):
+        return True
     return False
 
 
@@ -615,9 +774,14 @@ def _compare(expected: str, page: str) -> Tuple[Optional[bool], List[str]]:
         missing = [row for row in rows if not _run_of(_words(row), have)]
         return not missing, missing
     items = _items(expected)
+    if len(items) > 1 and ";" not in expected and all(_ROW_FIELD.match(item) for item in items[1:]):
+        # One entry and its row fields ("Python, 3 years 0 months, last used 2026"): the fields
+        # count only in that entry's own row, so another skill's year cannot stand in.
+        found, missing = _in_row(items[0], items[1:], have)
+        if found:
+            return not missing, missing
     if items:
-        missing = [item for item in items
-                   if not any(_run_of(_words(form), have) for form in _forms(item))]
+        missing = [item for item in items if not _found(item, have)]
         return not missing, missing
     words = _words(expected)
     if not words:
@@ -700,8 +864,11 @@ def verify(expected: str, page: str, heading: str = "", lead: int = 0) -> Tuple[
         return found, [] if found else [expected]
     best: Optional[Tuple[Optional[bool], List[str]]] = None
     # About can be 2,600 characters and job descriptions 4,000. A fixed 1,200
-    # character window could never verify 70% of a complete long section.
-    window_size = max(_WINDOW_CHARS, min(10000, len(expected) * 2 + len(heading) + lead))
+    # character window could never verify 70% of a complete long section. A job or project is
+    # headed by its own name (a lead-in marks a job); its skills and dates follow a description
+    # that can run to 4,000 characters, so the window of such an entry reaches past that.
+    window_size = max(_WINDOW_CHARS, min(10000, len(expected) * 2 + len(heading) + lead),
+                      _ENTRY_CHARS if lead else 0)
     for window in _windows(heading, page, lead, window_size):
         outcome = _compare(expected, window)
         if outcome[0] is True and not outcome[1]:
@@ -886,17 +1053,34 @@ def add_planned(result: ProfileCheck, edits: Optional[List[Dict[str, str]]], pag
             continue
         target = edit.get('target') or (edit.get('current', '') if edit.get('action') == 'keep' else '')
         if edit.get('action') == 'skip':
-            action = NEEDS_REVIEW if 'needs review' in edit.get('why', '') else NEEDS_INPUT
+            if 'needs review' in edit.get('why', ''):
+                action = NEEDS_REVIEW
+            elif _LEFT_ALONE.search(edit.get('why', '')):
+                action = EXCLUDED
+            else:
+                action = NEEDS_INPUT
         else:
             action = PENDING
         reported = [section for section in result.sections if _section_key(edit['name']) == _section_key(section.name)]
         if not reported:
             reported = [section for section in result.sections if _same_section(edit["name"], section.name)]
         if len(reported) > 1:
-            result.issues.append('Ambiguous section match: ' + edit['name'])
-            # Never apply one job/project target to multiple existing entries.
+            # Never apply one job/project target to multiple existing entries. A skipped edit has
+            # nothing to apply: "Resume" beside the agent's "Resume headline" is no conflict.
+            if target and edit.get('action') != 'skip':
+                result.issues.append('Ambiguous section match: ' + edit['name'])
             continue
         for section in reported:
+            if edit.get('action') == 'keep' and not edit.get('target') and section.action == ALREADY_OK and section.after:
+                # The planner's `current` is its own paraphrase of the page before the run; the agent's
+                # `after` is the value read back from the reloaded page, in the board's words.
+                target = section.target
+            elif (edit.get('action') == 'update' and section.action == ALREADY_OK and target
+                    and len(_items(target)) in (1, 2) and target.casefold() in section.note.casefold()
+                    and _BOARD_LIMIT.search(section.note)):
+                # The board had no room for the planned value; the user decides what to drop for it.
+                section.action = NEEDS_INPUT
+                section.on_page, section.missing = None, []
             section.target = target or section.target
             section.fact_key = edit.get('fact_key', '')
             section.project_dates = edit.get('project_dates', {})
@@ -1025,6 +1209,11 @@ def check(driver: Any, board: Board, settings: Settings, report: Dict[str, Any],
         elif section.action in ('skipped', UNSUPPORTED, EXCLUDED):
             section.action = NEEDS_INPUT
         if section.action == FAILED and re.search(r'needs? (?:salary breakdown|client|start date|course dates|institute)|missing (?:facts|dates)', section.note, re.I):
+            section.action = NEEDS_INPUT
+        if (section.action == ALREADY_OK and section.after and len(_items(section.after)) in (1, 2)
+                and section.after.casefold() in section.note.casefold() and _BOARD_LIMIT.search(section.note)):
+            # The agent wrote what did not fit where the field's value belongs; the board's limit,
+            # not the page, keeps it out, and the user chooses what to drop for it.
             section.action = NEEDS_INPUT
         key = profile_contract.fact_key(section.name)
         if board.name == 'cutshort' and key in ('full_time_experience_years', 'internship_experience_months'):
@@ -1393,6 +1582,25 @@ def _same_blocked_target(previous: str, target: str) -> bool:
     return previous == target or (previous.endswith('...') and target.startswith(previous[:-3]))
 
 
+#: Prefix put on an edit the record says is still waiting on the user's facts.
+_STILL_BLOCKED = 'needs input (facts unchanged; do not reopen this form): '
+
+
+def _blocked_why(notes: List[str]) -> str:
+    """The skip reason for a still-blocked edit, built from the recorded notes.
+
+    The note recorded last time is this prefix plus the agent's note, so strip
+    the prefix first; otherwise every run wraps the note once more.
+    """
+    reasons = []
+    for note in notes:
+        while note.startswith(_STILL_BLOCKED):
+            note = note[len(_STILL_BLOCKED):]
+        if note and note not in reasons:
+            reasons.append(note)
+    return _STILL_BLOCKED + '; '.join(reasons)
+
+
 def run(driver: Any, board: Board, settings: Settings, profile: Optional[Profile], task: str,
         files: Tuple[Path, ...], plan: Any, label: str) -> Tuple[bool, str]:
     """One profile-agent run, checked; (saved, notes for memory and the log)."""
@@ -1427,8 +1635,7 @@ def run(driver: Any, board: Board, settings: Settings, profile: Optional[Profile
                 matches = [s for s in blocked if _same_section(s.get('name', ''), edit['name'])
                            and _same_blocked_target(s.get('after', ''), edit.get('target', ''))]
                 if matches:
-                    edit.update(action='skip', why='needs input (facts unchanged; do not reopen this form): '
-                                + '; '.join(s.get('note', '') for s in matches))
+                    edit.update(action='skip', why=_blocked_why([s.get('note', '') for s in matches]))
     if files:
         # Upload eligibility comes from the selected file, not the LLM's guess
         # about whether a filename such as onboarding.pdf sounds like a resume.
@@ -1470,12 +1677,19 @@ def run(driver: Any, board: Board, settings: Settings, profile: Optional[Profile
     report = agent.report or {}
     status = str(report.get("status", "")).strip().lower()
     reason = ""
-    if agent.problem or status != "done":
+    if agent.problem or status not in ("done", "partial", NEEDS_INPUT):
         reason = agent.problem or _text(report.get("why")) or "the agent gave no reason"
         logger.error("%s profile agent stopped short: %s (run folder: %s)", board.label, reason, workdir)
         if not report and not edits:
             _finish(workdir, board, ProfileCheck(saved=False, why=reason), plan, settings)
             return False, reason
+    elif status != "done":
+        # `partial` is the skill's own word for "a field is outstanding", and facts the agent could
+        # not find are the user's to add: neither fails the run by itself. The verifier decides,
+        # section by section, from the reloaded page.
+        logger.warning("%s profile agent left fields outstanding: %s (run folder: %s)", board.label,
+                       _text(report.get("why")) or "the agent gave no reason", workdir)
+    aside = reason or (_text(report.get("why")) if status != "done" else "")
     result = check(driver, board, settings, report, plan, workdir, edits, profile=profile)
     result.facts_digest = facts_digest
     if status == "needs_you":
@@ -1486,8 +1700,8 @@ def run(driver: Any, board: Board, settings: Settings, profile: Optional[Profile
     result = repair(driver, board, settings, result, plan, facts, account_email(settings), files, workdir, profile=profile)
     result.issues = list(dict.fromkeys(result.issues + duplicate_issues))
     result.saved, result.why = _verdict(result)
-    if reason and not result.saved:
-        result.why = "%s (the agent: %s)" % (result.why, reason)
+    if aside and not result.saved:
+        result.why = "%s (the agent: %s)" % (result.why, aside)
     path = _finish(workdir, board, result, plan, settings)
     for operation in journal:
         matches = [s for s in result.sections if _same_section(s.name, operation['name'])]
@@ -1505,6 +1719,12 @@ def run(driver: Any, board: Board, settings: Settings, profile: Optional[Profile
         logger.warning("%s: could not verify all requested fields for %s after reload (wanted: %s%s)", board.label, section.name,
                        section.wanted[:120],
                        "; missing: %s" % ", ".join(section.missing) if section.missing else "")
+    if not result.saved and not reason and result.waiting_on_facts:
+        # Every section the bot can settle is on the page; the rest wait for profile.yaml. Retrying
+        # tomorrow with the same facts would ask the same, so the run counts as done.
+        logger.warning("%s profile is intact and confirmed except for %s; it is not a failure. See %s",
+                       board.label, result.why, path)
+        return True, notes
     if not result.saved:
         logger.error("%s profile update not confirmed: %s. See %s", board.label, result.why, path)
         return False, notes

@@ -348,3 +348,26 @@ def test_skip_for_missing_facts_cannot_be_promoted_by_a_matching_page_value(repo
     assert result.sections[0].action == 'needs_review'
     assert result.sections[0].on_page is None
     assert not result.coverage['complete']
+
+
+def test_a_protected_field_that_differs_from_the_facts_is_the_users_call_not_a_conflict():
+    notes = ("Entry counts are the same before and after. The mobile number on Naukri (9993350887) "
+             "differs from the facts and needs the candidate's attention.")
+    assert contract.report_issues({'notes': notes}) == []
+    assert contract.report_issues({'notes': 'The current salary on Naukri differs from the facts.'}) == [
+        'Factual conflict reported; compare the live profile with profile.yaml']
+
+
+def test_naukris_unlabelled_profile_card_confirms_location_experience_and_salary():
+    """Naukri's card puts the city, experience and salary side by side with no label on any, and its
+    expected salary sits under "Preferred annual salary"; the labelled check left all four unconfirmed."""
+    page = ("Ethara AI Profile last updated - Today Gurugram, INDIA 2 Years 11 Months ₹ 16,00,000 9993350887 "
+            "dev@example.com 15 Days or less notice period Career profile Preferred annual salary ₹20,00,000 Preferred shift Day")
+    assert contract.verify_fact('current_location', 'Gurugram, India', page) == (True, [])
+    assert contract.verify_fact('current_location', 'Pune, India', page)[0] is not True
+    assert contract.verify_fact('total_experience_years', '2.9 years', page) == (True, [])
+    assert contract.verify_fact('total_experience_years', '2.5 years', page)[0] is False
+    assert contract.verify_fact('current_ctc_lpa', '16 LPA', page) == (True, [])
+    assert contract.verify_fact('current_ctc_lpa', '18 LPA', page)[0] is False
+    assert contract.verify_fact('expected_ctc_lpa', '20 LPA', page) == (True, [])
+    assert contract.verify_fact('current_ctc_lpa', '16 LPA', 'Preferred annual salary ₹16,00,000') == (None, [])

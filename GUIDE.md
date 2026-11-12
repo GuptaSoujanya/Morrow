@@ -640,11 +640,13 @@ what `--review` does; a failed review is retried at the next slot, at most twice
 schedule to the headline toggle. Slot memory lives in `user/logs/profile_update.json`, output in
 `user/logs/profile_update.log`. Two things to know:
 
-- **Keep the checkout outside `~/Desktop`, `~/Documents` and `~/Downloads`**, or grant the Python binary
-  that `venv/bin/python` points at access to the folder under System Settings → Privacy & Security →
-  Files and Folders. macOS blocks background launchd jobs from reading those folders; the failure is a
-  silent "Operation not permitted" in `user/logs/launchd-profile-update.err`. The install and status
-  scripts say when this applies.
+- **A checkout under `~/Desktop`, `~/Documents` or `~/Downloads`** is read by launchd jobs only through a
+  binary macOS has granted the folder (System Settings → Privacy & Security → Files and Folders).
+  `/bin/zsh` never gets that grant, so the installer makes the job run the Python behind
+  `venv/bin/python` directly; click Allow if macOS asks once. Its output goes to
+  `~/Library/Logs/morrow/profile-update.log`. A "can't open input file" or "Operation not permitted" in
+  `~/Library/Logs/morrow/launchd-profile-update.err` means the grant is missing; the install and status
+  scripts say so.
 - A scheduled run that overlaps your morning apply run cannot share the browser profile, so it falls
   back to a fresh session and logs in with `NAUKRI_EMAIL` / `NAUKRI_PASSWORD`. Start the apply run well
   before 09:00 or after that slot has run.
@@ -694,6 +696,17 @@ re-read whenever it changes, even during a run. In auto mode, accepted reusable 
 to the sheet with a source comment; editing an `A:` makes your value authoritative. Parallel agents
 asking the same question share a lock and re-check the sheet before calling the model. While the
 dashboard is open, each save shows as **Answer sheet updated** in the Activity dock.
+
+**How an answer is worded** (`common/stance.py`): every agent that answers an employer, the Naukri
+chatbot, the board forms, the browser agent on company sites, the Cutshort and Instahyre questionnaires,
+the lead replies and the Gmail replies, gets the same instruction with the posting's requirement lines.
+It answers the question about *this* role, leads with the facts that match what the posting asks in the
+posting's own words (LLM evaluation work answers a "Generative AI" question), and when more than one
+answer is true picks the one that fits the role best (the job's city when it is among your preferred
+locations, the option whose range holds your number, "Yes" to a shift or work mode you accept). It never
+states what your facts do not make true: no rounded-up years, no skill you have not used, no city or
+salary you have not given. A false answer is caught at the first call; a true answer chosen and worded
+for the role is what gets the call.
 
 **The AI fills what your own files already answer** (`python3 -m common.assist`, and automatically
 before and after every Naukri run). For each empty `A:` and each `null` fact it looks at three sources

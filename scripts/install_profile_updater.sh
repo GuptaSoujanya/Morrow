@@ -12,7 +12,8 @@ PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
 LOG_DIR="$HOME/Library/Logs/morrow"
 OUT_LOG="$LOG_DIR/launchd-profile-update.out"
 ERR_LOG="$LOG_DIR/launchd-profile-update.err"
-RUNNER="$PROJECT_DIR/scripts/run_profile_update.sh"
+PROGRAM="<string>$PROJECT_DIR/scripts/run_profile_update.sh</string>"
+ENVIRONMENT=""
 
 protected_folder=false
 case "$PROJECT_DIR" in
@@ -20,19 +21,30 @@ case "$PROJECT_DIR" in
 esac
 
 if [ "$protected_folder" = true ]; then
-  # launchd may not read Desktop/Documents/Downloads, but a script in ~/Library may, and
-  # once /bin/zsh is running it inherits the user's own folder access. The wrapper only
-  # cd's into the checkout and execs the real runner, so there is nothing to keep in sync.
-  WRAPPER_DIR="$HOME/Library/Application Support/morrow"
-  mkdir -p "$WRAPPER_DIR"
-  RUNNER="$WRAPPER_DIR/run_profile_update.sh"
-  cat > "$RUNNER" <<WRAPPER
-#!/bin/zsh
-cd "$PROJECT_DIR" || exit 127
-exec "$PROJECT_DIR/scripts/run_profile_update.sh" "\$@"
-WRAPPER
-  chmod +x "$RUNNER"
-  echo "Note: $PROJECT_DIR is under Desktop/Documents/Downloads; launching through $RUNNER." >&2
+  # macOS lets a launchd job read Desktop/Documents/Downloads only when the job's own
+  # binary has been granted the folder (Privacy & Security > Files and Folders). /bin/zsh
+  # never gets that grant, so a shell script under the checkout dies with "can't open
+  # input file" (exit 127) and a wrapper in ~/Library that execs it dies the same way.
+  # The Python behind venv/bin/python can be granted (macOS asks the first time), so the
+  # job runs that binary directly, with the venv on PYTHONPATH because the venv's own
+  # python symlink also sits under the protected folder, and with the environment that
+  # scripts/run_profile_update.sh would otherwise set.
+  PYTHON="$PROJECT_DIR/venv/bin/python"
+  [ -x "$PYTHON" ] || PYTHON="$(command -v python3)"
+  PY_REAL="$("$PYTHON" -c 'import sys; print(sys._base_executable or sys.executable)')"
+  PY_SITE="$("$PYTHON" -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')"
+  PROGRAM="<string>$PY_REAL</string><string>-m</string><string>naukri_bot.update_profile</string><string>--if-due</string>"
+  ENVIRONMENT="  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key><string>$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>PYTHONPATH</key><string>$PY_SITE</string>
+    <key>VIRTUAL_ENV</key><string>$PROJECT_DIR/venv</string>
+    <key>MAX_START_DELAY_SECONDS</key><string>600</string>
+    <key>BACKGROUND</key><string>false</string>
+    <key>HEADLESS</key><string>false</string>
+  </dict>"
+  echo "Note: $PROJECT_DIR is under Desktop/Documents/Downloads; launchd runs $PY_REAL directly." >&2
+  echo "      If macOS asks whether Python may access the folder, click Allow once." >&2
 fi
 
 mkdir -p "$PROJECT_DIR/user/logs" "$LOG_DIR"
@@ -44,7 +56,8 @@ cat > "$PLIST" <<PLIST
 <dict>
   <key>Label</key><string>$LABEL</string>
   <key>ProgramArguments</key>
-  <array><string>$RUNNER</string></array>
+  <array>$PROGRAM</array>
+$ENVIRONMENT
   <key>WorkingDirectory</key><string>$PROJECT_DIR</string>
   <key>RunAtLoad</key><true/>
   <key>StartInterval</key><integer>900</integer>
@@ -68,9 +81,9 @@ echo "Installed $PLIST"
 
 # RunAtLoad has just fired once; a permission problem shows up in the error log within seconds.
 sleep 5
-if grep -qE "Operation not permitted|can't open input file|permission denied" "$ERR_LOG" 2>/dev/null; then
+if grep -qiE "Operation not permitted|can't open input file|permission denied|PermissionError" "$ERR_LOG" 2>/dev/null; then
   echo "BLOCKED: macOS would not let the background job read $PROJECT_DIR." >&2
-  echo "Grant /bin/zsh and the Python that venv/bin/python points at access to this folder under" >&2
+  echo "Grant the Python that venv/bin/python points at access to this folder under" >&2
   echo "System Settings > Privacy & Security > Files and Folders, or move the checkout (for" >&2
   echo "example ~/naukri/apply) and re-run this script." >&2
   exit 1
