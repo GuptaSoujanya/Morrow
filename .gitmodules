@@ -10,3 +10,7 @@
 	path = hunt
 	url = https://github.com/GuptaSoujanya/Morrow-hunt.git
 	branch = main
+[submodule "admin"]
+	path = admin
+	url = https://github.com/GuptaSoujanya/Morrow-admin.git
+	branch = main
