@@ -134,3 +134,12 @@ after reload, with no missing facts, duplicates, conflicts or unreadable values.
 `after` and `evidence` hold values, never sentences about them: the bot searches the reloaded page
 for them word by word, and "After reload, My Profile shows the role" is on no page, so that section
 would be recorded as not saved. Where you read it and what you clicked belong in `note`.
+
+Write `after` in the page's own words and order, copying what it shows rather than describing it:
+never a reference to the plan ("job profile as planned", "the planned description", "as agreed",
+"entered word for word"), never a field label the page does not print, and nothing the page never
+displays at all — a detail the board has no field for, or a value only its edit form holds. Quote a
+long text from its start; the first fifteen words of it are proof enough. Separate the items of a
+list with commas ("EvalAgentFlow, Morrow, RideMate"), because a board prints each with its own
+description between them and a run of bare names is on no page. Anything you set or saw
+that the page does not show goes in `note`, which is never searched for on the page.

@@ -33,3 +33,6 @@ in step with her resume so recruiters using LinkedIn Recruiter find her for her 
 - Do not post, comment, react, message, connect, follow, or endorse anyone.
 - Do not touch Open to Work, profile visibility, creator mode, or the featured section.
 - LinkedIn shows "Profile updated" or simply closes the modal; read the section back after each save.
+- For an experience or project entry, `after` holds the title, company and dates as the page prints
+  them and then the first fifteen words of the description it shows. Never "the full description of
+  ...", "as planned" or "word for word": the bot looks `after` up on the page, where those are not.

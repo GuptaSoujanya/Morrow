@@ -31,3 +31,6 @@ founders read the profile directly, so it must be crisp, specific and true.
   options precisely. Optional social links without supplied facts stay empty.
 - Read selected checkbox/radio values after reload; the presence of an option label is not a selection.
 - Do not apply, message founders, or change the email. Leave the "actively looking" status as it is.
+- For a work-experience entry, `after` holds the title, company and dates as the page prints them
+  and then the first fifteen words of the description it shows. Never "the planned job profile",
+  "as planned" or "word for word": the bot looks `after` up on the page, where those do not appear.

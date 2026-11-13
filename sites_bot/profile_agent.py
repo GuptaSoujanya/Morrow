@@ -663,6 +663,20 @@ _ASIDE = re.compile(r"^(.*\S)\s*\((?:current|present|ongoing|till date|\d+\s*(?:
                     r"(?:\s+\d+\s*(?:months?|mos?))?)\)$", re.IGNORECASE)
 #: A bracketed note at the end of a value: "Ethara AI (formerly Green Rider Technology)".
 _BRACKETED = re.compile(r"\s*\([^()]*\)\s*$")
+#: A name and its bracketed note apart: boards print both but put their own words between them
+#: ("Medi-Caps University Bachelor of Technology (B.Tech), Computer Science and Engineering 2020 - 2024").
+_NAME_NOTE = re.compile(r"^(.+?)\s*\(([^()]+)\)$")
+#: One question of a form and its answer, as the agent lists several in one value ("Requires
+#: sponsorship: Yes; Legally authorized to work in the US: No"). Questions run longer than a label.
+_ANSWERED_ITEM = re.compile(r"^(.{3,120}?)\s*:\s*(yes|no)$", re.IGNORECASE)
+#: The agent's own joining words before a value ("also open to Contractor"), which no board prints
+#: that way: Wellfound's own wording is "Also open to the following job types: Contractor".
+_CONNECTIVE = re.compile(r"^(?:and|or|also|plus|including|open to)\s+", re.IGNORECASE)
+#: Where an agent abbreviated a long text it quotes; each part it did quote must still be on the page.
+_ELLIPSIS = re.compile(r"\s*(?:\.\.\.|…)\s*")
+#: A value the board itself refused to keep, which only the user can settle with the board.
+_REFUSED = re.compile(r"\b(?:save request did not include|did not save|would not save|not accepted|"
+                      r"does not (?:accept|allow)|re(?:fused|jected) the save|no option for)\b", re.IGNORECASE)
 #: "Full-Stack Developer Intern": Naukri shows the role from its own list and "Internship" as the type.
 _INTERN = re.compile(r"^(.+?)\s+intern$", re.IGNORECASE)
 #: An uploaded file: the stem and the extension boards keep when they re-store it under their own name.
@@ -735,10 +749,21 @@ def _forms(item: str) -> List[str]:
     match = _DATES.match(item)
     if match:
         return [item, "%s to %s" % (match.group(1), match.group(2)), "%s - %s" % (match.group(1), match.group(2))]
+    if _ANSWERED_ITEM.match(item):
+        # A bare "No" elsewhere under the heading is no answer to this question; only the answer
+        # printed directly after it counts, which _confirmed_answer checks against the page.
+        return [item]
     match = _LABELLED.match(item)
     if match:
+        if _STATE.fullmatch(_BRACKETED.sub("", match.group(1)).strip()):
+            # "Work remotely: selected" is a tick the page draws as a control and never spells out;
+            # the label printed beside the box is the only text the page can be asked for.
+            return [item, item.split(":", 1)[0].strip()]
         return [item, match.group(1)]
-    return [item] + _renamed(item) + _unlabelled(item)
+    plain = item
+    while _CONNECTIVE.match(plain):
+        plain = _CONNECTIVE.sub("", plain, count=1)
+    return [item] + ([plain] if plain != item else []) + _renamed(item) + _unlabelled(item)
 
 
 def _renamed(item: str) -> List[str]:
@@ -837,6 +862,14 @@ def _found(item: str, have: List[str]) -> bool:
     match = _INTERN.match(item)
     if match and "internship" in have and _found(match.group(1), have):
         return True
+    match = _NAME_NOTE.match(item)
+    if match:
+        found, missing = _in_row(match.group(1), [match.group(2)], have)
+        if found and not missing:
+            return True
+    parts = [part for part in _ELLIPSIS.split(item) if _words(part)]
+    if len(parts) > 1 and all(_run_of(_words(part), have) for part in parts):
+        return True
     return _file_named(item, have)
 
 
@@ -878,21 +911,99 @@ def _compare(expected: str, page: str) -> Tuple[Optional[bool], List[str]]:
         found, missing = _in_row(items[0], items[1:], have)
         if found:
             return not missing, missing
+    asked_whole = None if ';' in expected else _ANSWERED_ITEM.match(expected.strip())
+    if asked_whole:
+        outcome = _answered(asked_whole.group(1), asked_whole.group(2), page)
+        return (None, []) if outcome is None else (outcome, [] if outcome else [expected.strip()])
+    halves = [half.strip() for half in expected.split(';') if half.strip()]
+    if not items and len(halves) > 1 and any(_items(half) for half in halves):
+        # An entry written as its fields and then its description ("Software Engineer, Ethara AI,
+        # Mar 2024 - Present; Expanded the WildClawBench fork...") is two kinds of value at once:
+        # the fields are checked item by item and the description as prose, each on its own.
+        missing = []
+        for half in halves:
+            outcome = _compare(half, page)
+            if outcome[0] is False:
+                missing.extend(outcome[1] or [half[:60]])
+        return not missing, missing
     if items:
-        missing = [item for item in items if not _found(item, have)]
+        asked = [_ANSWERED_ITEM.match(item) for item in items]
+        if all(asked) and all(_answered(m.group(1), m.group(2), page) is None for m in asked):
+            # The page prints no answer under any of these questions, so it contradicts none of
+            # them either: that is no evidence, not a value the board dropped.
+            return None, []
+        missing = [item for item in items
+                   if not _found(item, have) and not _confirmed_answer(item, page)]
         return not missing, missing
     # A single value carries the agent's own framing too: Cutshort's choice reads "Work remotely:
     # Within 3-4 hrs of my timezone", where the page prints only what follows the label.
     for form in [expected] + (_forms(expected)[1:] if len(_items(expected)) <= 1 else []):
-        words = _words(form)
+        # An agent that quotes the opening and the close of a long text marks the gap it left out
+        # with an ellipsis. Every part it did quote still has to be on the page, word for word.
+        parts = [part for part in _ELLIPSIS.split(form) if _words(part)]
+        if parts and all(_phrase_share(part, have) >= WORD_MATCH for part in parts):
+            return True, []
+    # An entry the agent writes as one line puts its fields and its description in one sentence
+    # ("Full-Stack Developer Intern, Feb 2021 - Apr 2021, Shipped Indore Carbonic, a carbon portal"),
+    # which the board prints as separate fields. Each part still has to be on the page, in its own
+    # right, so nothing is accepted that the page does not hold.
+    pieces = [piece.strip() for piece in _split(expected) if piece.strip()]
+    if len(pieces) > 1 and all(_compare(piece, page)[0] is True for piece in pieces):
+        return True, []
+    return (False, []) if _words(expected) else (None, [])
+
+
+def _answered(label: str, answer: str, page: str) -> Optional[bool]:
+    """Whether the question's own label is followed by this answer; None when the page says neither.
+
+    An unrelated Yes elsewhere on a long form cannot prove this choice, so only the answer directly
+    after this question counts, and a board printing both options ("Yes No") has named none of them.
+    """
+    # A section's name carries its group before the question ("US work authorization: legally
+    # authorized to work in the US"). The question is what the board prints an answer under; the
+    # group heading is followed by the first question of the form, whose answer is another one's.
+    labels = [label.split(':', 1)[1], label] if ':' in label else [label]
+    for text in labels:
+        words = _words(text)
         if not words:
             continue
-        size = min(_PHRASE, len(words))
-        wanted = _phrases(words, size)
-        found = set(_phrases(have, size))
-        if sum(1 for phrase in wanted if phrase in found) / len(wanted) >= WORD_MATCH:
-            return True, []
-    return (False, []) if _words(expected) else (None, [])
+        # The agent writes the question in its own words ("work in the US" for the board's "work in
+        # the United States"), so the longest opening of its wording that the page does print is
+        # used, down to half of it, and never fewer than two words.
+        for size in range(len(words), max(2, (len(words) + 1) // 2) - 1, -1):
+            answers = _answers_after(words[:size], page)
+            if answers:
+                return all(found == answer.strip().casefold() for found in answers)
+    return None
+
+
+def _answers_after(words: List[str], page: str) -> List[str]:
+    # A word matches in the singular or the plural, as a section heading does ("Requires
+    # sponsorship" for "require sponsorship").
+    pattern = r'\b' + r'\W+'.join(re.escape(word.rstrip('s') or word) + 's?' for word in words) + r'\b'
+    answers = []
+    for match in re.finditer(pattern, page, re.I):
+        # The wording can sit inside a longer question ("...will you require sponsorship for a US
+        # employment visa (e.g. H-1B)? Yes"), so the answer may follow the question's end rather
+        # than the words themselves; nothing but the rest of that one question may come between.
+        found = re.match(r'(?:[^?]{0,180}\?)?\s*[:*?\-]*\s*(yes|no)\b(?!\s+(?:yes|no)\b)',
+                         page[match.end():], re.I)
+        if found:
+            answers.append(found.group(1).casefold())
+    return answers
+
+
+def _confirmed_answer(item: str, page: str) -> bool:
+    match = _ANSWERED_ITEM.match(item)
+    return bool(match) and _answered(match.group(1), match.group(2), page) is True
+
+
+def _phrase_share(text: str, have: List[str]) -> float:
+    words = _words(text)
+    size = min(_PHRASE, len(words))
+    wanted = _phrases(words, size)
+    found = set(_phrases(have, size))
+    return sum(1 for phrase in wanted if phrase in found) / len(wanted) if wanted else 0.0
 
 
 #: An "Add"/"Edit" affordance directly before a heading, so the heading labels the entries above it.
@@ -958,21 +1069,8 @@ def verify(expected: str, page: str, heading: str = "", lead: int = 0) -> Tuple[
     read -- never a bare True.
     """
     if expected.strip().casefold() in ('yes', 'no'):
-        # An unrelated Yes elsewhere on a long form cannot prove this choice.
-        # Only accept the answer directly following this question's own label.
-        words = _words(heading)
-        if not words:
-            return None, []
-        pattern = r'\b' + r'\W+'.join(re.escape(word) for word in words) + r'\b'
-        answers = []
-        for match in re.finditer(pattern, page, re.I):
-            answer = re.match(r'\s*[:*?\-]*\s*(yes|no)\b(?!\s+(?:yes|no)\b)', page[match.end():], re.I)
-            if answer:
-                answers.append(answer.group(1).casefold())
-        if not answers:
-            return None, []
-        found = all(answer == expected.strip().casefold() for answer in answers)
-        return found, [] if found else [expected]
+        outcome = _answered(heading, expected, page)
+        return (None, []) if outcome is None else (outcome, [] if outcome else [expected])
     best: Optional[Tuple[Optional[bool], List[str]]] = None
     # About can be 2,600 characters and job descriptions 4,000. A fixed 1,200
     # character window could never verify 70% of a complete long section. A job or project is
@@ -1348,7 +1446,10 @@ def check(driver: Any, board: Board, settings: Settings, report: Dict[str, Any],
             section.action = EXCLUDED
         elif section.action in ('skipped', UNSUPPORTED, EXCLUDED):
             section.action = NEEDS_INPUT
-        if section.action == FAILED and re.search(r'needs? (?:salary breakdown|client|start date|course dates|institute)|missing (?:facts|dates)', section.note, re.I):
+        if section.action == FAILED and (re.search(r'needs? (?:salary breakdown|client|start date|course dates|institute)|missing (?:facts|dates)', section.note, re.I)
+                                         or _REFUSED.search(section.note) or _BOARD_LIMIT.search(section.note)):
+            # A value the board drops on save (Hirist keeps no 0% variable pay) is not work the bot
+            # can finish: the next run types the same digit and the board drops it again.
             section.action = NEEDS_INPUT
         if (section.action == ALREADY_OK and section.after and len(_items(section.after)) in (1, 2)
                 and section.after.casefold() in section.note.casefold() and _BOARD_LIMIT.search(section.note)):
@@ -1398,11 +1499,12 @@ def check(driver: Any, board: Board, settings: Settings, report: Dict[str, Any],
         # the page, and a repair pass that finds a section "already_ok" must leave page evidence too.
         if page and section.wanted and section.action in (*CHANGED, ALREADY_OK, 'checked', PENDING):
             section.on_page, section.missing = _confirm_saved(section, page, board, workdir)
-            if (section.on_page is not True and _STATE.fullmatch(section.wanted.strip())
-                    and not _windows(section.name, page)):
-                # A ticked box is not text. Where the board prints neither the state nor this
-                # field's own name, the page holds no evidence either way and the agent's
-                # confirmation in the form is all there can be.
+            if (section.on_page is not True and not _windows(section.name, page)
+                    and (section.on_page is None or _STATE.fullmatch(section.wanted.strip()))):
+                # A ticked box is not text, and Hirist keeps its work-preference questions on a
+                # registration step the profile page never prints. Where the page shows neither
+                # this field's own name nor its state, it holds no evidence either way and the
+                # agent's confirmation in the form is all there can be.
                 section.action = EXCLUDED
                 section.note = (section.note + ' ' if section.note else '') + (
                     'The board does not print this field or its state; the agent confirmed it in the form.')

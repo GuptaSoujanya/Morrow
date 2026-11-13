@@ -1515,3 +1515,73 @@ def test_a_value_the_report_cut_short_is_matched_without_its_half_word():
     page = 'Skills Software engineering Python FastAPI LiteLLM Docker pytest'
     assert profile_agent.verify('Software engineering, Python, FastAPI, LiteLLM, Lite...', page, 'Skills') == (True, [])
     assert profile_agent.verify('Software engineering, Kubernetes, Lite...', page, 'Skills') == (False, ['Kubernetes'])
+
+
+def test_a_tick_the_page_draws_as_a_control_counts_by_its_label():
+    page = 'Office preference Work remotely In any timezone Within 3-4 hrs of my timezone GMT+05:30 (Asia/Kolkata)'
+    value = 'Work remotely: selected; Within 3-4 hrs of my timezone; GMT+05:30 (Asia/Kolkata)'
+    assert profile_agent.verify(value, page, 'Office preference') == (True, [])
+    assert profile_agent.verify('Six day week: selected', page, 'Office preference')[0] is not True
+
+
+def test_a_name_and_its_bracketed_note_match_with_the_boards_words_between_them():
+    page = ('Education Medi-Caps University Bachelor of Technology (B.Tech), Computer Science '
+            'and Engineering 2020 - 2024 Grade: 8.9 CGPA')
+    assert profile_agent.verify('Medi-Caps University (2020 - 2024)', page, 'Education') == (True, [])
+    assert profile_agent.verify('Medi-Caps University (2015 - 2019)', page, 'Education')[0] is not True
+
+
+def test_each_part_of_an_abbreviated_quote_has_to_be_on_the_page():
+    page = 'About I build evaluation harnesses at Ethara AI across Python and FastAPI. Notice period is 15 days.'
+    assert profile_agent.verify('I build evaluation harnesses at Ethara AI ... Notice period is 15 days.',
+                                page, 'About') == (True, [])
+    assert profile_agent.verify('I build evaluation harnesses at Ethara AI ... Notice period is 2 months.',
+                                page, 'About')[0] is not True
+
+
+def test_a_yes_or_no_answer_counts_only_under_its_own_question():
+    page = ('US work authorization Do you or will you require sponsorship for a US employment visa '
+            '(e.g. H-1B)? Yes Are you legally authorized to work in the United States? No')
+    value = 'Requires sponsorship: Yes; Legally authorized to work in the US: No'
+    assert profile_agent.verify(value, page, 'US work authorization') == (True, [])
+    wrong = 'Requires sponsorship: No; Legally authorized to work in the US: Yes'
+    assert profile_agent.verify(wrong, page, 'US work authorization')[0] is False
+    unasked = profile_agent.verify('Holds a security clearance: Yes', page, 'US work authorization')
+    assert unasked[0] is None
+    both = 'Open to relocation? Yes No'
+    assert profile_agent._answered('Open to relocation', 'Yes', both) is None
+
+
+def test_an_entry_written_as_its_fields_and_then_its_description_is_checked_as_both():
+    page = ('Experience ethara-ai Ethara AI Mar 2024 to Present Expanded the WildClawBench fork '
+            'into a multi-provider platform Software Engineer')
+    value = 'Ethara AI, Mar 2024 - Present; Expanded the WildClawBench fork into a multi-provider platform'
+    assert profile_agent.verify(value, page, 'Experience') == (True, [])
+    wrong = 'Ethara AI, Mar 2024 - Present; Ran payroll for a team of forty in Berlin every month'
+    assert profile_agent.verify(wrong, page, 'Experience')[0] is False
+
+
+def test_the_agents_own_joining_words_are_not_demanded_of_the_page():
+    page = 'What type of job are you interested in? Full-time Employee Also open to the following job types: Contractor'
+    assert profile_agent.verify('Full-time Employee; also open to Contractor', page,
+                                'What type of job are you interested in?') == (True, [])
+    assert profile_agent.verify('Full-time Employee; also open to Internship', page,
+                                'What type of job are you interested in?')[0] is not True
+
+
+def test_an_entry_written_as_one_line_is_checked_field_by_field_against_the_page():
+    page = ('Work experience Robotronix Engineering Tech Full-Stack Developer Intern Feb 2021 to '
+            'Apr 2021 Shipped Indore Carbonic, a carbon-processing portal, using React.js')
+    value = ('Full-Stack Developer Intern, Feb 2021 - Apr 2021, Shipped Indore Carbonic, '
+             'a carbon-processing portal, using React.js')
+    assert profile_agent.verify(value, page, 'Work experience') == (True, [])
+    invented = 'Full-Stack Developer Intern, Feb 2021 - Apr 2021, Ran payroll in Berlin for forty staff'
+    assert profile_agent.verify(invented, page, 'Work experience')[0] is not True
+
+
+def test_a_question_under_a_group_heading_is_answered_by_its_own_answer():
+    page = ('US work authorization Do you or will you require sponsorship for a US employment visa '
+            '(e.g. H-1B)? Yes Are you legally authorized to work in the United States? No')
+    assert profile_agent.verify('No', page, 'US work authorization: legally authorized to work in the US') == (True, [])
+    assert profile_agent.verify('Yes', page, 'US work authorization: requires sponsorship') == (True, [])
+    assert profile_agent.verify('Yes', page, 'US work authorization: legally authorized to work in the US')[0] is False
