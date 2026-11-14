@@ -74,9 +74,9 @@ def test_one_round_of_changes_starts_exactly_one_job(api, monkeypatch, tmp_path)
                                        "pieces": {"cover": "Bigger headline"}})
     assert handler.sent[0] == 202 and len(started) == 1
     action, name, kind, argv = started[0]
-    assert (action, kind) == ("redesign", "artwork") and name == "cover, thumbnail", "a reel's set note stays on that reel's pieces"
+    assert (action, kind) == ("redesign", "artwork") and name == "cover", "a reel's set note stays on that reel's cover"
     batch = json.loads(Path(argv[-1]).read_text())
-    assert [item["kind"] for item in batch["items"]] == ["cover", "thumbnail"]
+    assert [item["kind"] for item in batch["items"]] == ["cover"]
     assert batch["items"][0]["plan_id"] == "p"
     assert saved == [("artwork", "changes", "Reel / Shorts cover: Bigger headline; whole set: Brighter red")]
 
@@ -129,3 +129,20 @@ def test_a_reel_render_only_holds_up_that_reels_own_cover_and_thumbnail(api, mon
     handler = Handler()
     api._post_refinement(handler, "video", {"run_id": "x", "plan_id": "p", "day": 1})
     assert handler.sent[0] == 409
+
+
+def test_every_planned_day_can_be_chosen_for_a_cover_rendered_or_not(api, monkeypatch):
+    plans = {"p1": {"id": "p1", "topic": "Tech myths", "items": [{"day": 1, "title": "Incognito"}, {"day": 2, "title": "5G"}]},
+             "p2": {"id": "p2", "topic": "GTA 6", "items": [{"day": 1, "title": "PS5 vs Pro"}]}}
+    monkeypatch.setattr(api.planner, "list_plans", lambda: [{"id": "p1"}, {"id": "p2"}, {"id": "gone"}])
+
+    def load(plan_id):
+        if plan_id not in plans:
+            raise FileNotFoundError(plan_id)
+        return plans[plan_id]
+    monkeypatch.setattr(api.planner, "load_plan", load)
+    monkeypatch.setattr(api.studio, "videos", lambda: [{"plan_id": "p1", "day": 1, "has_video": True, "status": "ok"}])
+    rows = api._cover_targets()
+    assert [(r["plan_id"], r["day"], r["rendered"], r["status"]) for r in rows] == [
+        ("p1", 1, True, "ok"), ("p1", 2, False, "not_rendered"), ("p2", 1, False, "not_rendered")]
+    assert rows[2]["topic"] == "GTA 6" and rows[2]["title"] == "PS5 vs Pro"

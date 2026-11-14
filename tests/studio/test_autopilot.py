@@ -290,7 +290,7 @@ def test_the_desk_offers_only_this_reels_covers_newest_first(monkeypatch):
     fake = type("Art", (), {"status": staticmethod(lambda plan_id, day: {"versions": versions})})
     monkeypatch.setattr(auto.agent, "_artwork_module", lambda: fake)
     out = auto._versions(plan, plan["items"][0])
-    assert [v["id"] for v in out["cover"]] == ["c2", "c1"] and out["thumbnail"] == []
+    assert [v["id"] for v in out["cover"]] == ["c2", "c1"] and "thumbnail" not in out
     assert out["cover"][0]["url"].endswith("versions/c2/artwork.png")
 
 

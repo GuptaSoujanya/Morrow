@@ -346,3 +346,20 @@ def test_the_browser_brief_asks_for_one_offline_self_contained_file(artwork):
                    "JavaScript is disabled", "overflow:hidden", "mascot.png",
                    "appearance and proportions", "Preserve supplied copy verbatim", 'data-art-role="headline"'):
         assert demand in text, demand
+
+
+def test_a_cover_for_a_reel_not_rendered_yet_is_staged_from_its_script(artwork, tmp_path):
+    plan = json.loads((tmp_path / "plans" / "a-plan.json").read_text(encoding="utf-8"))
+    plan["items"].append({"day": 2, "title": "Dict get with a default", "hook": "Stop writing if key in d",
+                          "beats": ["the KeyError", "get with a default"], "relatable_moment": "a crash at 2 am",
+                          "on_screen_text": ["d.get(k, 0)"]})
+    (tmp_path / "plans" / "a-plan.json").write_text(json.dumps(plan), encoding="utf-8")
+    assets = artwork.available_assets("cover", "a-plan", 2)
+    assert not any(key.startswith("frame-") for key in assets)
+    text = artwork._prompt("cover", "a cover", "", artwork.brand_context(), None, assets,
+                           artwork.reel_facts("a-plan", 2))
+    assert "has not been rendered yet" in text and "a real frame of the reel" not in text
+    assert "the KeyError / get with a default" in text and "a crash at 2 am" in text
+    rendered = artwork._prompt("cover", "a cover", "", artwork.brand_context(), None,
+                               artwork.available_assets("cover", "a-plan", 1), artwork.reel_facts("a-plan", 1))
+    assert "has not been rendered yet" not in rendered

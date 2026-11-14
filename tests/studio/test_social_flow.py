@@ -386,10 +386,10 @@ def test_publishing_refuses_what_you_did_not_approve(flow_of, desk):
     with pytest.raises(flow_of.AgentError, match="approve it first"):
         flow_of._require_reviews(draft, ("cover",))
     flow_of.review("video", "approve")
-    with pytest.raises(flow_of.AgentError, match="cover and thumbnail"):
+    with pytest.raises(flow_of.AgentError, match="reel cover"):
         flow_of._require_reviews(draft, ("cover",))
     flow_of.review("artwork", "approve")
-    flow_of._require_reviews(draft, ("cover", "thumbnail"))
+    flow_of._require_reviews(draft, ("cover",))
     with pytest.raises(flow_of.AgentError, match="profile picture and approve it"):
         flow_of._require_reviews(draft, ("avatar",), video=False)
     flow_of.review("profile", "approve")
@@ -444,8 +444,8 @@ def test_artwork_notes_reach_only_their_piece_and_the_set_note_reaches_all(flow_
     _, own = flow_of.change_brief("artwork", pieces={"cover": "Bigger headline", "thumbnail": ""})
     assert set(own) == {"cover"} and "Bigger headline" in own["cover"]
     summary, every = flow_of.change_brief("artwork", pieces={"cover": "Bigger headline"}, general="Brighter red")
-    assert set(every) == {"cover", "thumbnail"}, "the reel's set note reaches its own two pieces"
-    assert "Bigger headline" in every["cover"] and "Bigger headline" not in every["thumbnail"]
+    assert set(every) == {"cover"}, "the reel's set note reaches its own cover"
+    assert "Bigger headline" in every["cover"]
     assert all("For the whole set: Brighter red" in text for text in every.values())
     assert "whole set: Brighter red" in summary
     _, channel = flow_of.change_brief("profile", pieces={"avatar": "Move the mascot left"}, general="Calmer red")
@@ -512,7 +512,7 @@ def test_the_profile_upload_waits_for_its_approval_then_is_ready(flow_of):
 def test_nothing_reaches_the_final_review_unreviewed_or_below_the_bar(flow_of):
     verified = {"accounts": _signed_in("instagram", "a") | _signed_in("youtube", "b")}
     flow = flow_of.flow(_agent(draft=_draft(), audit=verified, bar=PASSED, reviews=_reviews(video="pending", art="pending")), _facts())
-    assert _step(flow, "review")["state"] == "blocked" and "the reel and the cover and thumbnail" in _step(flow, "review")["detail"]
+    assert _step(flow, "review")["state"] == "blocked" and "the reel and the cover" in _step(flow, "review")["detail"]
     below = {"current": True, "level": 2, "check": {"passed": False, "items": [{}] * 6, "failing": ["The hook is 7 words or fewer — measured 11"]}}
     failed = flow_of.flow(_agent(draft=_draft(), audit=verified, bar=below, reviews=_reviews()), _facts())
     assert _step(failed, "bar")["state"] == "failed" and "hook" in _step(failed, "bar")["blocked_on"]
