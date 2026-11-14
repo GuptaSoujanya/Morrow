@@ -1,6 +1,7 @@
 """The video studio with the bridge, ffprobe, ffmpeg and the critic replaced by fakes."""
 import importlib.util
 import json
+import shlex
 from pathlib import Path
 
 import pytest
@@ -138,6 +139,25 @@ def test_edit_changes_in_place_and_refuses_before_a_render(studio):
         studio.edit(plan["id"], 1, "   ")
 
 
+def test_edit_correction_retains_current_direction_prior_brief_and_minor_scope(studio):
+    plan = _plan(studio)
+    studio.make(plan["id"], 1)
+    studio.verdicts.append({"ok": False, "problems": ["Supporting label overlaps the caption"],
+                           "missing_text": [], "fix": "Move only the supporting label."})
+    notes = "Keep the approved mascot and colours. Increase the headline margin only. Read continuity.json and source-review.json."
+    studio.edit(plan["id"], 1, notes, attempts=2)
+    edit, correction = [call["prompt"] for call in studio.calls[1:]]
+    for prompt in (edit, correction):
+        assert notes in prompt and plan["items"][0]["prompt"].strip() in prompt
+        assert prompt.rsplit("\n\n", 1)[-1].startswith("FINAL CONTINUITY RULE:")
+        assert "Default to minor adjustments" in prompt
+        assert "scene order, mascot identity and rig, visual style, palette, fonts and motion language" in prompt
+        assert "Never revert newer accepted styling to an older brief" in prompt
+        assert "Only an explicit current creator request can expand that scope" in prompt
+    assert "Supporting label overlaps the caption" in correction
+    assert "do not repeat completed edits" in correction
+
+
 def test_restore_brings_a_version_back_and_keeps_the_current_one(studio):
     plan = _plan(studio)
     studio.make(plan["id"], 1)
@@ -245,3 +265,119 @@ def test_the_render_record_keeps_the_look(studio):
     plan = studio.direct("Clay two", "Explain the thing " + " ".join(["w"] * 25), 20, style_name="sticker")
     studio.make(plan["id"], 1)
     assert studio.detail(plan["id"], 1)["record"]["style"] == "sticker"
+
+
+@pytest.fixture
+def local_tools(studio, tmp_path, monkeypatch):
+    root, home = tmp_path / "workspace", tmp_path / "home"
+    project = root / "reels" / "a reel with spaces ' $(no-execution)"
+    project.mkdir(parents=True)
+    home.mkdir()
+    binaries, skills, lookups = {}, {}, []
+    monkeypatch.setattr(studio, "ROOT", root)
+    monkeypatch.setattr(studio.Path, "home", classmethod(lambda cls: home))
+    monkeypatch.setattr(studio.shutil, "which", lambda name: lookups.append(name) or binaries.get(name))
+    monkeypatch.setattr(studio.planner, "skill_path", lambda name: skills.get(name))
+    monkeypatch.setattr(studio.planner, "companions", lambda skill: ["motion-doctrine", "hyperframes-core"])
+    return {"root": root, "home": home, "project": project, "binaries": binaries, "skills": skills, "lookups": lookups}
+
+
+def executable(path):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("#!/bin/sh\nexit 0\n")
+    path.chmod(0o755)
+    return path
+
+
+def test_hyperframes_prefers_project_local_command_without_searching_cache(studio, local_tools, monkeypatch):
+    local = executable(local_tools["project"] / "node_modules" / ".bin" / "hyperframes")
+    local_tools["binaries"]["hyperframes"] = str(executable(local_tools["home"] / "bin" / "hyperframes"))
+    monkeypatch.setattr(studio.Path, "glob", lambda *args: pytest.fail("Local discovery must not inspect an npm cache or home tree."))
+    assert studio._hyperframes_command(local_tools["project"]) == [str(local)]
+    assert "hyperframes" not in local_tools["lookups"]
+
+
+def test_hyperframes_reuses_repository_local_mjs_through_node(studio, local_tools, monkeypatch):
+    script = executable(local_tools["root"] / "node_modules" / "hyperframes" / "bin" / "hyperframes.mjs")
+    link = local_tools["root"] / "node_modules" / ".bin" / "hyperframes"
+    link.parent.mkdir(parents=True)
+    link.symlink_to(script)
+    node = executable(local_tools["home"] / "Node tools" / "node")
+    local_tools["binaries"]["node"] = str(node)
+    monkeypatch.setattr(studio.Path, "glob", lambda *args: pytest.fail("A repository-local CLI must avoid cache discovery."))
+    assert studio._hyperframes_command(local_tools["project"]) == [str(node), str(script)]
+    assert local_tools["lookups"] == ["node"]
+
+
+def test_hyperframes_path_command_and_project_inspection_are_shell_quoted(studio, local_tools, monkeypatch):
+    installed = executable(local_tools["home"] / "tools with spaces ' $(no-execution)" / "hyperframes")
+    local_tools["binaries"]["hyperframes"] = str(installed)
+    monkeypatch.setattr(studio.Path, "glob", lambda *args: pytest.fail("An installed CLI must not trigger cache discovery."))
+    hints = studio.local_tool_contract({"skill": "hyperframes"}, local_tools["project"])
+    assert f"`{shlex.quote(str(installed))}`" in hints
+    assert f"-- {shlex.quote(str(local_tools['project']))}`" in hints
+    assert "reuse its package.json scripts or saved render scripts" in hints
+    assert "Never run `find /`" in hints and "recursive search through the home directory" in hints
+    assert "rg --files" in hints and "no package download or installation is needed" in hints
+
+
+def test_npx_fallback_checks_only_the_known_package_path_and_uses_node(studio, local_tools, monkeypatch):
+    cache = local_tools["home"] / ".npm" / "_npx"
+    script = cache / "installed-hash" / "node_modules" / "hyperframes" / "bin" / "hyperframes.mjs"
+    script.parent.mkdir(parents=True)
+    script.write_text("// Cached fixture; never executed.")
+    older = cache / "zz-older-hash" / "node_modules" / "hyperframes" / "bin" / "hyperframes.mjs"
+    older.parent.mkdir(parents=True)
+    older.write_text("// An older installed version should not win by its hash name.")
+    studio.os.utime(older, (1, 1))
+    node = executable(local_tools["home"] / "node-bin" / "node")
+    local_tools["binaries"]["node"] = str(node)
+    unrelated = executable(local_tools["home"] / "unrelated-project" / "node_modules" / "hyperframes" / "bin" / "hyperframes.mjs")
+    real_glob, searched = studio.Path.glob, []
+    def bounded_glob(path, pattern):
+        searched.append((path, pattern))
+        assert path == cache and pattern == "*/node_modules/hyperframes/bin/hyperframes.mjs"
+        return real_glob(path, pattern)
+    monkeypatch.setattr(studio.Path, "glob", bounded_glob)
+    assert studio._hyperframes_command(local_tools["project"]) == [str(node), str(script)]
+    assert searched == [(cache, "*/node_modules/hyperframes/bin/hyperframes.mjs")]
+    assert unrelated.is_file(), "The unrelated install exists but must never be discovered by a whole-home walk."
+
+
+def test_hyperframes_missing_tool_reports_bounded_fallback_without_install_or_broad_search(studio, local_tools):
+    hints = studio.local_tool_contract({"skill": "hyperframes"}, local_tools["project"])
+    assert studio._hyperframes_command(local_tools["project"]) is None
+    assert "No usable local HyperFrames command was found" in hints
+    assert "existing working project render script" in hints and "report the missing tool" in hints
+    assert "No installed skill file was resolved for:" in hints
+    assert "available local command is" not in hints
+
+
+def test_cached_mjs_without_node_does_not_claim_a_working_command(studio, local_tools):
+    script = local_tools["home"] / ".npm" / "_npx" / "cache" / "node_modules" / "hyperframes" / "bin" / "hyperframes.mjs"
+    script.parent.mkdir(parents=True)
+    script.write_text("// Requires Node; never executed.")
+    assert studio._hyperframes_command(local_tools["project"]) is None
+    assert "No usable local HyperFrames command" in studio.local_tool_contract({"skill": "hyperframes"}, local_tools["project"])
+
+
+@pytest.mark.parametrize("mode", ["make", "edit", "fix"])
+def test_generation_prompts_resolve_exact_skill_files_and_keep_existing_renderer(studio, local_tools, monkeypatch, mode):
+    for name in ("hyperframes", "hyperframes-cli", "motion-doctrine", "hyperframes-core"):
+        path = local_tools["home"] / "skill library ' $(no-execution)" / name / "SKILL.md"
+        path.parent.mkdir(parents=True)
+        path.write_text("Fixture instructions.")
+        local_tools["skills"][name] = path
+    (local_tools["project"] / "render-existing.mjs").write_text("// Reuse this source project's renderer.")
+    monkeypatch.setattr(studio, "spec", lambda *args: "Delivery constraints unchanged.")
+    item = {"title": "An existing reel", "prompt": "Original creative direction.", "skill": "hyperframes"}
+    prompt = studio.build_prompt(item, local_tools["project"], mode, notes="Make the title easier to read.")
+    for name, path in local_tools["skills"].items():
+        assert f"{name}: {json.dumps(str(path))}" in prompt
+    assert "Keep this project's existing renderer" in prompt
+    assert "Delivery constraints unchanged." in prompt
+    assert "Never run `find /`" in prompt and "rg --files" in prompt
+    if mode == "make":
+        assert prompt.startswith(item["prompt"])
+    else:
+        assert "Do NOT start over" in prompt and item["prompt"] in prompt

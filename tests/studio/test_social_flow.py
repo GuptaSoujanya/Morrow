@@ -23,7 +23,9 @@ def _agent(**extra):
                        "brand_facts": ["Two years of writing about security"], "platforms": ["instagram", "youtube"],
                        "plan_id": ""},
             "runs": [], "operations": [], "draft": None, "review_stale": False, "review_stale_reason": "",
-            "audit": {"accounts": {}}, "running": None}
+            "audit": {"accounts": {}}, "running": None,
+            # The reel and artwork reviews are their own steps; most tests start with both approved.
+            "reviews": {"video": {"state": "approved"}, "artwork": {"state": "approved", "pieces": {}}}}
     return base | extra
 
 
@@ -46,12 +48,31 @@ def _plan(briefed=7, total=7):
             "status": "done", "updated": "2026-11-12T23:00:00"}
 
 
+PIECES = {kind: {"kind": kind, "id": f"art-{kind}", "revision": f"rev-{kind}", "scope": "reel" if kind in ("cover", "thumbnail") else "channel"}
+          for kind in ("cover", "thumbnail", "avatar", "banner")}
+
+
+def _reviews(video="approved", art="approved", vid=None, artwork=None):
+    video_review = {"state": video, "made": "ok", "plan_id": "a-plan", "day": 1, "title": "X", "sha256": "cut-1",
+                    "url": "/v?cut=1", "studio_url": "#studio?plan=a-plan&day=1"} | (vid or {})
+    art_review = {"state": art, "plan_id": "a-plan", "day": 1, "pieces": dict(PIECES), "missing": [], "generic": [],
+                  "fingerprint": {k: v["revision"] for k, v in PIECES.items()}} | (artwork or {})
+    return {"video": video_review, "artwork": art_review}
+
+
+def _draft(sha="cut-1", **revisions):
+    assets = {kind: {"source_artwork": {"id": f"art-{kind}", "revision": revisions.get(kind, f"rev-{kind}")}} for kind in PIECES}
+    return {"id": "d1", "revision": "r1", "created_at": "2026-11-13T03:00:00+00:00", "assets": assets,
+            "content_metadata": {"plan_id": "a-plan", "day": 1, "video": {"url": "/v.mp4", "sha256": sha}}}
+
+
 def test_every_step_of_the_flow_is_reported_in_order(flow_of):
     flow = flow_of.flow(_agent(), _facts())
     assert [step["key"] for step in flow["steps"]] == ["identity", "audit", "research", "plan", "render",
+                                                       "video-review", "artwork", "artwork-review",
                                                        "prepare", "review", "apply-profile", "publish",
                                                        "measure", "learn"]
-    assert flow["total"] == 11 and flow["done"] <= flow["total"]
+    assert flow["total"] == 14 and flow["done"] <= flow["total"]
     assert all(step["label"] and step["blurb"] and step["state"] for step in flow["steps"])
 
 
@@ -158,7 +179,7 @@ def test_an_uncertain_public_action_refuses_to_look_runnable(flow_of):
 def test_applied_profiles_on_every_platform_complete_the_step(flow_of):
     draft = {"id": "d1", "revision": "r1", "created_at": "2026-11-13T03:00:00+00:00", "assets": {},
              "content_metadata": {}}
-    operations = [{"action": "profile", "platform": platform, "status": "complete", "revision": "r1",
+    operations = [{"action": "apply-profile", "platform": platform, "status": "complete", "revision": "r1",
                    "finished_at": "2026-11-13T05:00:00+00:00"} for platform in ("instagram", "youtube")]
     flow = flow_of.flow(_agent(draft=draft, operations=operations), _facts())
     assert _step(flow, "apply-profile")["state"] == "done"
@@ -214,7 +235,7 @@ def test_the_pipeline_is_placed_by_its_checkpoint_and_marks_what_it_passed(flow_
 def test_you_are_here_is_the_first_step_still_to_do(flow_of):
     audited = {"accounts": _signed_in("instagram", "a") | _signed_in("youtube", "b")}
     facts = _facts(current_plan=_plan(), next={"plan_id": "a-plan", "day": 1, "title": "X", "made": "ok"})
-    flow = flow_of.flow(_agent(audit=audited), facts)
+    flow = flow_of.flow(_agent(audit=audited, reviews=_reviews()), facts)
     assert flow["steps"][flow["position"]]["key"] == "prepare"
     assert flow["steps"][flow["position"]]["state"] not in ("done", "skipped", "not_due")
     assert flow["blocked_on"] == "" or isinstance(flow["blocked_on"], str)
@@ -236,3 +257,191 @@ def test_nothing_is_sent_to_an_account_whose_sign_in_is_unconfirmed(flow_of):
     verified = {"accounts": _signed_in("instagram", "a") | _signed_in("youtube", "b")}
     ready = flow_of.flow(_agent(draft=draft, audit=verified), _facts())
     assert _step(ready, "apply-profile")["state"] == "waiting"
+
+
+def test_the_reel_is_watched_before_anything_is_packaged(flow_of):
+    blocked = _step(flow_of.flow(_agent(reviews=_reviews(video="missing", vid={"made": ""})), _facts()), "video-review")
+    assert blocked["state"] == "blocked" and "Render the reel first" in blocked["blocked_on"]
+
+    pending = _step(flow_of.flow(_agent(reviews=_reviews(video="pending")), _facts()), "video-review")
+    assert pending["state"] == "waiting" and "ready to watch" in pending["detail"]
+    assert pending["evidence"]["url"] == "/v?cut=1", "the step points at the exact cut to watch"
+
+    asked = _reviews(video="changes", vid={"note": "Hold the hook longer"})
+    step = _step(flow_of.flow(_agent(reviews=asked), _facts()), "video-review")
+    assert step["state"] == "waiting" and "Hold the hook longer" in step["detail"]
+    assert "new cut" in step["blocked_on"]
+
+    recut = _reviews(video="pending", vid={"earlier_note": "Hold the hook longer"})
+    assert "it was asked to fix" in _step(flow_of.flow(_agent(reviews=recut), _facts()), "video-review")["detail"]
+    assert _step(flow_of.flow(_agent(reviews=_reviews()), _facts()), "video-review")["state"] == "done"
+
+
+def test_artwork_must_be_made_for_this_reel_before_it_can_be_checked(flow_of):
+    gaps = _reviews(art="missing", artwork={"missing": ["banner"], "generic": ["cover"]})
+    flow = flow_of.flow(_agent(reviews=gaps), _facts())
+    step = _step(flow, "artwork")
+    assert step["state"] == "ready" and "banner" in step["detail"] and "not made for this reel" in step["detail"]
+    assert _step(flow, "artwork-review")["state"] == "blocked"
+
+    full = flow_of.flow(_agent(reviews=_reviews(art="pending")), _facts())
+    assert _step(full, "artwork")["state"] == "done" and "4 pieces" in _step(full, "artwork")["detail"]
+    assert _step(full, "artwork-review")["state"] == "waiting"
+    asked = _reviews(art="changes", artwork={"note": "Bigger headline"})
+    assert "Bigger headline" in _step(flow_of.flow(_agent(reviews=asked), _facts()), "artwork-review")["detail"]
+
+
+def test_nothing_reaches_final_approval_or_publishing_unreviewed(flow_of):
+    verified = {"accounts": _signed_in("instagram", "a") | _signed_in("youtube", "b")}
+    flow = flow_of.flow(_agent(draft=_draft(), audit=verified, reviews=_reviews(video="pending", art="pending")), _facts())
+    assert _step(flow, "review")["state"] == "blocked" and "reel and artwork" in _step(flow, "review")["detail"]
+    assert _step(flow, "publish")["state"] == "blocked" and "reel and artwork" in _step(flow, "publish")["detail"]
+    assert "artwork" in _step(flow, "apply-profile")["detail"] and "reel" not in _step(flow, "apply-profile")["detail"], \
+        "a profile change carries artwork but no video"
+
+    art_only = flow_of.flow(_agent(draft=_draft(), audit=verified, reviews=_reviews(art="pending")), _facts())
+    assert _step(art_only, "apply-profile")["state"] == "blocked"
+    ready = flow_of.flow(_agent(draft=_draft(), audit=verified, reviews=_reviews()), _facts())
+    assert _step(ready, "review")["state"] == "waiting" and _step(ready, "publish")["state"] == "waiting"
+
+
+def test_a_package_holding_older_files_must_be_prepared_again(flow_of):
+    verified = {"accounts": _signed_in("instagram", "a") | _signed_in("youtube", "b")}
+    for draft, wanted in ((_draft(sha="cut-0"), "older cut"), (_draft(cover="rev-old"), "different cover")):
+        flow = flow_of.flow(_agent(draft=draft, audit=verified, reviews=_reviews()), _facts())
+        step = _step(flow, "prepare")
+        assert step["state"] == "ready" and "out of date" in step["detail"] and wanted in step["blocked_on"], wanted
+        assert _step(flow, "review")["state"] == "blocked", wanted
+    assert _step(flow_of.flow(_agent(draft=_draft(), reviews=_reviews()), _facts()), "prepare")["state"] == "done"
+
+
+def test_studio_jobs_for_reels_and_artwork_find_their_steps(flow_of):
+    for action, key in (("edit", "render"), ("generate", "artwork")):
+        flow = flow_of.flow(_agent(running={"action": action}), _facts())
+        assert flow["running_stage"] == key, action
+
+
+@pytest.fixture()
+def desk(flow_of, tmp_path, monkeypatch):
+    """A real reviews file over a fake reel folder and a fake artwork selection."""
+    folder = tmp_path / "day-01"
+    folder.mkdir()
+    (folder / "reel.mp4").write_bytes(b"first cut")
+    plan, item = {"id": "a-plan"}, {"day": 1, "title": "Incognito"}
+    made = {"status": "ok"}
+    active = {kind: {"id": piece["id"], "revision": piece["revision"], "scope": piece["scope"],
+                     "path": str(tmp_path / "art" / piece["id"] / "artwork.png")} for kind, piece in PIECES.items()}
+    monkeypatch.setattr(flow_of, "REVIEWS", tmp_path / "reviews.json")
+    monkeypatch.setattr(flow_of, "_selection", lambda plan_id="", day=None: (plan, item))
+    monkeypatch.setattr(flow_of.planner, "day_dir", lambda plan, day: folder)
+    monkeypatch.setattr(flow_of.social, "made_record", lambda plan, day, state=None: made)
+    monkeypatch.setattr(flow_of, "_active_artwork", lambda plan_id="", day=None: active)
+    monkeypatch.setattr(flow_of, "_artwork_module", lambda: None)
+    monkeypatch.setattr(flow_of, "load_config", lambda: {"avatar_file": ""})
+    return {"folder": folder, "made": made, "active": active}
+
+
+def test_an_approval_belongs_to_the_exact_cut(flow_of, desk):
+    assert flow_of.video_review()["state"] == "pending"
+    with pytest.raises(flow_of.AgentError, match="what should change"):
+        flow_of.review("video", "changes", "")
+    asked = flow_of.review("video", "changes", "Hold the hook longer")
+    assert asked["state"] == "changes" and asked["note"] == "Hold the hook longer"
+
+    (desk["folder"] / "reel.mp4").write_bytes(b"second cut")
+    recut = flow_of.video_review()
+    assert recut["state"] == "pending" and recut["earlier_note"] == "Hold the hook longer", \
+        "a new cut comes back for another look, carrying what it was asked to fix"
+    assert flow_of.review("video", "approve")["state"] == "approved"
+    (desk["folder"] / "reel.mp4").write_bytes(b"third cut")
+    assert flow_of.video_review()["state"] == "pending", "an approval never carries over to a different file"
+
+
+def test_a_cut_that_failed_its_checks_cannot_be_approved(flow_of, desk):
+    desk["made"]["status"] = "failed"
+    with pytest.raises(flow_of.AgentError, match="did not pass its own checks"):
+        flow_of.review("video", "approve")
+    (desk["folder"] / "reel.mp4").unlink()
+    with pytest.raises(flow_of.AgentError, match="no finished reel"):
+        flow_of.review("video", "approve")
+
+
+def test_an_artwork_approval_belongs_to_the_exact_pieces(flow_of, desk):
+    assert flow_of.review("artwork", "approve")["state"] == "approved"
+    desk["active"]["cover"] = dict(desk["active"]["cover"], revision="rev-cover-2", id="art-cover-2")
+    assert flow_of.artwork_review()["state"] == "pending", "choosing another cover needs a new approval"
+    desk["active"]["banner"] = dict(desk["active"]["banner"], scope="channel")
+    desk["active"]["cover"] = dict(desk["active"]["cover"], scope="channel")
+    seen = flow_of.artwork_review()
+    assert seen["state"] == "missing" and seen["generic"] == ["cover"]
+    with pytest.raises(flow_of.AgentError, match="cover"):
+        flow_of.review("artwork", "approve")
+    del desk["active"]["banner"]
+    assert "banner" in flow_of.artwork_review()["missing"]
+
+
+def test_publishing_refuses_what_you_did_not_approve(flow_of, desk):
+    draft = _draft(sha=flow_of._file_hash(desk["folder"] / "reel.mp4"))
+    with pytest.raises(flow_of.AgentError, match="approve it first"):
+        flow_of._require_reviews(draft, ("cover",))
+    flow_of.review("video", "approve")
+    with pytest.raises(flow_of.AgentError, match="artwork"):
+        flow_of._require_reviews(draft, ("cover",))
+    flow_of.review("artwork", "approve")
+    flow_of._require_reviews(draft, ("cover", "thumbnail"))
+    with pytest.raises(flow_of.AgentError, match="different cut"):
+        flow_of._require_reviews(_draft(sha="someone-elses"), ())
+    with pytest.raises(flow_of.AgentError, match="cover you have not approved"):
+        flow_of._require_reviews(_draft(sha=draft["content_metadata"]["video"]["sha256"], cover="rev-old"), ("cover",))
+
+
+def test_a_package_made_before_the_sign_in_was_confirmed_must_be_prepared_again(flow_of):
+    verified = {"accounts": _signed_in("instagram", "a") | _signed_in("youtube", "b")}
+    draft = _draft() | {"targets": {"instagram": {"logged_in": False, "handle": "a"},
+                                    "youtube": {"logged_in": True, "handle": "b"}}}
+    flow = flow_of.flow(_agent(draft=draft, audit=verified, reviews=_reviews()), _facts())
+    step = _step(flow, "prepare")
+    assert step["state"] == "ready" and "before Instagram was confirmed" in step["blocked_on"]
+    assert _step(flow, "review")["state"] == "blocked"
+    draft["targets"]["instagram"]["logged_in"] = True
+    assert _step(flow_of.flow(_agent(draft=draft, audit=verified, reviews=_reviews()), _facts()), "prepare")["state"] == "done"
+
+
+def test_a_new_blank_profile_still_counts_as_signed_in(flow_of, monkeypatch, tmp_path):
+    asked = []
+    def browse(platform, task, schema, label):
+        asked.append((task, schema))
+        return {"logged_in": True, "handle": "im_new", "profile_url": f"https://www.{platform}.com/im_new",
+                "evidence": ["Edit profile is shown"], "notes": "No bio and no photo yet.", "problem": "",
+                "_browser": {"profile": "/main"}, "_run": {"problem": ""}}
+    state = {"accounts": {}}
+    monkeypatch.setattr(flow_of, "HOME", tmp_path)
+    monkeypatch.setattr(flow_of.social, "run_browser_task", browse)
+    monkeypatch.setattr(flow_of.social, "load_state", lambda: state)
+    monkeypatch.setattr(flow_of.social, "save_state", lambda value: None)
+    result = flow_of._audit(["instagram"])
+    assert result["accounts"]["instagram"]["logged_in"] is True and result["errors"] == []
+    assert "empty bio" in asked[0][0] and '"notes"' in asked[0][1]
+    assert state["accounts"]["instagram"]["notes"] == "No bio and no photo yet."
+
+
+def test_every_reel_change_goes_into_one_numbered_brief(flow_of):
+    summary, briefs = flow_of.change_brief("video", [{"text": "Hold the hook longer", "at": 3.4},
+                                                     {"text": "  "}, {"text": "Louder voice"}])
+    brief = briefs["video"]
+    assert "1. At 0:03: Hold the hook longer" in brief and "2. Louder voice" in brief and "3." not in brief
+    assert "Do not leave any out" in brief and summary == brief
+    with pytest.raises(flow_of.AgentError):
+        flow_of.change_brief("video", [{"text": ""}])
+
+
+def test_artwork_notes_reach_only_their_piece_and_the_set_note_reaches_all(flow_of):
+    _, own = flow_of.change_brief("artwork", pieces={"cover": "Bigger headline", "banner": ""})
+    assert set(own) == {"cover"} and "Bigger headline" in own["cover"]
+    summary, every = flow_of.change_brief("artwork", pieces={"cover": "Bigger headline"}, general="Brighter red")
+    assert set(every) == {"cover", "thumbnail", "avatar", "banner"}
+    assert "Bigger headline" in every["cover"] and "Bigger headline" not in every["banner"]
+    assert all("For the whole set: Brighter red" in text for text in every.values())
+    assert "whole set: Brighter red" in summary
+    with pytest.raises(flow_of.AgentError):
+        flow_of.change_brief("artwork", pieces={"cover": " "})

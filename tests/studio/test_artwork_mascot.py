@@ -213,8 +213,8 @@ def test_the_brief_asks_for_designed_work_not_a_template(artwork):
 
 
 MASCOT_PAGE = """<!doctype html><html><head><meta charset="utf-8"><style>
-html,body{{margin:0;padding:0;width:{w}px;height:{h}px;overflow:hidden;background:#0a0b0f}}
-h1{{position:absolute;left:{x}px;top:{y}px;margin:0;color:#f4f7ff;font:800 120px/1 Helvetica,sans-serif}}
+html,body{{margin:0;padding:0;width:{w}px;height:{h}px;overflow:hidden;background:#f6f3ec}}
+h1{{position:absolute;left:{x}px;top:{y}px;margin:0;color:#14161c;font:800 120px/1 Helvetica,sans-serif}}
 img{{position:absolute;right:30px;bottom:0;height:{m}px;width:auto}}
 </style></head><body><h1 data-art-role="headline">CYBER</h1><img data-art-role="identity" src="mascot.png" alt=""></body></html>"""
 
@@ -254,6 +254,15 @@ def test_a_browser_design_uses_only_the_pictures_that_exist(artwork):
     problems = artwork._design_problems(invented, "banner", assets)
     assert any("does not exist" in problem for problem in problems)
     assert any("mascot does not appear" in problem for problem in problems)
+
+
+def test_the_channel_art_may_not_be_published_without_the_character(artwork):
+    """He was asked for on the banner as well as the avatar, so neither may be signed off without him."""
+    for kind in ("avatar", "banner"):
+        assets = artwork.available_assets(kind)
+        without = _page(artwork, kind).replace('<img data-art-role="identity" src="mascot.png" alt="">', "")
+        assert any("mascot does not appear" in problem for problem in artwork._design_problems(without, kind, assets))
+        assert artwork._design_problems(_page(artwork, kind), kind, assets) == []
 
 
 def test_a_cover_is_told_to_show_a_frame_of_its_own_reel(artwork):
