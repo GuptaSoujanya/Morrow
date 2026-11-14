@@ -58,6 +58,19 @@ def is_location_placeholder(question: str, answer: str) -> bool:
         return False
     return _normalise(answer) in _LOCATION_PLACEHOLDERS
 
+
+def real_location_names(profile: Any) -> List[str]:
+    """The cities the person actually names, current city first, placeholders dropped."""
+    raw = [getattr(profile, "current_location", "") or ""]
+    raw.extend(getattr(profile, "preferred_locations", None) or [])
+    raw.append((getattr(profile, "extra_facts", None) or {}).get("hometown", "") or "")
+    names = []  # type: List[str]
+    for value in raw:
+        name = value.strip()
+        if name and _normalise(name) not in _LOCATION_PLACEHOLDERS and name not in names:
+            names.append(name)
+    return names
+
 _ANSWERS_FILE_NAME = "answers.txt"
 # An answer written like this in answers.txt is never sent as it stands: the AI
 # writes a fresh one for every posting from the resume and that posting.
@@ -982,15 +995,31 @@ class AnswerEngine:
             return self._finish(
                 question, AnswerResolution.abstain("propose_mode"), False
             )
-        if not getattr(self, "_current_options", None) and is_location_placeholder(question, answer.text):
+        if is_location_placeholder(question, answer.text):
             # 'Others' or 'Remote' typed as a current location reads as evasive to a recruiter;
             # the person has to name the city, so the question goes to the worklist instead.
             # A fixed list that lacks the city leaves 'Other' as the only honest pick, so it stays.
-            return self._finish(
-                question,
-                AnswerResolution.abstain("location_answer_is_a_placeholder:%s" % answer.text),
-                False,
-            )
+            # The 2026-11-14 audit found the opposite case: 'Others' saved against a Gurugram
+            # profile, sent with every Naukri apply, failing each recruiter's city filter.
+            named = self._named_location_option()
+            if named is not None:
+                logger.info(
+                    "%r answered %r, but the list offers %r, which the profile names; using it",
+                    question, answer.text, named,
+                )
+                answer = Answer(
+                    text=named,
+                    grounded_in="current_location",
+                    source=AnswerSource.PROFILE,
+                    confidence=1.0,
+                )
+                resolution = AnswerResolution.resolved(answer)
+            elif not getattr(self, "_current_options", None):
+                return self._finish(
+                    question,
+                    AnswerResolution.abstain("location_answer_is_a_placeholder:%s" % answer.text),
+                    False,
+                )
         if persist:
             self.ledger.save_answer(
                 question, answer, field_type, self._cache_fingerprint,
@@ -1337,6 +1366,18 @@ class AnswerEngine:
             if hit not in found:
                 found.append(hit)
         return " + ".join(found)
+
+    def _named_location_option(self) -> Optional[str]:
+        options = getattr(self, "_current_options", None)
+        if not options:
+            return None
+        for name in real_location_names(self.profile):
+            for option in options:
+                if is_location_placeholder("city", option):
+                    continue
+                if _same_place(_normalise(option), _normalise(name)):
+                    return option
+        return None
 
     @staticmethod
     def _profile_candidates(field_name: str, value: Any) -> List[str]:
