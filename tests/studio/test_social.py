@@ -117,23 +117,14 @@ def test_post_records_a_row_per_platform_and_ticks_the_day(social, monkeypatch):
     assert social.post(plan["id"], 1, ["instagram"])[0]["problem"] == "already posted"
 
 
-def test_measure_stores_numbers_only_for_posts_that_are_due(social, monkeypatch):
-    plan = _plan_with_prompts(social, days=1)
-    state = social.load_state()
-    state["accounts"] = {"instagram": {"logged_in": True,
-                                        "browser_profile": str(social.profile_root("instagram"))}}
-    social.save_state(state)
-    with social.db() as conn:
-        conn.execute("INSERT INTO posts (plan_id, day, title, platform, url, posted_at, status) VALUES (?,?,?,?,?,?,?)",
-                     (plan["id"], 1, "Reel 1", "instagram", "https://www.instagram.com/reel/abc/", "2026-11-01T18:30:00", "posted"))
-        conn.execute("INSERT INTO posts (plan_id, day, title, platform, url, posted_at, status) VALUES (?,?,?,?,?,?,?)",
-                     (plan["id"], 1, "Reel 1", "instagram", "https://www.instagram.com/reel/new/", "2999-01-01T00:00:00", "posted"))
-    monkeypatch.setattr(social, "run_browser_task", lambda account, task, schema, label, files=(): {
-        "posts": [{"id": 1, "views": "1.2K", "likes": 40, "comments": "3", "saves": 7, "avg_watch_s": 9.5}, {"id": 2, "views": 5}]})
-    saved = social.measure()
-    assert saved == [{"post_id": 1, "platform": "instagram", "views": 1200, "likes": 40}]
-    assert social.posts_with_metrics()[1]["metrics"]["saves"] == 7
-    assert social.due_posts(social.load_config()) == [], "measured posts are not due again for 20 hours"
+def test_measure_reports_only_platforms_that_saved_numbers_in_this_sync(social, monkeypatch):
+    report = {"started_at": "2026-11-14T10:00:00", "platforms": {
+        "instagram": {"saved_snapshots": 3, "last_attempt_at": "2026-11-14T10:00:00"},
+        "youtube": {"saved_snapshots": 0, "last_attempt_at": "2026-11-14T10:00:00"},
+        "tiktok": {"saved_snapshots": 5, "last_attempt_at": "2026-11-13T09:00:00"}}}
+    monkeypatch.setattr(social, "sync_metrics", lambda *a, **k: report)
+    assert social.measure() == [{"platform": "instagram", "saved_snapshots": 3,
+                                 "last_attempt_at": "2026-11-14T10:00:00"}]
 
 
 def test_learn_writes_learnings_and_moves_the_posting_time(social, monkeypatch):

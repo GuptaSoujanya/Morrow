@@ -62,7 +62,7 @@ class Handler:
 
 def test_one_round_of_changes_starts_exactly_one_job(api, monkeypatch, tmp_path):
     started, saved = [], []
-    pieces = {"cover": {"id": "art-c"}, "thumbnail": {"id": "art-t"}, "avatar": {"id": "art-a", "source": "photo"}, "banner": {"id": "art-b"}}
+    pieces = {"cover": {"id": "art-c"}, "thumbnail": {"id": "art-t"}, "avatar": {"id": "art-a", "source": "photo"}}
     monkeypatch.setattr(api.social_agent, "review", lambda target, decision, note, plan_id, day: saved.append((target, decision, note))
                         or {"plan_id": "p", "day": 1, "pieces": pieces})
     monkeypatch.setattr(api, "_start_job", lambda action, name, group, argv=None, kind="": started.append((action, name, kind, argv))
@@ -74,11 +74,21 @@ def test_one_round_of_changes_starts_exactly_one_job(api, monkeypatch, tmp_path)
                                        "pieces": {"cover": "Bigger headline"}})
     assert handler.sent[0] == 202 and len(started) == 1
     action, name, kind, argv = started[0]
-    assert (action, kind) == ("redesign", "artwork") and name == "cover, thumbnail, banner", "a supplied photo is left alone"
+    assert (action, kind) == ("redesign", "artwork") and name == "cover, thumbnail", "a reel's set note stays on that reel's pieces"
     batch = json.loads(Path(argv[-1]).read_text())
-    assert [item["kind"] for item in batch["items"]] == ["cover", "thumbnail", "banner"]
-    assert batch["items"][0]["plan_id"] == "p" and "plan_id" not in batch["items"][2]
+    assert [item["kind"] for item in batch["items"]] == ["cover", "thumbnail"]
+    assert batch["items"][0]["plan_id"] == "p"
     assert saved == [("artwork", "changes", "Reel / Shorts cover: Bigger headline; whole set: Brighter red")]
+
+    started.clear()
+    with pytest.raises(ValueError, match="supplied photo"):
+        api._post_review_changes(handler, {"target": "profile", "plan_id": "", "day": None, "general": "Calmer red"})
+    assert not started, "a supplied photo is never redesigned, and no banner is made in its place"
+    pieces["avatar"] = {"id": "art-a"}
+    api._post_review_changes(handler, {"target": "profile", "plan_id": "", "day": None, "general": "Calmer red"})
+    action, name, kind, argv = started[0]
+    assert name == "avatar", "the profile round redesigns only the profile picture"
+    assert "plan_id" not in json.loads(Path(argv[-1]).read_text())["items"][0]
 
     started.clear()
     monkeypatch.setattr(api.social, "load_config", lambda: {"bridge": "codex"})

@@ -12,6 +12,9 @@
 selenium>=4.15.0,<5.0.0
 # Read-only DevTools browser previews; also used by Selenium.
 websocket-client>=1.9.2,<2.0.0
+# Studio reads Instagram/YouTube metrics through the existing configured Chrome.
+# CDP attachment needs the Python driver only; no Playwright browser download.
+playwright==1.65.2
 beautifulsoup4>=4.12.0,<5.0.0
 lxml>=6.1.0,<7.0.0
 python-dotenv>=1.0.0,<2.0.0
