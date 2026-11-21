@@ -20,6 +20,11 @@ from common.models import Answer, AnswerSource, ApplyResult, ApplyStatus, Settin
     ("Soul Ai", "soul ai"),
     ("Soul AI  ", "soul ai"),
     ("Tata Consultancy Services", "tata consultancy"),
+    ("Acme Pvt. Ltd", "acme"),
+    ("Acme Pvt Ltd.", "acme"),
+    ("Acme Technologies Pvt. Ltd", "acme"),
+    ("Acme Private Limited.", "acme"),
+    ("Acme, Inc.", "acme"),
     ("", ""),
     (None, ""),
 ])

@@ -57,9 +57,12 @@ def company_key(company: Optional[str]) -> str:
     if not company:
         return ""
     name = " ".join(company.split()).casefold()
+    # "Pvt. Ltd", "Pvt Ltd." and "Ltd" are one suffix: drop the full stops that abbreviate it.
+    name = re.sub(r"\b(pvt|ltd|inc)\.", r"\1", name)
     changed = True
     while changed:
         changed = False
+        name = name.rstrip(" ,.")
         for suffix in _COMPANY_SUFFIXES:
             if name.endswith(suffix):
                 name = name[: -len(suffix)].rstrip(" ,.")
