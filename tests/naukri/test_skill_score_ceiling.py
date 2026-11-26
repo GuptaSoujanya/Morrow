@@ -61,3 +61,14 @@ def test_a_well_matched_posting_can_now_reach_the_strong_verdict_lexically():
     scored, reasons = ranking.lexical_score(_profile(FORTY_ONE), _job(" ".join(FORTY_ONE[:8])))
     assert scored >= 75.0, reasons
     assert any(reason.startswith("8 skill matches") for reason in reasons)
+
+
+@pytest.mark.parametrize("skill,description", [
+    ("C++", "We need a C++ developer"),
+    ("C#", "Strong C# and SQL"),
+    (".NET", "Build services on .NET"),
+    ("C++", "Python, C++, Docker"),
+])
+def test_a_skill_ending_in_punctuation_is_found_in_the_posting(skill, description):
+    _, reasons = ranking.lexical_score(_profile([skill]), _job(description))
+    assert "1 skill matches: %s" % skill in reasons

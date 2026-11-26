@@ -201,7 +201,7 @@ def lexical_score(profile: Profile, job: JobPosting) -> Tuple[float, List[str]]:
     unique_skills = list(
         dict.fromkeys(skill.strip() for skill in profile.skills if skill.strip())
     )
-    matched_skills = [skill for skill in unique_skills if _phrase_pattern(skill).search(text)]
+    matched_skills = [skill for skill in unique_skills if _term_pattern(skill).search(text)]
     if unique_skills:
         full_marks = min(len(unique_skills), _SKILL_FULL_MARKS)
         score += _SKILL_WEIGHT * min(1.0, len(matched_skills) / full_marks)
