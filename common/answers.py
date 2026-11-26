@@ -547,6 +547,9 @@ _LOCATED_IN_RE = re.compile(
 _NCR_CITIES = ("delhi", "ncr", "noida", "gurugram", "gurgaon", "ghaziabad", "faridabad", "greater noida")
 _PLACE_ALIASES = {"gurgaon": "gurugram", "bengaluru": "bangalore", "bombay": "mumbai", "calcutta": "kolkata"}
 _PLACE_FILLER = {"india", "region", "area", "city", "the", "state", "metro"}
+#: Words that qualify a place's name without naming it: "New Delhi" is not "New York", nor
+#: "South Delhi" "South Mumbai".
+_PLACE_QUALIFIERS = {"new", "navi", "north", "south", "east", "west", "central", "greater", "old", "san", "los", "saint", "port"}
 
 
 def _place_words(text: str) -> List[str]:
@@ -557,6 +560,10 @@ def _place_words(text: str) -> List[str]:
 def _same_place(place: str, home: str) -> bool:
     """Whether the asked-about place is where the candidate lives; Delhi/NCR covers its cities."""
     wanted, actual = _place_words(place), _place_words(home)
+    named = [word for word in wanted if word not in _PLACE_QUALIFIERS]
+    named_home = [word for word in actual if word not in _PLACE_QUALIFIERS]
+    if named and named_home:
+        wanted, actual = named, named_home
     if any(word in actual for word in wanted):
         return True
     if any(word in ("ncr", "delhi") for word in wanted):

@@ -30,6 +30,10 @@ def _engine(home="Indore, India"):
     ("Are you based in Bengaluru?", "Bangalore", "Yes"),
     ("Are you from Mumbai?", "Indore, India", "No"),
     ("Do you currently reside in Hyderabad or Chennai?", "Chennai", "Yes"),
+    ("Are you currently living in New Delhi?", "New Town, Kolkata", "No"),
+    ("Are you based in South Mumbai?", "South Delhi", "No"),
+    ("Are you currently living in New Delhi?", "Delhi", "Yes"),
+    ("Are you based in Delhi?", "New Delhi", "Yes"),
 ])
 def test_where_you_live_answers_yes_or_no_from_current_location(question, home, expected):
     picked = _engine(home).resolve(question, options=["Yes", "No"])
